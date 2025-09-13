@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ctrl+Click Table Selection with Actions</title>
+<title>Google Sheets-like Table Selection</title>
 <style>
 body {
   font-family: Arial, sans-serif;
@@ -18,47 +18,63 @@ table {
 
 td {
   border: 1px solid #ccc;
-  padding: 15px 25px;
-  cursor: pointer;
+  padding: 8px 12px;
+  cursor: cell;
   position: relative;
-  transition: all 0.2s;
-  min-width: 50px;
+  transition: background-color 0.2s;
+  min-width: 60px;
   min-height: 20px;
+  height: 32px;
 }
 
 td:hover {
   background-color: rgba(0, 0, 0, 0.05);
 }
 
-td.ctrl-selected {
-  box-shadow: inset 0 0 0 2px #0066cc;
+/* Selection styles - using outline instead of background for selection */
+td.selected {
+  outline: 1px solid #4285f4;
+  outline-offset: -1px;
   position: relative;
+  z-index: 1;
 }
 
-td.ctrl-selected::after {
+td.selected::after {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 102, 204, 0.1);
+  background: rgba(66, 133, 244, 0.1);
   pointer-events: none;
 }
 
+td.primary-selected {
+  outline: 2px solid #4285f4;
+  outline-offset: -2px;
+  z-index: 2;
+}
+
+/* Editing styles */
 td.editing {
   padding: 0;
+}
+
+td.editing::after {
+  display: none;
 }
 
 td input.cell-editor {
   width: 100%;
   height: 100%;
   border: none;
-  outline: 2px solid #0066cc;
-  padding: 15px 25px;
+  outline: 2px solid #4285f4;
+  padding: 8px 12px;
   font-family: inherit;
   font-size: inherit;
   background: white;
+  box-sizing: border-box;
 }
 
 .controls {
@@ -71,7 +87,7 @@ td input.cell-editor {
 button {
   padding: 8px 16px;
   margin-right: 10px;
-  background: #0066cc;
+  background: #4285f4;
   color: white;
   border: none;
   border-radius: 4px;
@@ -80,7 +96,7 @@ button {
 }
 
 button:hover {
-  background: #0052a3;
+  background: #3367d6;
 }
 
 button:disabled {
@@ -112,7 +128,7 @@ button:disabled {
   padding: 4px;
   margin: 2px 0;
   background: white;
-  border-left: 3px solid #0066cc;
+  border-left: 3px solid #4285f4;
 }
 
 /* Context Menu Styles */
@@ -180,12 +196,12 @@ button:disabled {
 </head>
 <body>
 
-<h2>Ctrl+Click/Drag Selection Demo</h2>
-<p>Hold <strong>Ctrl</strong> (or <strong>Cmd</strong> on Mac) and click or drag to select/deselect cells. Click a cell to edit its content. Right-click any cell for the context menu.</p>
+<h2>Google Sheets-like Selection Demo</h2>
+<p>Click to select a cell. Hold <strong>Shift</strong> to select a range. Hold <strong>Ctrl/Cmd</strong> to add/remove selection. Double-click or press Enter to edit.</p>
 
 <div class="controls">
   <button id="changeColorBtn" onclick="changeSelectedColor()">Change Background Color</button>
-  <button id="clearSelectionBtn" onclick="clearSelection()">Clear Selection</button>
+  <button id="clearSelectionBtn" onclick="clearAllSelections()">Clear Selection</button>
   <button id="resetColorsBtn" onclick="resetColors()">Reset All Colors</button>
   <span class="selection-info">Selected: <strong id="selectionCount">0</strong> cells</span>
 </div>
@@ -196,24 +212,35 @@ button:disabled {
     <td data-row="0" data-col="1">B1</td>
     <td data-row="0" data-col="2">C1</td>
     <td data-row="0" data-col="3">D1</td>
+    <td data-row="0" data-col="4">E1</td>
   </tr>
   <tr>
     <td data-row="1" data-col="0">A2</td>
     <td data-row="1" data-col="1">B2</td>
     <td data-row="1" data-col="2">C2</td>
     <td data-row="1" data-col="3">D2</td>
+    <td data-row="1" data-col="4">E2</td>
   </tr>
   <tr>
     <td data-row="2" data-col="0">A3</td>
     <td data-row="2" data-col="1">B3</td>
     <td data-row="2" data-col="2">C3</td>
     <td data-row="2" data-col="3">D3</td>
+    <td data-row="2" data-col="4">E3</td>
   </tr>
   <tr>
     <td data-row="3" data-col="0">A4</td>
     <td data-row="3" data-col="1">B4</td>
     <td data-row="3" data-col="2">C4</td>
     <td data-row="3" data-col="3">D4</td>
+    <td data-row="3" data-col="4">E4</td>
+  </tr>
+  <tr>
+    <td data-row="4" data-col="0">A5</td>
+    <td data-row="4" data-col="1">B5</td>
+    <td data-row="4" data-col="2">C5</td>
+    <td data-row="4" data-col="3">D5</td>
+    <td data-row="4" data-col="4">E5</td>
   </tr>
 </table>
 
@@ -263,14 +290,18 @@ button:disabled {
 </div>
 
 <script>
-// Store for Ctrl-selected cells
-const ctrlSelectedCells = new Set();
-let rightClickedCell = null;
+// Selection state
+let selectedCells = new Set();
+let primaryCell = null;
 let isDragging = false;
 let dragStartCell = null;
-let dragAction = null; // 'select' or 'deselect' - determined by first cell
-let colorCounter = 0;
 let currentEditingCell = null;
+let colorCounter = 0;
+let rightClickedCell = null;
+let isCtrlDragging = false;
+let ctrlDragAction = null; // 'select' or 'deselect'
+let ctrlDragProcessedCells = new Set(); // Track cells processed in current drag
+
 const colors = ['#ffeb3b', '#4caf50', '#f44336', '#9c27b0', '#ff9800', '#2196f3', '#00bcd4', '#cddc39'];
 
 // Logging function
@@ -293,7 +324,6 @@ function log(message, data = null) {
   }
   logDiv.insertBefore(entry, logDiv.firstChild);
   
-  // Keep only last 10 entries
   while (logDiv.children.length > 10) {
     logDiv.removeChild(logDiv.lastChild);
   }
@@ -301,21 +331,116 @@ function log(message, data = null) {
 
 // Update selection count display
 function updateSelectionCount() {
-  document.getElementById('selectionCount').textContent = ctrlSelectedCells.size;
-  
-  // Enable/disable buttons based on selection
-  document.getElementById('changeColorBtn').disabled = ctrlSelectedCells.size === 0;
-  document.getElementById('clearSelectionBtn').disabled = ctrlSelectedCells.size === 0;
+  document.getElementById('selectionCount').textContent = selectedCells.size;
+  document.getElementById('changeColorBtn').disabled = selectedCells.size === 0;
+  document.getElementById('clearSelectionBtn').disabled = selectedCells.size === 0;
 }
 
-// Start editing a cell
+// Get cell at position
+function getCellAt(row, col) {
+  return document.querySelector(`td[data-row="${row}"][data-col="${col}"]`);
+}
+
+// Get cells in rectangle
+function getCellsInRect(startCell, endCell) {
+  const startRow = parseInt(startCell.dataset.row);
+  const startCol = parseInt(startCell.dataset.col);
+  const endRow = parseInt(endCell.dataset.row);
+  const endCol = parseInt(endCell.dataset.col);
+  
+  const minRow = Math.min(startRow, endRow);
+  const maxRow = Math.max(startRow, endRow);
+  const minCol = Math.min(startCol, endCol);
+  const maxCol = Math.max(startCol, endCol);
+  
+  const cells = [];
+  for (let r = minRow; r <= maxRow; r++) {
+    for (let c = minCol; c <= maxCol; c++) {
+      const cell = getCellAt(r, c);
+      if (cell) cells.push(cell);
+    }
+  }
+  return cells;
+}
+
+// Clear all selections
+function clearAllSelections() {
+  selectedCells.forEach(cell => {
+    cell.classList.remove('selected', 'primary-selected');
+  });
+  selectedCells.clear();
+  primaryCell = null;
+  updateSelectionCount();
+  log('Cleared all selections');
+}
+
+// Select cells
+function selectCells(cells, isPrimary = false) {
+  cells.forEach((cell, index) => {
+    selectedCells.add(cell);
+    cell.classList.add('selected');
+    if (isPrimary && index === 0) {
+      if (primaryCell) {
+        primaryCell.classList.remove('primary-selected');
+      }
+      primaryCell = cell;
+      cell.classList.add('primary-selected');
+    }
+  });
+  updateSelectionCount();
+}
+
+// Deselect cells
+function deselectCells(cells) {
+  cells.forEach(cell => {
+    selectedCells.delete(cell);
+    cell.classList.remove('selected', 'primary-selected');
+    if (cell === primaryCell) {
+      primaryCell = null;
+    }
+  });
+  updateSelectionCount();
+}
+
+// Handle cell selection
+function handleCellSelection(cell, event) {
+  const shiftKey = event.shiftKey;
+  const ctrlKey = event.ctrlKey || event.metaKey;
+  
+  if (currentEditingCell && currentEditingCell !== cell) {
+    stopEditingCell();
+  }
+  
+  if (shiftKey && primaryCell) {
+    // Shift selection - select range
+    if (!ctrlKey) {
+      clearAllSelections();
+    }
+    const rangeCells = getCellsInRect(primaryCell, cell);
+    selectCells(rangeCells, !ctrlKey);
+    log(`Shift-selected ${rangeCells.length} cells`);
+  } else if (ctrlKey) {
+    // Don't handle single ctrl+click here, it's handled in mouse up for drag support
+    return;
+  } else {
+    // Normal selection
+    clearAllSelections();
+    selectCells([cell], true);
+    log(`Selected cell`, {content: cell.textContent});
+  }
+}
+
+// Start editing
 function startEditingCell(cell) {
+  if (currentEditingCell === cell) return;
+  
   if (currentEditingCell) {
     stopEditingCell();
   }
   
   currentEditingCell = cell;
   const currentText = cell.textContent;
+  cell.dataset.originalValue = currentText;
   
   cell.classList.add('editing');
   
@@ -330,7 +455,6 @@ function startEditingCell(cell) {
   input.focus();
   input.select();
   
-  // Handle input events
   input.addEventListener('blur', () => stopEditingCell());
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -338,14 +462,14 @@ function startEditingCell(cell) {
       stopEditingCell();
     } else if (e.key === 'Escape') {
       e.preventDefault();
-      stopEditingCell(true); // Cancel editing
+      stopEditingCell(true);
     }
   });
   
-  log(`Started editing cell`, {content: currentText, row: cell.dataset.row, col: cell.dataset.col});
+  log(`Started editing cell`, {content: currentText});
 }
 
-// Stop editing a cell
+// Stop editing
 function stopEditingCell(cancel = false) {
   if (!currentEditingCell) return;
   
@@ -355,176 +479,159 @@ function stopEditingCell(cancel = false) {
   const oldValue = currentEditingCell.dataset.originalValue || '';
   const newValue = cancel ? oldValue : input.value;
   
-  currentEditingCell.textContent = newValue || '\u00A0'; // Use non-breaking space for empty cells
+  currentEditingCell.textContent = newValue || '\u00A0';
   currentEditingCell.classList.remove('editing');
+  delete currentEditingCell.dataset.originalValue;
   
   if (!cancel && oldValue !== newValue) {
-    log(`Cell edited`, {
-      row: currentEditingCell.dataset.row,
-      col: currentEditingCell.dataset.col,
-      oldValue: oldValue,
-      newValue: newValue
-    });
+    log(`Cell edited`, {oldValue, newValue});
   }
   
   currentEditingCell = null;
 }
 
-// Handle mouse down for drag selection
+// Mouse down handler
 function handleMouseDown(event) {
   const cell = event.target.closest('td');
   if (!cell || event.target.classList.contains('cell-editor')) return;
   
-  if (event.ctrlKey || event.metaKey) {
-    event.preventDefault();
-    isDragging = true;
-    dragStartCell = cell;
-    
-    // Determine the action based on whether the starting cell is selected
-    dragAction = ctrlSelectedCells.has(cell) ? 'deselect' : 'select';
-  }
-}
-
-// Handle mouse enter for drag selection
-function handleMouseEnter(event) {
-  const cell = event.target.closest('td');
-  if (!cell || event.target.classList.contains('cell-editor')) return;
+  // Ignore right-click (button 2)
+  if (event.button === 2) return;
   
-  if (isDragging && dragStartCell && (event.ctrlKey || event.metaKey)) {
-    // Apply the drag action to this cell
-    if (dragAction === 'select') {
-      if (!ctrlSelectedCells.has(cell)) {
-        ctrlSelectedCells.add(cell);
-        cell.classList.add('ctrl-selected');
-        log(`Ctrl+Drag - Selected cell`, {
-          content: cell.textContent,
-          row: cell.dataset.row,
-          col: cell.dataset.col
-        });
-        updateSelectionCount();
+  dragStartCell = cell;
+  isDragging = true;
+  isCtrlDragging = event.ctrlKey || event.metaKey;
+  
+  if (isCtrlDragging) {
+    event.preventDefault();
+    // Determine action based on whether starting cell is selected
+    ctrlDragAction = selectedCells.has(cell) ? 'deselect' : 'select';
+    ctrlDragProcessedCells.clear();
+    
+    // Process the starting cell
+    if (ctrlDragAction === 'select') {
+      selectedCells.add(cell);
+      cell.classList.add('selected');
+      if (!primaryCell) {
+        primaryCell = cell;
+        cell.classList.add('primary-selected');
       }
-    } else if (dragAction === 'deselect') {
-      if (ctrlSelectedCells.has(cell)) {
-        ctrlSelectedCells.delete(cell);
-        cell.classList.remove('ctrl-selected');
-        log(`Ctrl+Drag - Deselected cell`, {
-          content: cell.textContent,
-          row: cell.dataset.row,
-          col: cell.dataset.col
-        });
-        updateSelectionCount();
-      }
+    } else {
+      selectedCells.delete(cell);
+      cell.classList.remove('selected', 'primary-selected');
+      if (cell === primaryCell) primaryCell = null;
     }
+    ctrlDragProcessedCells.add(cell);
+    updateSelectionCount();
+    log(`Ctrl+drag started (${ctrlDragAction})`, {content: cell.textContent});
+  } else if (!event.shiftKey) {
+    handleCellSelection(cell, event);
   }
 }
 
-// Handle mouse up to end drag
+// Mouse move handler
+function handleMouseMove(event) {
+  if (!isDragging || !dragStartCell) return;
+  
+  const cell = event.target.closest('td');
+  if (!cell) return;
+  
+  if (isCtrlDragging) {
+    // Get all cells in the rectangle
+    const rangeCells = getCellsInRect(dragStartCell, cell);
+    
+    // Process each cell in the range
+    rangeCells.forEach(c => {
+      if (!ctrlDragProcessedCells.has(c)) {
+        if (ctrlDragAction === 'select') {
+          selectedCells.add(c);
+          c.classList.add('selected');
+        } else {
+          selectedCells.delete(c);
+          c.classList.remove('selected', 'primary-selected');
+          if (c === primaryCell) primaryCell = null;
+        }
+        ctrlDragProcessedCells.add(c);
+      }
+    });
+    
+    updateSelectionCount();
+  } else if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
+    // Normal drag - select range
+    clearAllSelections();
+    const rangeCells = getCellsInRect(dragStartCell, cell);
+    selectCells(rangeCells, true);
+  }
+}
+
+// Mouse up handler
 function handleMouseUp(event) {
   const cell = event.target.closest('td');
   
-  if (isDragging) {
-    if (dragStartCell && cell === dragStartCell && (event.ctrlKey || event.metaKey)) {
-      // This was a click, not a drag - toggle the cell
-      const cellInfo = {
-        content: cell.textContent,
-        row: cell.dataset.row,
-        col: cell.dataset.col
-      };
-      
-      if (ctrlSelectedCells.has(cell)) {
-        ctrlSelectedCells.delete(cell);
-        cell.classList.remove('ctrl-selected');
-        log(`Ctrl+Click DESELECTED cell`, cellInfo);
-      } else {
-        ctrlSelectedCells.add(cell);
-        cell.classList.add('ctrl-selected');
-        log(`Ctrl+Click SELECTED cell`, cellInfo);
-      }
-      updateSelectionCount();
-    } else if (dragStartCell && cell !== dragStartCell) {
-      log(`Ctrl+Drag END (${dragAction}) - Total selected: ${ctrlSelectedCells.size}`);
-    }
-    
-    isDragging = false;
-    dragStartCell = null;
-    dragAction = null;
+  if (isDragging && isCtrlDragging && dragStartCell === cell && ctrlDragProcessedCells.size === 1) {
+    // This was just a ctrl+click, not a drag
+    // Already handled in mousedown
+    log(`Ctrl+click ${ctrlDragAction === 'select' ? 'selected' : 'deselected'} cell`, {content: cell.textContent});
+  } else if (isDragging && isCtrlDragging) {
+    log(`Ctrl+drag completed (${ctrlDragAction}) - ${ctrlDragProcessedCells.size} cells affected`);
   }
+  
+  isDragging = false;
+  dragStartCell = null;
+  isCtrlDragging = false;
+  ctrlDragAction = null;
+  ctrlDragProcessedCells.clear();
 }
 
-// Cell click handler (for normal clicks and editing)
-function handleCellClick(event) {
+// Double click to edit
+function handleDoubleClick(event) {
   const cell = event.target.closest('td');
   if (!cell || event.target.classList.contains('cell-editor')) return;
   
-  // Don't handle if it was a Ctrl+Click (handled in mouseUp)
-  if (event.ctrlKey || event.metaKey) {
-    return;
-  }
+  event.preventDefault();
+  startEditingCell(cell);
+}
+
+// Keyboard handler
+function handleKeyDown(event) {
+  if (currentEditingCell) return;
   
-  // Normal left click
-  if (event.button === 0) {
-    // Stop any current editing
-    if (currentEditingCell && currentEditingCell !== cell) {
-      stopEditingCell();
-    }
-    
-    // Clear selection if clicking on unselected cell
-    if (ctrlSelectedCells.size > 0) {
-      clearSelection();
-    }
-    
-    // Start editing the cell after a small delay to distinguish from drag
-    setTimeout(() => {
-      if (!isDragging) {
-        startEditingCell(cell);
-      }
-    }, 200);
+  if (event.key === 'Enter' && primaryCell && !currentEditingCell) {
+    startEditingCell(primaryCell);
+  } else if (event.key === 'Delete' && selectedCells.size > 0) {
+    selectedCells.forEach(cell => {
+      cell.textContent = '';
+    });
+    log(`Cleared content of ${selectedCells.size} cells`);
   }
 }
 
-// Change background color of selected cells
+// Change colors
 function changeSelectedColor() {
-  if (ctrlSelectedCells.size === 0) {
-    alert('No cells selected! Use Ctrl+Click to select cells.');
+  if (selectedCells.size === 0) {
+    alert('No cells selected!');
     return;
   }
   
   const color = colors[colorCounter % colors.length];
   colorCounter++;
   
-  const affectedCells = [];
-  ctrlSelectedCells.forEach(cell => {
+  selectedCells.forEach(cell => {
     cell.style.backgroundColor = color;
-    affectedCells.push(cell.textContent);
   });
   
-  log(`Changed background color of ${ctrlSelectedCells.size} cells to ${color}`, affectedCells);
+  log(`Changed color of ${selectedCells.size} cells to ${color}`);
 }
 
-// Clear selection
-function clearSelection() {
-  ctrlSelectedCells.forEach(cell => {
-    cell.classList.remove('ctrl-selected');
-  });
-  
-  const count = ctrlSelectedCells.size;
-  ctrlSelectedCells.clear();
-  updateSelectionCount();
-  if (count > 0) {
-    log(`Cleared selection of ${count} cells`);
-  }
-}
-
-// Reset all colors
+// Reset colors
 function resetColors() {
-  const allCells = document.querySelectorAll('td');
-  allCells.forEach(cell => {
+  document.querySelectorAll('td').forEach(cell => {
     cell.style.backgroundColor = '';
   });
-  log('Reset all cell colors');
+  log('Reset all colors');
 }
 
-// Context menu functions
+// Context menu
 const contextMenu = document.getElementById('context-menu');
 
 function showContextMenu(x, y, cell) {
@@ -533,7 +640,6 @@ function showContextMenu(x, y, cell) {
   contextMenu.style.top = y + 'px';
   contextMenu.style.display = 'block';
   
-  // Adjust position if menu would go off-screen
   setTimeout(() => {
     const rect = contextMenu.getBoundingClientRect();
     if (rect.right > window.innerWidth) {
@@ -550,20 +656,7 @@ function hideContextMenu() {
 }
 
 function contextMenuAction(action) {
-  // Determine which cells to act on
-  let targetCells = new Set();
-  
-  if (ctrlSelectedCells.size > 0) {
-    // Use the selection
-    targetCells = ctrlSelectedCells;
-  } else if (rightClickedCell) {
-    // Use just the right-clicked cell WITHOUT adding it to selection
-    targetCells.add(rightClickedCell);
-  } else {
-    alert('No cells to act on!');
-    hideContextMenu();
-    return;
-  }
+  let targetCells = selectedCells.size > 0 ? selectedCells : new Set([rightClickedCell]);
   
   const colorMap = {
     'yellow': '#ffeb3b',
@@ -574,19 +667,17 @@ function contextMenuAction(action) {
   };
   
   if (colorMap[action]) {
-    const affectedCells = [];
     targetCells.forEach(cell => {
       cell.style.backgroundColor = colorMap[action];
-      affectedCells.push(cell.textContent);
     });
-    log(`Applied ${action} to ${targetCells.size} cells via context menu`, affectedCells);
+    log(`Applied ${action} to ${targetCells.size} cells`);
   } else if (action === 'clear') {
     targetCells.forEach(cell => {
       cell.style.backgroundColor = '';
     });
-    log(`Cleared colors from ${targetCells.size} cells via context menu`);
+    log(`Cleared colors from ${targetCells.size} cells`);
   } else if (action === 'deselect') {
-    clearSelection();
+    clearAllSelections();
   }
   
   hideContextMenu();
@@ -594,43 +685,68 @@ function contextMenuAction(action) {
 
 function applyContextColor() {
   const color = document.getElementById('contextColorPicker').value;
+  let targetCells = selectedCells.size > 0 ? selectedCells : new Set([rightClickedCell]);
   
-  // Determine which cells to act on
-  let targetCells = new Set();
-  
-  if (ctrlSelectedCells.size > 0) {
-    targetCells = ctrlSelectedCells;
-  } else if (rightClickedCell) {
-    // Use just the right-clicked cell WITHOUT adding it to selection
-    targetCells.add(rightClickedCell);
-  } else {
-    alert('No cells to act on!');
-    hideContextMenu();
-    return;
-  }
-  
-  const affectedCells = [];
   targetCells.forEach(cell => {
     cell.style.backgroundColor = color;
-    affectedCells.push(cell.textContent);
   });
   
-  log(`Applied custom color ${color} to ${targetCells.size} cells`, affectedCells);
+  log(`Applied custom color ${color} to ${targetCells.size} cells`);
   hideContextMenu();
 }
 
 // Event listeners
 const table = document.getElementById('myTable');
 
-// Mouse events for drag selection
 table.addEventListener('mousedown', handleMouseDown);
-table.addEventListener('mouseenter', handleMouseEnter, true);
+table.addEventListener('mousemove', handleMouseMove);
 document.addEventListener('mouseup', handleMouseUp);
+table.addEventListener('dblclick', handleDoubleClick);
+document.addEventListener('keydown', handleKeyDown);
 
-// Click event for editing
-table.addEventListener('click', handleCellClick);
+// Right-click context menu
+document.addEventListener('contextmenu', (event) => {
+  const cell = event.target.closest('td');
+  
+  // Show browser context menu if editing
+  if (currentEditingCell && event.target.classList.contains('cell-editor')) {
+    return;
+  }
+  
+  if (cell && !event.target.classList.contains('cell-editor')) {
+    event.preventDefault();
+    
+    // Only change selection if right-clicking on an unselected cell
+    if (!selectedCells.has(cell)) {
+      // Clear existing selection and select only the right-clicked cell
+      clearAllSelections();
+      selectCells([cell], true);
+    }
+    // If the cell is already selected, keep the current selection
+    
+    showContextMenu(event.clientX, event.clientY, cell);
+    log(`Context menu opened on ${selectedCells.size} selected cells`);
+  }
+});
 
-// Clear selection when clicking outside the table
+// Hide context menu
+document.addEventListener('click', (event) => {
+  if (!contextMenu.contains(event.target)) {
+    hideContextMenu();
+  }
+});
+
+document.addEventListener('scroll', hideContextMenu);
+window.addEventListener('resize', hideContextMenu);
+
+// Prevent text selection while dragging
+table.addEventListener('selectstart', (event) => {
+  if (isDragging && !event.target.classList.contains('cell-editor')) {
+    event.preventDefault();
+  }
+});
+
+// Click outside table to clear selection
 document.addEventListener('click', (event) => {
   if (!event.target.closest('#myTable') && 
       !event.target.closest('#context-menu') &&
@@ -638,58 +754,15 @@ document.addEventListener('click', (event) => {
     if (currentEditingCell) {
       stopEditingCell();
     }
-    if (ctrlSelectedCells.size > 0) {
-      clearSelection();
+    if (selectedCells.size > 0 && !event.ctrlKey && !event.metaKey) {
+      clearAllSelections();
     }
-  }
-});
-
-// Prevent text selection while dragging
-table.addEventListener('selectstart', (event) => {
-  if (isDragging || event.target.classList.contains('cell-editor')) {
-    if (!event.target.classList.contains('cell-editor')) {
-      event.preventDefault();
-    }
-  }
-});
-
-// Right-click context menu
-document.addEventListener('contextmenu', (event) => {
-  const cell = event.target.closest('td');
-  
-  if (cell && !event.target.classList.contains('cell-editor')) {
-    event.preventDefault();
-    showContextMenu(event.clientX, event.clientY, cell);
-    
-    if (ctrlSelectedCells.size > 0) {
-      log(`Context menu opened with ${ctrlSelectedCells.size} cells selected`);
-    } else {
-      log(`Context menu opened on unselected cell: ${cell.textContent}`);
-    }
-  }
-});
-
-// Hide context menu on click outside
-document.addEventListener('click', (event) => {
-  if (!contextMenu.contains(event.target) && event.target.closest('#context-menu') !== contextMenu) {
-    hideContextMenu();
-  }
-});
-
-// Hide context menu on scroll
-document.addEventListener('scroll', hideContextMenu);
-window.addEventListener('resize', hideContextMenu);
-
-// Escape key to hide context menu
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    hideContextMenu();
   }
 });
 
 // Initial setup
 updateSelectionCount();
-log('Table selection system initialized - Use Ctrl+Click or Ctrl+Drag to select/deselect cells');
+log('Google Sheets-like selection initialized');
 </script>
 
 </body>
