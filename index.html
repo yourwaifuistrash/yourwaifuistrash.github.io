@@ -181,7 +181,7 @@ button:disabled {
 <body>
 
 <h2>Ctrl+Click/Drag Selection Demo</h2>
-<p>Hold <strong>Ctrl</strong> (or <strong>Cmd</strong> on Mac) and click or drag to select cells. Click a cell to edit its content. Right-click any cell for the context menu.</p>
+<p>Hold <strong>Ctrl</strong> (or <strong>Cmd</strong> on Mac) and click or drag to select/deselect cells. Click a cell to edit its content. Right-click any cell for the context menu.</p>
 
 <div class="controls">
   <button id="changeColorBtn" onclick="changeSelectedColor()">Change Background Color</button>
@@ -268,6 +268,7 @@ const ctrlSelectedCells = new Set();
 let rightClickedCell = null;
 let isDragging = false;
 let dragStartCell = null;
+let dragAction = null; // 'select' or 'deselect' - determined by first cell
 let colorCounter = 0;
 let currentEditingCell = null;
 const colors = ['#ffeb3b', '#4caf50', '#f44336', '#9c27b0', '#ff9800', '#2196f3', '#00bcd4', '#cddc39'];
@@ -379,8 +380,8 @@ function handleMouseDown(event) {
     isDragging = true;
     dragStartCell = cell;
     
-    // Don't toggle immediately, just mark as dragging
-    // The toggle will happen in handleMouseUp if it's just a click
+    // Determine the action based on whether the starting cell is selected
+    dragAction = ctrlSelectedCells.has(cell) ? 'deselect' : 'select';
   }
 }
 
@@ -390,19 +391,23 @@ function handleMouseEnter(event) {
   if (!cell || event.target.classList.contains('cell-editor')) return;
   
   if (isDragging && dragStartCell && (event.ctrlKey || event.metaKey)) {
-    // If we've moved to a different cell, we're actually dragging
-    if (cell !== dragStartCell) {
-      // Make sure the start cell is selected
-      if (!ctrlSelectedCells.has(dragStartCell)) {
-        ctrlSelectedCells.add(dragStartCell);
-        dragStartCell.classList.add('ctrl-selected');
-      }
-      
-      // Add the current cell
+    // Apply the drag action to this cell
+    if (dragAction === 'select') {
       if (!ctrlSelectedCells.has(cell)) {
         ctrlSelectedCells.add(cell);
         cell.classList.add('ctrl-selected');
-        log(`Ctrl+Drag - Added cell`, {
+        log(`Ctrl+Drag - Selected cell`, {
+          content: cell.textContent,
+          row: cell.dataset.row,
+          col: cell.dataset.col
+        });
+        updateSelectionCount();
+      }
+    } else if (dragAction === 'deselect') {
+      if (ctrlSelectedCells.has(cell)) {
+        ctrlSelectedCells.delete(cell);
+        cell.classList.remove('ctrl-selected');
+        log(`Ctrl+Drag - Deselected cell`, {
           content: cell.textContent,
           row: cell.dataset.row,
           col: cell.dataset.col
@@ -437,11 +442,12 @@ function handleMouseUp(event) {
       }
       updateSelectionCount();
     } else if (dragStartCell && cell !== dragStartCell) {
-      log(`Ctrl+Drag END - Total selected: ${ctrlSelectedCells.size}`);
+      log(`Ctrl+Drag END (${dragAction}) - Total selected: ${ctrlSelectedCells.size}`);
     }
     
     isDragging = false;
     dragStartCell = null;
+    dragAction = null;
   }
 }
 
@@ -551,12 +557,8 @@ function contextMenuAction(action) {
     // Use the selection
     targetCells = ctrlSelectedCells;
   } else if (rightClickedCell) {
-    // Use just the right-clicked cell
+    // Use just the right-clicked cell WITHOUT adding it to selection
     targetCells.add(rightClickedCell);
-    // Temporarily select it visually
-    rightClickedCell.classList.add('ctrl-selected');
-    ctrlSelectedCells.add(rightClickedCell);
-    updateSelectionCount();
   } else {
     alert('No cells to act on!');
     hideContextMenu();
@@ -588,11 +590,6 @@ function contextMenuAction(action) {
   }
   
   hideContextMenu();
-  
-  // Maintain selection after action (except for deselect)
-  if (action !== 'deselect') {
-    log('Selection maintained for further actions');
-  }
 }
 
 function applyContextColor() {
@@ -604,11 +601,8 @@ function applyContextColor() {
   if (ctrlSelectedCells.size > 0) {
     targetCells = ctrlSelectedCells;
   } else if (rightClickedCell) {
+    // Use just the right-clicked cell WITHOUT adding it to selection
     targetCells.add(rightClickedCell);
-    // Temporarily select it visually
-    rightClickedCell.classList.add('ctrl-selected');
-    ctrlSelectedCells.add(rightClickedCell);
-    updateSelectionCount();
   } else {
     alert('No cells to act on!');
     hideContextMenu();
@@ -695,7 +689,7 @@ document.addEventListener('keydown', (event) => {
 
 // Initial setup
 updateSelectionCount();
-log('Table selection system initialized - Use Ctrl+Click or Ctrl+Drag to select cells');
+log('Table selection system initialized - Use Ctrl+Click or Ctrl+Drag to select/deselect cells');
 </script>
 
 </body>
