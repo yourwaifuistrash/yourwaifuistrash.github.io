@@ -256,17 +256,26 @@ class SpreadsheetApp {
         this.isDragging = true;
         this.isCtrlDragging = event.ctrlKey || event.metaKey;
 
+        // Prevent default to avoid text selection during drag
+        event.preventDefault();
+
         if (this.currentEditingCell && this.currentEditingCell !== cell) {
             this.stopEditingCell();
         }
 
         if (this.isCtrlDragging) {
-            event.preventDefault();
             this.ctrlDragAction = this.selectedCells.has(cell) ? 'deselect' : 'select';
             this.ctrlDragProcessedCells.clear();
             this.processCtrlDragCell(cell);
-        } else if (!event.shiftKey) {
-            this.handleCellSelection(cell, event);
+        } else if (event.shiftKey && this.primaryCell) {
+            // Handle shift selection
+            this.clearAllSelections();
+            const rangeCells = this.getCellsInRect(this.primaryCell, cell);
+            this.selectCells(rangeCells, true);
+        } else {
+            // Regular selection - clear previous and select this cell
+            this.clearAllSelections();
+            this.selectCells([cell], true);
         }
     }
 
