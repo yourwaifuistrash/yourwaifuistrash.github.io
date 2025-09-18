@@ -203,6 +203,14 @@ class SpreadsheetApp {
         // Context menu events
         this.contextMenu.addEventListener('click', this.handleContextMenuClick.bind(this));
 
+        // Context menu color picker - instant color application
+        const contextColorPicker = document.getElementById('contextColorPicker');
+        if (contextColorPicker) {
+            contextColorPicker.addEventListener('input', (e) => {
+                this.applyBackgroundColor(e.target.value);
+            });
+        }
+
         // Cell reference input
         this.cellReference.addEventListener('keydown', this.handleCellReferenceKeyDown.bind(this));
 
