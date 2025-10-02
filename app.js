@@ -48,7 +48,6 @@ class SpreadsheetApp {
         this.generateHeaders();
         this.generateInitialGrid();
         this.setupColorPalette();
-        this.updateSelectionCount();
         this.log('Spreadsheet initialized');
     }
 
@@ -394,7 +393,6 @@ class SpreadsheetApp {
             }
         }
         this.ctrlDragProcessedCells.add(cell);
-        this.updateSelectionCount();
         this.updateCellReference();
     }
 
@@ -442,7 +440,6 @@ class SpreadsheetApp {
                 cell.classList.add('primary-selected');
             }
         });
-        this.updateSelectionCount();
         this.updateCellReference();
         this.updateFormulaBar();
     }
@@ -455,14 +452,9 @@ class SpreadsheetApp {
         this.selectedCellCoords.clear();
         this.primaryCell = null;
         this.primaryCellCoord = null;
-        this.updateSelectionCount();
         this.updateCellReference();
         this.updateFormulaBar();
         this.log('Cleared all selections');
-    }
-
-    updateSelectionCount() {
-        document.getElementById('selectionCount').textContent = this.selectedCellCoords.size;
     }
 
     updateCellReference() {
@@ -738,7 +730,6 @@ class SpreadsheetApp {
             }
         });
         
-        this.updateSelectionCount();
         this.updateCellReference();
         this.updateFormulaBar();
         this.log(`Selected all cells: ${this.config.maxRows * this.config.maxCols} cells`);

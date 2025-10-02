@@ -789,12 +789,6 @@ select.form-control {
   font-size: var(--font-size-sm);
 }
 
-.selection-info {
-  margin-left: auto;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-}
-
 /* Formula Bar */
 .formula-bar {
   display: flex;
@@ -1155,12 +1149,6 @@ select.form-control {
   
   .toolbar-section {
     gap: var(--space-4);
-  }
-  
-  .selection-info {
-    margin-left: 0;
-    margin-top: var(--space-4);
-    width: 100%;
   }
   
   .grid-container {
