@@ -466,10 +466,44 @@ class SpreadsheetApp {
     }
 
     updateCellReference() {
-        if (this.primaryCell) {
-            this.cellReference.value = this.primaryCell.dataset.address;
-        } else {
+        if (this.selectedCellCoords.size === 0) {
             this.cellReference.value = '';
+            return;
+        }
+        
+        if (this.selectedCellCoords.size === 1) {
+            // Single cell selected
+            if (this.primaryCell) {
+                this.cellReference.value = this.primaryCell.dataset.address;
+            }
+            return;
+        }
+        
+        // Multiple cells - try to detect contiguous ranges
+        const coords = Array.from(this.selectedCellCoords).map(coord => {
+            const [row, col] = coord.split(',').map(Number);
+            return { row, col };
+        });
+        
+        // Sort coordinates
+        coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
+        
+        // Check if it's a single contiguous rectangle
+        const minRow = Math.min(...coords.map(c => c.row));
+        const maxRow = Math.max(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+        const maxCol = Math.max(...coords.map(c => c.col));
+        
+        const expectedSize = (maxRow - minRow + 1) * (maxCol - minCol + 1);
+        
+        if (coords.length === expectedSize) {
+            // It's a single rectangle
+            const startCell = this.getCellAddress(minRow, minCol);
+            const endCell = this.getCellAddress(maxRow, maxCol);
+            this.cellReference.value = startCell === endCell ? startCell : `${startCell}:${endCell}`;
+        } else {
+            // Multiple non-contiguous selections - show count
+            this.cellReference.value = `${this.selectedCellCoords.size} cells selected`;
         }
     }
 
@@ -995,13 +1029,44 @@ class SpreadsheetApp {
     handleCellReferenceKeyDown(event) {
         if (event.key === 'Enter') {
             event.preventDefault();
-            const address = this.cellReference.value.toUpperCase();
-            const parsed = this.parseCellAddress(address);
-            if (parsed) {
-                this.scrollToCell(parsed.row, parsed.col);
-                const cell = this.getCellAt(parsed.row, parsed.col) || this.createCell(parsed.row, parsed.col);
-                this.clearAllSelections();
-                this.selectCells([cell], true);
+            const input = this.cellReference.value.trim().toUpperCase();
+            
+            // Check if it's a range (e.g., A1:B2)
+            if (input.includes(':')) {
+                const [start, end] = input.split(':');
+                const startParsed = this.parseCellAddress(start);
+                const endParsed = this.parseCellAddress(end);
+                
+                if (startParsed && endParsed) {
+                    // Ensure start cell is visible
+                    this.scrollToCell(startParsed.row, startParsed.col);
+                    
+                    // Get or create cells in range
+                    const minRow = Math.min(startParsed.row, endParsed.row);
+                    const maxRow = Math.max(startParsed.row, endParsed.row);
+                    const minCol = Math.min(startParsed.col, endParsed.col);
+                    const maxCol = Math.max(startParsed.col, endParsed.col);
+                    
+                    const rangeCells = [];
+                    for (let r = minRow; r <= maxRow; r++) {
+                        for (let c = minCol; c <= maxCol; c++) {
+                            const cell = this.getCellAt(r, c) || this.createCell(r, c);
+                            rangeCells.push(cell);
+                        }
+                    }
+                    
+                    this.clearAllSelections();
+                    this.selectCells(rangeCells, true);
+                }
+            } else {
+                // Single cell
+                const parsed = this.parseCellAddress(input);
+                if (parsed) {
+                    this.scrollToCell(parsed.row, parsed.col);
+                    const cell = this.getCellAt(parsed.row, parsed.col) || this.createCell(parsed.row, parsed.col);
+                    this.clearAllSelections();
+                    this.selectCells([cell], true);
+                }
             }
             this.cellReference.blur();
         }

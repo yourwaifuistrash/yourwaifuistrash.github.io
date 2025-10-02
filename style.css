@@ -799,10 +799,22 @@ select.form-control {
 .formula-bar {
   display: flex;
   align-items: center;
+  gap: var(--space-8);
   padding: var(--space-8) var(--space-16);
   background-color: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
+}
+
+.formula-bar .cell-reference {
+  min-width: 120px;
+}
+
+.formula-bar .cell-reference input {
+  text-align: left;
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
 }
 
 .formula-bar-label {

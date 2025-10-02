@@ -31,12 +31,6 @@
                 </button>
             </div>
 
-            <div class="toolbar-section">
-                <div class="cell-reference">
-                    <input type="text" id="cellReference" class="form-control" value="A1" readonly>
-                </div>
-            </div>
-
             <div class="toolbar-section selection-info">
                 Selected: <strong id="selectionCount">0</strong> cells
             </div>
@@ -44,6 +38,9 @@
 
         <!-- Formula Bar -->
         <div class="formula-bar">
+            <div class="cell-reference">
+                <input type="text" id="cellReference" class="form-control" placeholder="A1">
+            </div>
             <div class="formula-bar-label">fx</div>
             <input type="text" id="formulaInput" class="form-control formula-input" placeholder="Enter formula or value...">
         </div>
