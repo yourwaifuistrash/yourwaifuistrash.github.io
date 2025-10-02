@@ -221,8 +221,6 @@ class SpreadsheetApp {
         document.getElementById('boldBtn').addEventListener('click', () => this.toggleFormat('bold'));
         document.getElementById('italicBtn').addEventListener('click', () => this.toggleFormat('italic'));
         document.getElementById('colorBtn').addEventListener('click', this.showColorPalette.bind(this));
-        document.getElementById('clearSelectionBtn').addEventListener('click', this.clearAllSelections.bind(this));
-        document.getElementById('resetBtn').addEventListener('click', this.resetAll.bind(this));
 
         // Formula bar events
         this.formulaInput.addEventListener('keydown', this.handleFormulaKeyDown.bind(this));
