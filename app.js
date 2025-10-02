@@ -15,7 +15,9 @@ class SpreadsheetApp {
 
         // State management
         this.selectedCells = new Set();
+        this.selectedCellCoords = new Set(); // Store coordinates instead of DOM references
         this.primaryCell = null;
+        this.primaryCellCoord = null; // Store primary cell coordinate
         this.isDragging = false;
         this.isCtrlDragging = false;
         this.dragStartCell = null;
@@ -122,6 +124,19 @@ class SpreadsheetApp {
     }
 
     updateVisibleCells() {
+        // Clear references to cells that are being removed
+        const cellsToRemove = [];
+        this.selectedCells.forEach(cell => {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            if (row < this.visibleRows.start || row >= this.visibleRows.end ||
+                col < this.visibleCols.start || col >= this.visibleCols.end) {
+                cellsToRemove.push(cell);
+            }
+        });
+        
+        cellsToRemove.forEach(cell => this.selectedCells.delete(cell));
+        
         // Remove existing cells that are outside visible area
         const existingCells = this.gridContent.querySelectorAll('.cell');
         existingCells.forEach(cell => {
@@ -129,6 +144,9 @@ class SpreadsheetApp {
             const col = parseInt(cell.dataset.col);
             if (row < this.visibleRows.start || row >= this.visibleRows.end ||
                 col < this.visibleCols.start || col >= this.visibleCols.end) {
+                if (cell === this.primaryCell) {
+                    this.primaryCell = null;
+                }
                 cell.remove();
             }
         });
@@ -170,6 +188,17 @@ class SpreadsheetApp {
         }
         if (cellData.italic) {
             cell.classList.add('italic');
+        }
+
+        // Restore selection state
+        const coordKey = `${row},${col}`;
+        if (this.selectedCellCoords.has(coordKey)) {
+            cell.classList.add('selected');
+            this.selectedCells.add(cell);
+        }
+        if (this.primaryCellCoord === coordKey) {
+            cell.classList.add('primary-selected');
+            this.primaryCell = cell;
         }
 
         this.gridContent.appendChild(cell);
@@ -344,17 +373,27 @@ class SpreadsheetApp {
     }
 
     processCtrlDragCell(cell) {
+        const row = parseInt(cell.dataset.row);
+        const col = parseInt(cell.dataset.col);
+        const coordKey = `${row},${col}`;
+        
         if (this.ctrlDragAction === 'select') {
             this.selectedCells.add(cell);
+            this.selectedCellCoords.add(coordKey);
             cell.classList.add('selected');
             if (!this.primaryCell) {
                 this.primaryCell = cell;
+                this.primaryCellCoord = coordKey;
                 cell.classList.add('primary-selected');
             }
         } else {
             this.selectedCells.delete(cell);
+            this.selectedCellCoords.delete(coordKey);
             cell.classList.remove('selected', 'primary-selected');
-            if (cell === this.primaryCell) this.primaryCell = null;
+            if (cell === this.primaryCell) {
+                this.primaryCell = null;
+                this.primaryCellCoord = null;
+            }
         }
         this.ctrlDragProcessedCells.add(cell);
         this.updateSelectionCount();
@@ -388,13 +427,20 @@ class SpreadsheetApp {
 
     selectCells(cells, isPrimary = false) {
         cells.forEach((cell, index) => {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            const coordKey = `${row},${col}`;
+            
             this.selectedCells.add(cell);
+            this.selectedCellCoords.add(coordKey);
             cell.classList.add('selected');
+            
             if (isPrimary && index === 0) {
                 if (this.primaryCell) {
                     this.primaryCell.classList.remove('primary-selected');
                 }
                 this.primaryCell = cell;
+                this.primaryCellCoord = coordKey;
                 cell.classList.add('primary-selected');
             }
         });
@@ -408,7 +454,9 @@ class SpreadsheetApp {
             cell.classList.remove('selected', 'primary-selected');
         });
         this.selectedCells.clear();
+        this.selectedCellCoords.clear();
         this.primaryCell = null;
+        this.primaryCellCoord = null;
         this.updateSelectionCount();
         this.updateCellReference();
         this.updateFormulaBar();
@@ -416,7 +464,7 @@ class SpreadsheetApp {
     }
 
     updateSelectionCount() {
-        document.getElementById('selectionCount').textContent = this.selectedCells.size;
+        document.getElementById('selectionCount').textContent = this.selectedCellCoords.size;
     }
 
     updateCellReference() {
@@ -581,6 +629,13 @@ class SpreadsheetApp {
     handleKeyDown(event) {
         if (this.currentEditingCell) return;
 
+        // Handle Ctrl+A / Cmd+A for select all
+        if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+            event.preventDefault();
+            this.selectAllCells();
+            return;
+        }
+
         switch (event.key) {
             case 'Enter':
                 if (this.primaryCell && !this.currentEditingCell) {
@@ -619,18 +674,59 @@ class SpreadsheetApp {
         }
     }
 
-    clearCellContent() {
-        this.selectedCells.forEach(cell => {
-            cell.textContent = '';
+    selectAllCells() {
+        this.clearAllSelections();
+        
+        // Add all cell coordinates to the selection without creating DOM elements
+        for (let row = 0; row < this.config.maxRows; row++) {
+            for (let col = 0; col < this.config.maxCols; col++) {
+                const coordKey = `${row},${col}`;
+                this.selectedCellCoords.add(coordKey);
+            }
+        }
+        
+        // Set the primary cell to A1
+        this.primaryCellCoord = '0,0';
+        
+        // Apply selection styling to all visible cells
+        const visibleCells = this.gridContent.querySelectorAll('.cell');
+        visibleCells.forEach(cell => {
             const row = parseInt(cell.dataset.row);
             const col = parseInt(cell.dataset.col);
-            const cellKey = `${row},${col}`;
-            if (this.cellData.has(cellKey)) {
-                this.cellData.get(cellKey).value = '';
+            const coordKey = `${row},${col}`;
+            
+            if (this.selectedCellCoords.has(coordKey)) {
+                cell.classList.add('selected');
+                this.selectedCells.add(cell);
+                
+                if (coordKey === this.primaryCellCoord) {
+                    cell.classList.add('primary-selected');
+                    this.primaryCell = cell;
+                }
             }
         });
+        
+        this.updateSelectionCount();
+        this.updateCellReference();
         this.updateFormulaBar();
-        this.log(`Cleared content of ${this.selectedCells.size} cells`);
+        this.log(`Selected all cells: ${this.config.maxRows * this.config.maxCols} cells`);
+    }
+
+    clearCellContent() {
+        // Clear content in cellData for all selected coordinates
+        this.selectedCellCoords.forEach(coordKey => {
+            if (this.cellData.has(coordKey)) {
+                this.cellData.get(coordKey).value = '';
+            }
+        });
+
+        // Clear visual content for visible cells
+        this.selectedCells.forEach(cell => {
+            cell.textContent = '';
+        });
+
+        this.updateFormulaBar();
+        this.log(`Cleared content of ${this.selectedCellCoords.size} cells`);
     }
 
     handleContextMenu(event) {
@@ -696,21 +792,23 @@ class SpreadsheetApp {
     }
 
     clearCellFormatting() {
-        this.selectedCells.forEach(cell => {
-            cell.style.backgroundColor = '';
-            cell.classList.remove('bold', 'italic');
-            
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
-            const cellKey = `${row},${col}`;
-            if (this.cellData.has(cellKey)) {
-                const data = this.cellData.get(cellKey);
+        // Clear formatting in cellData for all selected coordinates
+        this.selectedCellCoords.forEach(coordKey => {
+            if (this.cellData.has(coordKey)) {
+                const data = this.cellData.get(coordKey);
                 delete data.backgroundColor;
                 delete data.bold;
                 delete data.italic;
             }
         });
-        this.log(`Cleared formatting from ${this.selectedCells.size} cells`);
+
+        // Clear visual formatting for visible cells
+        this.selectedCells.forEach(cell => {
+            cell.style.backgroundColor = '';
+            cell.classList.remove('bold', 'italic');
+        });
+
+        this.log(`Cleared formatting from ${this.selectedCellCoords.size} cells`);
     }
 
     handleDocumentClick(event) {
@@ -730,7 +828,7 @@ class SpreadsheetApp {
     }
 
     toggleFormat(format) {
-        if (this.selectedCells.size === 0) return;
+        if (this.selectedCellCoords.size === 0) return;
 
         const button = document.getElementById(format + 'Btn');
         const isActive = button.classList.contains('active');
@@ -741,37 +839,47 @@ class SpreadsheetApp {
             button.classList.add('active');
         }
 
-        this.selectedCells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
-            const cellKey = `${row},${col}`;
-            
-            if (!this.cellData.has(cellKey)) {
-                this.cellData.set(cellKey, {});
+        // Apply to all selected coordinates in cellData
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
             }
             
-            const data = this.cellData.get(cellKey);
+            const data = this.cellData.get(coordKey);
             
             if (format === 'bold') {
                 if (isActive) {
-                    cell.classList.remove('bold');
                     delete data.bold;
                 } else {
-                    cell.classList.add('bold');
                     data.bold = true;
                 }
             } else if (format === 'italic') {
                 if (isActive) {
-                    cell.classList.remove('italic');
                     delete data.italic;
                 } else {
-                    cell.classList.add('italic');
                     data.italic = true;
                 }
             }
         });
 
-        this.log(`Toggled ${format} for ${this.selectedCells.size} cells`);
+        // Apply visual styling to currently visible cells
+        this.selectedCells.forEach(cell => {
+            if (format === 'bold') {
+                if (isActive) {
+                    cell.classList.remove('bold');
+                } else {
+                    cell.classList.add('bold');
+                }
+            } else if (format === 'italic') {
+                if (isActive) {
+                    cell.classList.remove('italic');
+                } else {
+                    cell.classList.add('italic');
+                }
+            }
+        });
+
+        this.log(`Toggled ${format} for ${this.selectedCellCoords.size} cells`);
     }
 
     showColorPalette() {
@@ -817,27 +925,31 @@ class SpreadsheetApp {
     }
 
     applyBackgroundColor(color) {
-        if (this.selectedCells.size === 0) return;
+        if (this.selectedCellCoords.size === 0) return;
 
-        this.selectedCells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
-            const cellKey = `${row},${col}`;
-            
-            if (!this.cellData.has(cellKey)) {
-                this.cellData.set(cellKey, {});
+        // Apply to all selected coordinates in cellData
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
             }
             
             if (color) {
-                cell.style.backgroundColor = color;
-                this.cellData.get(cellKey).backgroundColor = color;
+                this.cellData.get(coordKey).backgroundColor = color;
             } else {
-                cell.style.backgroundColor = '';
-                delete this.cellData.get(cellKey).backgroundColor;
+                delete this.cellData.get(coordKey).backgroundColor;
             }
         });
 
-        this.log(`Applied background color ${color || 'none'} to ${this.selectedCells.size} cells`);
+        // Apply visual styling to currently visible cells
+        this.selectedCells.forEach(cell => {
+            if (color) {
+                cell.style.backgroundColor = color;
+            } else {
+                cell.style.backgroundColor = '';
+            }
+        });
+
+        this.log(`Applied background color ${color || 'none'} to ${this.selectedCellCoords.size} cells`);
     }
 
     handleFormulaKeyDown(event) {
