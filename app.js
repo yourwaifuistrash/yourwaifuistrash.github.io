@@ -118,6 +118,20 @@ class SpreadsheetApp {
         this.gridContent.style.width = `${this.config.maxCols * this.config.cellWidth}px`;
         this.gridContent.style.height = `${this.config.maxRows * this.config.cellHeight}px`;
 
+        // Calculate initial visible area based on viewport
+        const viewportCols = Math.ceil(this.mainGrid.clientWidth / this.config.cellWidth) + 10;
+        const viewportRows = Math.ceil(this.mainGrid.clientHeight / this.config.cellHeight) + 10;
+        
+        this.visibleCols = {
+            start: 0,
+            end: Math.min(this.config.maxCols, viewportCols)
+        };
+        
+        this.visibleRows = {
+            start: 0,
+            end: Math.min(this.config.maxRows, viewportRows)
+        };
+
         // Generate initial visible cells
         this.updateVisibleCells();
     }
