@@ -164,6 +164,7 @@ class SpreadsheetApp {
             
             // Update formatting
             cell.style.backgroundColor = cellData.backgroundColor || '';
+            cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
             
             if (cellData.bold) {
                 cell.classList.add('bold');
@@ -191,6 +192,7 @@ class SpreadsheetApp {
         });
         
         this.updateFormattingButtons();
+        this.updateFontSizeInput(); // Changed
     }
 
     // Fixed column numbering: A, B, C, ..., Z, AA, AB, AC, ... 
@@ -350,6 +352,9 @@ class SpreadsheetApp {
         if (cellData.backgroundColor) {
             cell.style.backgroundColor = cellData.backgroundColor;
         }
+        if (cellData.fontSize) {
+            cell.style.fontSize = cellData.fontSize + 'px';
+        }
         if (cellData.bold) {
             cell.classList.add('bold');
         }
@@ -407,6 +412,18 @@ class SpreadsheetApp {
         document.getElementById('italicBtn').addEventListener('click', () => this.toggleFormat('italic'));
         document.getElementById('underlineBtn').addEventListener('click', () => this.toggleFormat('underline'));
         document.getElementById('strikethroughBtn').addEventListener('click', () => this.toggleFormat('strikethrough'));
+        
+        // Font size input events
+        const fontSizeInput = document.getElementById('fontSizeInput');
+        fontSizeInput.addEventListener('change', this.handleFontSizeChange.bind(this));
+        fontSizeInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.handleFontSizeChange(e);
+                fontSizeInput.blur();
+            }
+        });
+        
         document.getElementById('colorBtn').addEventListener('click', this.showColorPalette.bind(this));
 
         // Formula bar events
@@ -434,6 +451,82 @@ class SpreadsheetApp {
                 e.preventDefault();
             }
         });
+    }
+    
+    handleFontSizeChange(event) {
+        const fontSizeInput = document.getElementById('fontSizeInput');
+        const fontSize = parseInt(fontSizeInput.value);
+        
+        if (!fontSize || isNaN(fontSize) || fontSize < 1 || this.selectedCellCoords.size === 0) {
+            return;
+        }
+        
+        // Clamp to reasonable values
+        const clampedSize = Math.max(6, Math.min(200, fontSize));
+        fontSizeInput.value = clampedSize;
+        
+        this.applyFontSize(clampedSize);
+    }
+
+    applyFontSize(fontSize) {
+        if (this.selectedCellCoords.size === 0) return;
+
+        // Save state before applying font size
+        this.saveState(`Apply font size ${fontSize}px to ${this.selectedCellCoords.size} cells`);
+
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
+            }
+            
+            if (fontSize) {
+                this.cellData.get(coordKey).fontSize = fontSize;
+            } else {
+                delete this.cellData.get(coordKey).fontSize;
+            }
+        });
+
+        this.selectedCells.forEach(cell => {
+            if (fontSize) {
+                cell.style.fontSize = fontSize + 'px';
+            } else {
+                cell.style.fontSize = '';
+            }
+        });
+
+        this.updateFontSizeInput(); // Changed
+        this.log(`Applied font size ${fontSize}px to ${this.selectedCellCoords.size} cells`);
+    }
+
+    updateFontSizeInput() {
+        const fontSizeInput = document.getElementById('fontSizeInput');
+        
+        if (this.selectedCellCoords.size === 0) {
+            fontSizeInput.value = '';
+            return;
+        }
+
+        // Check if all selected cells have the same font size
+        let commonFontSize = null;
+        let allSame = true;
+        
+        for (const coordKey of this.selectedCellCoords) {
+            const cellData = this.cellData.get(coordKey);
+            const fontSize = cellData?.fontSize || null;
+            
+            if (commonFontSize === null) {
+                commonFontSize = fontSize;
+            } else if (commonFontSize !== fontSize) {
+                allSame = false;
+                break;
+            }
+        }
+        
+        if (allSame && commonFontSize) {
+            fontSizeInput.value = commonFontSize;
+        } else {
+            fontSizeInput.value = '';
+        }
     }
     
     handleColumnHeaderClick(event) {
@@ -618,7 +711,8 @@ class SpreadsheetApp {
         }
         this.ctrlDragProcessedCells.add(cell);
         this.updateCellReference();
-        this.updateFormattingButtons(); // Add this line
+        this.updateFormattingButtons();
+        this.updateFontSizeInput(); // Changed
     }
 
     getCellsInRect(startCell, endCell) {
@@ -667,7 +761,8 @@ class SpreadsheetApp {
         });
         this.updateCellReference();
         this.updateFormulaBar();
-        this.updateFormattingButtons(); // Add this line
+        this.updateFormattingButtons();
+        this.updateFontSizeInput(); // Changed
     }
     
     selectFullRow(rowIndex) {
@@ -810,7 +905,8 @@ class SpreadsheetApp {
         this.primaryCellCoord = null;
         this.updateCellReference();
         this.updateFormulaBar();
-        this.updateFormattingButtons(); // Add this line
+        this.updateFormattingButtons();
+        this.updateFontSizeInput(); // Changed
         this.log('Cleared all selections');
     }
 
@@ -1207,15 +1303,18 @@ class SpreadsheetApp {
                 delete data.italic;
                 delete data.underline;
                 delete data.strikethrough;
+                delete data.fontSize;
             }
         });
 
         this.selectedCells.forEach(cell => {
             cell.style.backgroundColor = '';
+            cell.style.fontSize = '';
             cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
         });
 
         this.updateFormattingButtons();
+        this.updateFontSizeInput(); // Changed
         this.log(`Cleared formatting from ${this.selectedCellCoords.size} cells`);
     }
 
@@ -1509,6 +1608,7 @@ class SpreadsheetApp {
         this.gridContent.querySelectorAll('.cell').forEach(cell => {
             cell.textContent = '';
             cell.style.backgroundColor = '';
+            cell.style.fontSize = '';
             cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
         });
         
@@ -1518,6 +1618,7 @@ class SpreadsheetApp {
         document.getElementById('italicBtn').classList.remove('active');
         document.getElementById('underlineBtn').classList.remove('active');
         document.getElementById('strikethroughBtn').classList.remove('active');
+        document.getElementById('fontSizeInput').value = ''; // Changed
         
         this.log('Reset all data and formatting');
     }
