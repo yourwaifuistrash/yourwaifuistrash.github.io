@@ -314,6 +314,18 @@ class SpreadsheetApp {
                 }
             }
         }
+        
+        // Restore primary cell reference if it's now visible
+        if (!this.primaryCell && this.primaryCellCoord) {
+            const [pRow, pCol] = this.primaryCellCoord.split(',').map(Number);
+            if (pRow >= this.visibleRows.start && pRow < this.visibleRows.end &&
+                pCol >= this.visibleCols.start && pCol < this.visibleCols.end) {
+                this.primaryCell = this.getCellAt(pRow, pCol);
+                if (this.primaryCell) {
+                    this.primaryCell.classList.add('primary-selected');
+                }
+            }
+        }
     }
 
     createCell(row, col) {
@@ -378,6 +390,10 @@ class SpreadsheetApp {
         document.addEventListener('contextmenu', this.handleContextMenu.bind(this));
         document.addEventListener('click', this.handleDocumentClick.bind(this));
 
+        // Header click events for row/column selection
+        this.columnHeaders.addEventListener('click', this.handleColumnHeaderClick.bind(this));
+        this.rowHeaders.addEventListener('click', this.handleRowHeaderClick.bind(this));
+
         // Toolbar events
         document.getElementById('undoBtn').addEventListener('click', () => this.undo());
         document.getElementById('redoBtn').addEventListener('click', () => this.redo());
@@ -412,6 +428,22 @@ class SpreadsheetApp {
                 e.preventDefault();
             }
         });
+    }
+    
+    handleColumnHeaderClick(event) {
+        const header = event.target.closest('.column-header');
+        if (!header) return;
+        
+        const colIndex = parseInt(header.dataset.col);
+        this.selectFullColumn(colIndex);
+    }
+
+    handleRowHeaderClick(event) {
+        const header = event.target.closest('.row-header');
+        if (!header) return;
+        
+        const rowIndex = parseInt(header.dataset.row);
+        this.selectFullRow(rowIndex);
     }
 
     handleScroll() {
@@ -612,6 +644,72 @@ class SpreadsheetApp {
         this.updateFormulaBar();
         this.updateFormattingButtons(); // Add this line
     }
+    
+    selectFullRow(rowIndex) {
+        this.clearAllSelections();
+        
+        const cells = [];
+        for (let col = 0; col < this.config.maxCols; col++) {
+            const coordKey = `${rowIndex},${col}`;
+            this.selectedCellCoords.add(coordKey);
+            
+            // Add visible cells to selectedCells
+            const cell = this.getCellAt(rowIndex, col);
+            if (cell) {
+                cells.push(cell);
+            }
+        }
+        
+        // Select all visible cells in the row
+        cells.forEach((cell, index) => {
+            this.selectedCells.add(cell);
+            cell.classList.add('selected');
+            
+            if (index === 0) {
+                this.primaryCell = cell;
+                this.primaryCellCoord = `${rowIndex},0`;
+                cell.classList.add('primary-selected');
+            }
+        });
+        
+        this.updateCellReference();
+        this.updateFormulaBar();
+        this.updateFormattingButtons();
+        this.log(`Selected full row ${rowIndex + 1}`);
+    }
+
+    selectFullColumn(colIndex) {
+        this.clearAllSelections();
+        
+        const cells = [];
+        for (let row = 0; row < this.config.maxRows; row++) {
+            const coordKey = `${row},${colIndex}`;
+            this.selectedCellCoords.add(coordKey);
+            
+            // Add visible cells to selectedCells
+            const cell = this.getCellAt(row, colIndex);
+            if (cell) {
+                cells.push(cell);
+            }
+        }
+        
+        // Select all visible cells in the column
+        cells.forEach((cell, index) => {
+            this.selectedCells.add(cell);
+            cell.classList.add('selected');
+            
+            if (index === 0) {
+                this.primaryCell = cell;
+                this.primaryCellCoord = `0,${colIndex}`;
+                cell.classList.add('primary-selected');
+            }
+        });
+        
+        this.updateCellReference();
+        this.updateFormulaBar();
+        this.updateFormattingButtons();
+        this.log(`Selected full column ${this.getColumnName(colIndex)}`);
+    }
 
     clearAllSelections() {
         this.selectedCells.forEach(cell => {
@@ -655,6 +753,27 @@ class SpreadsheetApp {
         const expectedSize = (maxRow - minRow + 1) * (maxCol - minCol + 1);
         
         if (coords.length === expectedSize) {
+            // Check if it's a full row selection
+            if (minCol === 0 && maxCol === this.config.maxCols - 1) {
+                if (minRow === maxRow) {
+                    this.cellReference.value = `Row ${minRow + 1}`;
+                } else {
+                    this.cellReference.value = `Rows ${minRow + 1}:${maxRow + 1}`;
+                }
+                return;
+            }
+            
+            // Check if it's a full column selection
+            if (minRow === 0 && maxRow === this.config.maxRows - 1) {
+                if (minCol === maxCol) {
+                    this.cellReference.value = `Column ${this.getColumnName(minCol)}`;
+                } else {
+                    this.cellReference.value = `Columns ${this.getColumnName(minCol)}:${this.getColumnName(maxCol)}`;
+                }
+                return;
+            }
+            
+            // Regular rectangle selection
             const startCell = this.getCellAddress(minRow, minCol);
             const endCell = this.getCellAddress(maxRow, maxCol);
             this.cellReference.value = startCell === endCell ? startCell : `${startCell}:${endCell}`;
