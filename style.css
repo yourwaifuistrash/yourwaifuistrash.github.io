@@ -1193,23 +1193,26 @@ select.form-control {
 
 .cell.italic {
   font-style: italic;
+  font-family: var(--font-family-base);
+}
+
+/* If italic doesn't render, force oblique */
+@supports (font-style: oblique) {
+  .cell.italic {
+    font-style: oblique 12deg;
+  }
 }
 
 .cell.underline {
-  text-decoration: underline;
+  text-decoration-line: underline;
 }
 
 .cell.strikethrough {
-  text-decoration: line-through;
+  text-decoration-line: line-through;
 }
 
-/* Handle multiple text-decorations */
 .cell.underline.strikethrough {
-  text-decoration: underline line-through;
-}
-
-.cell.italic {
-  font-style: italic;
+  text-decoration-line: underline line-through;
 }
 
 /* Header resize handles */
