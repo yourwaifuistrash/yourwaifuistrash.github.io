@@ -745,24 +745,17 @@ class SpreadsheetApp {
             return;
         }
 
-        // Check if all selected cells have the same font size
-        let commonFontSize = null;
-        let allSame = true;
-        
-        for (const coordKey of this.selectedCellCoords) {
-            const cellData = this.cellData.get(coordKey);
-            const fontSize = cellData?.fontSize || null;
+        // Get the primary cell's font size or default
+        if (this.primaryCellCoord) {
+            const cellData = this.cellData.get(this.primaryCellCoord);
+            const fontSize = cellData?.fontSize;
             
-            if (commonFontSize === null) {
-                commonFontSize = fontSize;
-            } else if (commonFontSize !== fontSize) {
-                allSame = false;
-                break;
+            if (fontSize) {
+                fontSizeInput.value = fontSize;
+            } else {
+                // Show default font size
+                fontSizeInput.value = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--font-size-sm'));
             }
-        }
-        
-        if (allSame && commonFontSize) {
-            fontSizeInput.value = commonFontSize;
         } else {
             fontSizeInput.value = '';
         }
