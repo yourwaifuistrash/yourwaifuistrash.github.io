@@ -15,9 +15,9 @@ class SpreadsheetApp {
 
         // State management
         this.selectedCells = new Set();
-        this.selectedCellCoords = new Set(); // Store coordinates instead of DOM references
+        this.selectedCellCoords = new Set();
         this.primaryCell = null;
-        this.primaryCellCoord = null; // Store primary cell coordinate
+        this.primaryCellCoord = null;
         this.isDragging = false;
         this.isCtrlDragging = false;
         this.dragStartCell = null;
@@ -25,8 +25,13 @@ class SpreadsheetApp {
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
 
+        // Undo/Redo system
+        this.undoStack = [];
+        this.redoStack = [];
+        this.maxUndoSteps = 50;
+
         // Grid data
-        this.cellData = new Map(); // Store cell values and formatting
+        this.cellData = new Map();
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
 
@@ -48,7 +53,130 @@ class SpreadsheetApp {
         this.generateHeaders();
         this.generateInitialGrid();
         this.setupColorPalette();
+        this.updateUndoRedoButtons();
         this.log('Spreadsheet initialized');
+    }
+
+    // Undo/Redo Methods
+    saveState(action) {
+        // Create a snapshot of current cell data
+        const state = {
+            action: action,
+            cellData: new Map(this.cellData),
+            timestamp: Date.now()
+        };
+
+        this.undoStack.push(state);
+        
+        // Limit undo stack size
+        if (this.undoStack.length > this.maxUndoSteps) {
+            this.undoStack.shift();
+        }
+
+        // Clear redo stack when new action is performed
+        this.redoStack = [];
+        
+        this.updateUndoRedoButtons();
+        this.log(`Saved state: ${action}`);
+    }
+
+    undo() {
+        if (this.undoStack.length === 0) {
+            this.log('Nothing to undo');
+            return;
+        }
+
+        // Save current state to redo stack
+        const currentState = {
+            action: 'current',
+            cellData: new Map(this.cellData),
+            timestamp: Date.now()
+        };
+        this.redoStack.push(currentState);
+
+        // Get previous state
+        const previousState = this.undoStack.pop();
+        
+        // Restore previous state
+        this.cellData = new Map(previousState.cellData);
+        
+        // Update all visible cells
+        this.refreshAllVisibleCells();
+        
+        this.updateUndoRedoButtons();
+        this.updateFormulaBar();
+        this.log(`Undone: ${previousState.action}`);
+    }
+
+    redo() {
+        if (this.redoStack.length === 0) {
+            this.log('Nothing to redo');
+            return;
+        }
+
+        // Save current state to undo stack
+        const currentState = {
+            action: 'redo-previous',
+            cellData: new Map(this.cellData),
+            timestamp: Date.now()
+        };
+        this.undoStack.push(currentState);
+
+        // Get next state
+        const nextState = this.redoStack.pop();
+        
+        // Restore next state
+        this.cellData = new Map(nextState.cellData);
+        
+        // Update all visible cells
+        this.refreshAllVisibleCells();
+        
+        this.updateUndoRedoButtons();
+        this.updateFormulaBar();
+        this.log('Redone action');
+    }
+
+    updateUndoRedoButtons() {
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        
+        if (undoBtn) {
+            undoBtn.disabled = this.undoStack.length === 0;
+            undoBtn.style.opacity = this.undoStack.length === 0 ? '0.5' : '1';
+        }
+        
+        if (redoBtn) {
+            redoBtn.disabled = this.redoStack.length === 0;
+            redoBtn.style.opacity = this.redoStack.length === 0 ? '0.5' : '1';
+        }
+    }
+
+    refreshAllVisibleCells() {
+        const visibleCells = this.gridContent.querySelectorAll('.cell');
+        visibleCells.forEach(cell => {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            const cellKey = `${row},${col}`;
+            const cellData = this.cellData.get(cellKey) || {};
+            
+            // Update content
+            cell.textContent = cellData.value || '';
+            
+            // Update formatting
+            cell.style.backgroundColor = cellData.backgroundColor || '';
+            
+            if (cellData.bold) {
+                cell.classList.add('bold');
+            } else {
+                cell.classList.remove('bold');
+            }
+            
+            if (cellData.italic) {
+                cell.classList.add('italic');
+            } else {
+                cell.classList.remove('italic');
+            }
+        });
     }
 
     // Fixed column numbering: A, B, C, ..., Z, AA, AB, AC, ... 
@@ -105,7 +233,7 @@ class SpreadsheetApp {
         for (let row = 0; row < this.config.maxRows; row++) {
             const header = document.createElement('div');
             header.className = 'row-header';
-            header.textContent = (row + 1).toString();  // 1, 2, 3, 4, 5, etc.
+            header.textContent = (row + 1).toString();
             header.dataset.row = row;
             this.rowHeaders.appendChild(header);
         }
@@ -231,6 +359,8 @@ class SpreadsheetApp {
         document.addEventListener('click', this.handleDocumentClick.bind(this));
 
         // Toolbar events
+        document.getElementById('undoBtn').addEventListener('click', () => this.undo());
+        document.getElementById('redoBtn').addEventListener('click', () => this.redo());
         document.getElementById('boldBtn').addEventListener('click', () => this.toggleFormat('bold'));
         document.getElementById('italicBtn').addEventListener('click', () => this.toggleFormat('italic'));
         document.getElementById('colorBtn').addEventListener('click', this.showColorPalette.bind(this));
@@ -271,7 +401,7 @@ class SpreadsheetApp {
         this.rowHeaders.style.transform = `translateY(-${scrollTop}px)`;
 
         // Calculate new visible area with padding for smooth scrolling
-        const padding = 10; // Extra cells to render outside viewport
+        const padding = 10;
         const newVisibleCols = {
             start: Math.max(0, Math.floor(scrollLeft / this.config.cellWidth) - padding),
             end: Math.min(this.config.maxCols, Math.ceil((scrollLeft + this.mainGrid.clientWidth) / this.config.cellWidth) + padding)
@@ -298,13 +428,12 @@ class SpreadsheetApp {
         const cell = event.target.closest('.cell');
         if (!cell || event.target.classList.contains('cell-editor')) return;
 
-        if (event.button === 2) return; // Ignore right-click
+        if (event.button === 2) return;
 
         this.dragStartCell = cell;
         this.isDragging = true;
         this.isCtrlDragging = event.ctrlKey || event.metaKey;
 
-        // Prevent default to avoid text selection during drag
         event.preventDefault();
 
         if (this.currentEditingCell && this.currentEditingCell !== cell) {
@@ -316,12 +445,10 @@ class SpreadsheetApp {
             this.ctrlDragProcessedCells.clear();
             this.processCtrlDragCell(cell);
         } else if (event.shiftKey && this.primaryCell) {
-            // Handle shift selection
             this.clearAllSelections();
             const rangeCells = this.getCellsInRect(this.primaryCell, cell);
             this.selectCells(rangeCells, true);
         } else {
-            // Regular selection - clear previous and select this cell
             this.clearAllSelections();
             this.selectCells([cell], true);
         }
@@ -374,7 +501,6 @@ class SpreadsheetApp {
             this.selectCells(rangeCells, !ctrlKey);
             this.log(`Shift-selected ${rangeCells.length} cells`);
         } else if (ctrlKey) {
-            // Handled in mouse events for drag support
             return;
         } else {
             this.clearAllSelections();
@@ -478,23 +604,19 @@ class SpreadsheetApp {
         }
         
         if (this.selectedCellCoords.size === 1) {
-            // Single cell selected
             if (this.primaryCell) {
                 this.cellReference.value = this.primaryCell.dataset.address;
             }
             return;
         }
         
-        // Multiple cells - try to detect contiguous ranges
         const coords = Array.from(this.selectedCellCoords).map(coord => {
             const [row, col] = coord.split(',').map(Number);
             return { row, col };
         });
         
-        // Sort coordinates
         coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
         
-        // Check if it's a single contiguous rectangle
         const minRow = Math.min(...coords.map(c => c.row));
         const maxRow = Math.max(...coords.map(c => c.row));
         const minCol = Math.min(...coords.map(c => c.col));
@@ -503,12 +625,10 @@ class SpreadsheetApp {
         const expectedSize = (maxRow - minRow + 1) * (maxCol - minCol + 1);
         
         if (coords.length === expectedSize) {
-            // It's a single rectangle
             const startCell = this.getCellAddress(minRow, minCol);
             const endCell = this.getCellAddress(maxRow, maxCol);
             this.cellReference.value = startCell === endCell ? startCell : `${startCell}:${endCell}`;
         } else {
-            // Multiple non-contiguous selections - show count
             this.cellReference.value = `${this.selectedCellCoords.size} cells selected`;
         }
     }
@@ -550,7 +670,6 @@ class SpreadsheetApp {
         input.focus();
         input.select();
 
-        // Update formula bar
         this.formulaInput.value = currentText;
 
         input.addEventListener('blur', () => this.stopEditingCell());
@@ -581,22 +700,24 @@ class SpreadsheetApp {
         const oldValue = this.currentEditingCell.dataset.originalValue || '';
         const newValue = cancel ? oldValue : input.value;
 
-        // Update cell display
         this.currentEditingCell.textContent = newValue;
         this.currentEditingCell.classList.remove('editing');
         delete this.currentEditingCell.dataset.originalValue;
 
-        // Update cell data
         const row = parseInt(this.currentEditingCell.dataset.row);
         const col = parseInt(this.currentEditingCell.dataset.col);
         const cellKey = `${row},${col}`;
+        
+        if (!cancel && oldValue !== newValue) {
+            // Save state before making changes
+            this.saveState(`Edit cell ${this.currentEditingCell.dataset.address}`);
+        }
         
         if (!this.cellData.has(cellKey)) {
             this.cellData.set(cellKey, {});
         }
         this.cellData.get(cellKey).value = newValue;
 
-        // Update formula bar
         this.formulaInput.value = newValue;
 
         if (!cancel && oldValue !== newValue) {
@@ -614,7 +735,6 @@ class SpreadsheetApp {
         const newRow = Math.max(0, Math.min(this.config.maxRows - 1, currentRow + deltaRow));
         const newCol = Math.max(0, Math.min(this.config.maxCols - 1, currentCol + deltaCol));
 
-        // Ensure the new cell is visible by scrolling if necessary
         this.scrollToCell(newRow, newCol);
 
         const newCell = this.getCellAt(newRow, newCol);
@@ -622,7 +742,6 @@ class SpreadsheetApp {
             this.clearAllSelections();
             this.selectCells([newCell], true);
         } else {
-            // Create cell if it doesn't exist in DOM yet
             const cell = this.createCell(newRow, newCol);
             this.clearAllSelections();
             this.selectCells([cell], true);
@@ -666,6 +785,20 @@ class SpreadsheetApp {
 
     handleKeyDown(event) {
         if (this.currentEditingCell) return;
+
+        // Handle Ctrl+Z for undo
+        if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+            event.preventDefault();
+            this.undo();
+            return;
+        }
+
+        // Handle Ctrl+Y or Ctrl+Shift+Z for redo
+        if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.key === 'z' && event.shiftKey))) {
+            event.preventDefault();
+            this.redo();
+            return;
+        }
 
         // Handle Ctrl+A / Cmd+A for select all
         if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
@@ -715,7 +848,6 @@ class SpreadsheetApp {
     selectAllCells() {
         this.clearAllSelections();
         
-        // Add all cell coordinates to the selection without creating DOM elements
         for (let row = 0; row < this.config.maxRows; row++) {
             for (let col = 0; col < this.config.maxCols; col++) {
                 const coordKey = `${row},${col}`;
@@ -723,10 +855,8 @@ class SpreadsheetApp {
             }
         }
         
-        // Set the primary cell to A1
         this.primaryCellCoord = '0,0';
         
-        // Apply selection styling to all visible cells
         const visibleCells = this.gridContent.querySelectorAll('.cell');
         visibleCells.forEach(cell => {
             const row = parseInt(cell.dataset.row);
@@ -750,14 +880,15 @@ class SpreadsheetApp {
     }
 
     clearCellContent() {
-        // Clear content in cellData for all selected coordinates
+        // Save state before clearing
+        this.saveState(`Clear content of ${this.selectedCellCoords.size} cells`);
+        
         this.selectedCellCoords.forEach(coordKey => {
             if (this.cellData.has(coordKey)) {
                 this.cellData.get(coordKey).value = '';
             }
         });
 
-        // Clear visual content for visible cells
         this.selectedCells.forEach(cell => {
             cell.textContent = '';
         });
@@ -770,7 +901,7 @@ class SpreadsheetApp {
         const cell = event.target.closest('.cell');
         
         if (this.currentEditingCell && event.target.classList.contains('cell-editor')) {
-            return; // Allow browser context menu for text editing
+            return;
         }
 
         if (cell && !event.target.classList.contains('cell-editor')) {
@@ -791,7 +922,6 @@ class SpreadsheetApp {
         this.contextMenu.style.left = x + 'px';
         this.contextMenu.style.top = y + 'px';
 
-        // Adjust position if menu goes off-screen
         setTimeout(() => {
             const rect = this.contextMenu.getBoundingClientRect();
             if (rect.right > window.innerWidth) {
@@ -824,12 +954,13 @@ class SpreadsheetApp {
             case 'clearFormat':
                 this.clearCellFormatting();
                 break;
-            // Add more context actions as needed
         }
     }
 
     clearCellFormatting() {
-        // Clear formatting in cellData for all selected coordinates
+        // Save state before clearing
+        this.saveState(`Clear formatting from ${this.selectedCellCoords.size} cells`);
+        
         this.selectedCellCoords.forEach(coordKey => {
             if (this.cellData.has(coordKey)) {
                 const data = this.cellData.get(coordKey);
@@ -839,7 +970,6 @@ class SpreadsheetApp {
             }
         });
 
-        // Clear visual formatting for visible cells
         this.selectedCells.forEach(cell => {
             cell.style.backgroundColor = '';
             cell.classList.remove('bold', 'italic');
@@ -867,6 +997,9 @@ class SpreadsheetApp {
     toggleFormat(format) {
         if (this.selectedCellCoords.size === 0) return;
 
+        // Save state before formatting
+        this.saveState(`Toggle ${format} for ${this.selectedCellCoords.size} cells`);
+
         const button = document.getElementById(format + 'Btn');
         const isActive = button.classList.contains('active');
         
@@ -876,7 +1009,6 @@ class SpreadsheetApp {
             button.classList.add('active');
         }
 
-        // Apply to all selected coordinates in cellData
         this.selectedCellCoords.forEach(coordKey => {
             if (!this.cellData.has(coordKey)) {
                 this.cellData.set(coordKey, {});
@@ -899,7 +1031,6 @@ class SpreadsheetApp {
             }
         });
 
-        // Apply visual styling to currently visible cells
         this.selectedCells.forEach(cell => {
             if (format === 'bold') {
                 if (isActive) {
@@ -937,7 +1068,6 @@ class SpreadsheetApp {
     setupColorPalette() {
         const grid = document.getElementById('colorPaletteGrid');
         
-        // Add clear color option
         const clearSwatch = document.createElement('div');
         clearSwatch.className = 'color-swatch clear';
         clearSwatch.title = 'No fill';
@@ -947,7 +1077,6 @@ class SpreadsheetApp {
         });
         grid.appendChild(clearSwatch);
 
-        // Add color swatches
         this.config.colors.forEach(color => {
             const swatch = document.createElement('div');
             swatch.className = 'color-swatch';
@@ -964,7 +1093,9 @@ class SpreadsheetApp {
     applyBackgroundColor(color) {
         if (this.selectedCellCoords.size === 0) return;
 
-        // Apply to all selected coordinates in cellData
+        // Save state before applying color
+        this.saveState(`Apply background color to ${this.selectedCellCoords.size} cells`);
+
         this.selectedCellCoords.forEach(coordKey => {
             if (!this.cellData.has(coordKey)) {
                 this.cellData.set(coordKey, {});
@@ -977,7 +1108,6 @@ class SpreadsheetApp {
             }
         });
 
-        // Apply visual styling to currently visible cells
         this.selectedCells.forEach(cell => {
             if (color) {
                 cell.style.backgroundColor = color;
@@ -993,7 +1123,13 @@ class SpreadsheetApp {
         if (event.key === 'Enter') {
             event.preventDefault();
             if (this.primaryCell) {
+                const oldValue = this.cellData.get(`${this.primaryCell.dataset.row},${this.primaryCell.dataset.col}`)?.value || '';
                 const newValue = this.formulaInput.value;
+                
+                if (oldValue !== newValue) {
+                    this.saveState(`Update cell ${this.primaryCell.dataset.address} via formula bar`);
+                }
+                
                 this.updateCellValue(this.primaryCell, newValue);
                 this.log(`Updated cell ${this.primaryCell.dataset.address} via formula bar: "${newValue}"`);
             }
@@ -1036,17 +1172,14 @@ class SpreadsheetApp {
             event.preventDefault();
             const input = this.cellReference.value.trim().toUpperCase();
             
-            // Check if it's a range (e.g., A1:B2)
             if (input.includes(':')) {
                 const [start, end] = input.split(':');
                 const startParsed = this.parseCellAddress(start);
                 const endParsed = this.parseCellAddress(end);
                 
                 if (startParsed && endParsed) {
-                    // Ensure start cell is visible
                     this.scrollToCell(startParsed.row, startParsed.col);
                     
-                    // Get or create cells in range
                     const minRow = Math.min(startParsed.row, endParsed.row);
                     const maxRow = Math.max(startParsed.row, endParsed.row);
                     const minCol = Math.min(startParsed.col, endParsed.col);
@@ -1064,7 +1197,6 @@ class SpreadsheetApp {
                     this.selectCells(rangeCells, true);
                 }
             } else {
-                // Single cell
                 const parsed = this.parseCellAddress(input);
                 if (parsed) {
                     this.scrollToCell(parsed.row, parsed.col);
@@ -1081,7 +1213,11 @@ class SpreadsheetApp {
         this.clearAllSelections();
         this.cellData.clear();
         
-        // Clear all visible cells
+        // Clear undo/redo stacks
+        this.undoStack = [];
+        this.redoStack = [];
+        this.updateUndoRedoButtons();
+        
         this.gridContent.querySelectorAll('.cell').forEach(cell => {
             cell.textContent = '';
             cell.style.backgroundColor = '';
@@ -1090,14 +1226,12 @@ class SpreadsheetApp {
         
         this.formulaInput.value = '';
         
-        // Reset formatting buttons
         document.getElementById('boldBtn').classList.remove('active');
         document.getElementById('italicBtn').classList.remove('active');
         
         this.log('Reset all data and formatting');
     }
 
-    // Global function for context menu color application
     applyContextColor() {
         const color = document.getElementById('contextColorPicker').value;
         this.applyBackgroundColor(color);
