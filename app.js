@@ -25,6 +25,14 @@ class SpreadsheetApp {
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
 
+        // Resize state
+        this.isResizing = false;
+        this.resizeType = null; // 'row' or 'column'
+        this.resizeIndex = null;
+        this.resizeStartPos = null;
+        this.resizeStartSize = null;
+        this.justResized = false;
+
         // Undo/Redo system
         this.undoStack = [];
         this.redoStack = [];
@@ -32,6 +40,8 @@ class SpreadsheetApp {
 
         // Grid data
         this.cellData = new Map();
+        this.rowHeights = new Map(); // Store custom row heights
+        this.columnWidths = new Map(); // Store custom column widths
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
 
@@ -236,31 +246,65 @@ class SpreadsheetApp {
         this.columnHeaders.innerHTML = '';
         this.rowHeaders.innerHTML = '';
         
-        // Generate column headers - ensure every column gets a letter
+        // Generate column headers
         for (let col = 0; col < this.config.maxCols; col++) {
             const header = document.createElement('div');
             header.className = 'column-header';
             header.textContent = this.getColumnName(col);
             header.dataset.col = col;
+            
+            // Add resize handle
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = 'column-resize-handle';
+            resizeHandle.dataset.col = col;
+            header.appendChild(resizeHandle);
+            
             this.columnHeaders.appendChild(header);
         }
 
-        // Generate row headers - ensure every row gets a number
+        // Generate row headers
         for (let row = 0; row < this.config.maxRows; row++) {
             const header = document.createElement('div');
             header.className = 'row-header';
             header.textContent = (row + 1).toString();
             header.dataset.row = row;
+            
+            // Add resize handle
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = 'row-resize-handle';
+            resizeHandle.dataset.row = row;
+            header.appendChild(resizeHandle);
+            
             this.rowHeaders.appendChild(header);
         }
 
+        this.updateHeaderPositions();
         this.log(`Generated headers: ${this.config.maxCols} columns, ${this.config.maxRows} rows`);
+    }
+
+    updateHeaderPositions() {
+        // Update column header positions
+        const columnHeaders = this.columnHeaders.querySelectorAll('.column-header');
+        columnHeaders.forEach((header, index) => {
+            const left = this.getColumnLeft(index);
+            const width = this.getColumnWidth(index);
+            header.style.left = left + 'px';
+            header.style.width = width + 'px';
+        });
+
+        // Update row header positions
+        const rowHeaders = this.rowHeaders.querySelectorAll('.row-header');
+        rowHeaders.forEach((header, index) => {
+            const top = this.getRowTop(index);
+            const height = this.getRowHeight(index);
+            header.style.top = top + 'px';
+            header.style.height = height + 'px';
+        });
     }
 
     generateInitialGrid() {
         // Set grid content size for scrolling
-        this.gridContent.style.width = `${this.config.maxCols * this.config.cellWidth}px`;
-        this.gridContent.style.height = `${this.config.maxRows * this.config.cellHeight}px`;
+        this.updateGridSize();
 
         // Calculate initial visible area based on viewport
         const viewportCols = Math.ceil(this.mainGrid.clientWidth / this.config.cellWidth) + 10;
@@ -337,11 +381,11 @@ class SpreadsheetApp {
         cell.dataset.col = col;
         cell.dataset.address = this.getCellAddress(row, col);
         
-        // Position the cell
-        cell.style.left = `${col * this.config.cellWidth}px`;
-        cell.style.top = `${row * this.config.cellHeight}px`;
-        cell.style.width = `${this.config.cellWidth}px`;
-        cell.style.height = `${this.config.cellHeight}px`;
+        // Position the cell with dynamic sizing
+        cell.style.left = this.getColumnLeft(col) + 'px';
+        cell.style.top = this.getRowTop(row) + 'px';
+        cell.style.width = this.getColumnWidth(col) + 'px';
+        cell.style.height = this.getRowHeight(row) + 'px';
 
         // Get cell data
         const cellKey = `${row},${col}`;
@@ -382,6 +426,46 @@ class SpreadsheetApp {
         this.gridContent.appendChild(cell);
         return cell;
     }
+    
+    getRowHeight(row) {
+        return this.rowHeights.get(row) || this.config.cellHeight;
+    }
+
+    getColumnWidth(col) {
+        return this.columnWidths.get(col) || this.config.cellWidth;
+    }
+
+    getRowTop(row) {
+        let top = 0;
+        for (let r = 0; r < row; r++) {
+            top += this.getRowHeight(r);
+        }
+        return top;
+    }
+
+    getColumnLeft(col) {
+        let left = 0;
+        for (let c = 0; c < col; c++) {
+            left += this.getColumnWidth(c);
+        }
+        return left;
+    }
+
+    getTotalGridHeight() {
+        let height = 0;
+        for (let r = 0; r < this.config.maxRows; r++) {
+            height += this.getRowHeight(r);
+        }
+        return height;
+    }
+
+    getTotalGridWidth() {
+        let width = 0;
+        for (let c = 0; c < this.config.maxCols; c++) {
+            width += this.getColumnWidth(c);
+        }
+        return width;
+    }
 
     setupEventListeners() {
         // Main grid events
@@ -390,7 +474,9 @@ class SpreadsheetApp {
         this.mainGrid.addEventListener('dblclick', this.handleDoubleClick.bind(this));
         this.mainGrid.addEventListener('scroll', this.handleScroll.bind(this));
         
+        // Document-level events for resize and mouse release
         document.addEventListener('mouseup', this.handleMouseUp.bind(this));
+        document.addEventListener('mousemove', this.handleDocumentMouseMove.bind(this));
         document.addEventListener('keydown', this.handleKeyDown.bind(this));
         document.addEventListener('contextmenu', this.handleContextMenu.bind(this));
         document.addEventListener('click', this.handleDocumentClick.bind(this));
@@ -398,6 +484,10 @@ class SpreadsheetApp {
         // Header click events for row/column selection
         this.columnHeaders.addEventListener('click', this.handleColumnHeaderClick.bind(this));
         this.rowHeaders.addEventListener('click', this.handleRowHeaderClick.bind(this));
+        
+        // Resize handle events
+        this.columnHeaders.addEventListener('mousedown', this.handleResizeMouseDown.bind(this));
+        this.rowHeaders.addEventListener('mousedown', this.handleResizeMouseDown.bind(this));
         
         // Corner cell click for select all
         const cornerCell = document.querySelector('.corner-cell');
@@ -447,9 +537,78 @@ class SpreadsheetApp {
 
         // Prevent text selection while dragging
         this.mainGrid.addEventListener('selectstart', (e) => {
-            if (this.isDragging && !e.target.classList.contains('cell-editor')) {
+            if ((this.isDragging || this.isResizing) && !e.target.classList.contains('cell-editor')) {
                 e.preventDefault();
             }
+        });
+    }
+    
+    handleResizeMouseDown(event) {
+        const columnHandle = event.target.closest('.column-resize-handle');
+        const rowHandle = event.target.closest('.row-resize-handle');
+        
+        if (columnHandle) {
+            event.stopPropagation();
+            event.preventDefault();
+            
+            this.isResizing = true;
+            this.resizeType = 'column';
+            this.resizeIndex = parseInt(columnHandle.dataset.col);
+            this.resizeStartPos = event.clientX;
+            this.resizeStartSize = this.getColumnWidth(this.resizeIndex);
+            
+            document.body.style.cursor = 'col-resize';
+        } else if (rowHandle) {
+            event.stopPropagation();
+            event.preventDefault();
+            
+            this.isResizing = true;
+            this.resizeType = 'row';
+            this.resizeIndex = parseInt(rowHandle.dataset.row);
+            this.resizeStartPos = event.clientY;
+            this.resizeStartSize = this.getRowHeight(this.resizeIndex);
+            
+            document.body.style.cursor = 'row-resize';
+        }
+    }
+
+    handleDocumentMouseMove(event) {
+        if (!this.isResizing) return;
+        
+        if (this.resizeType === 'column') {
+            const delta = event.clientX - this.resizeStartPos;
+            const newWidth = Math.max(30, this.resizeStartSize + delta);
+            this.columnWidths.set(this.resizeIndex, newWidth);
+            
+            this.updateHeaderPositions();
+            this.updateGridSize();
+            this.repositionCells();
+        } else if (this.resizeType === 'row') {
+            const delta = event.clientY - this.resizeStartPos;
+            const newHeight = Math.max(20, this.resizeStartSize + delta);
+            this.rowHeights.set(this.resizeIndex, newHeight);
+            
+            this.updateHeaderPositions();
+            this.updateGridSize();
+            this.repositionCells();
+        }
+    }
+
+    updateGridSize() {
+        this.gridContent.style.width = this.getTotalGridWidth() + 'px';
+        this.gridContent.style.height = this.getTotalGridHeight() + 'px';
+    }
+
+    repositionCells() {
+        const cells = this.gridContent.querySelectorAll('.cell');
+        cells.forEach(cell => {
+            const row = parseInt(cell.dataset.row);
+            const col = parseInt(cell.dataset.col);
+            
+            cell.style.left = this.getColumnLeft(col) + 'px';
+            cell.style.top = this.getRowTop(row) + 'px';
+            cell.style.width = this.getColumnWidth(col) + 'px';
+            cell.style.height = this.getRowHeight(row) + 'px';
         });
     }
     
@@ -530,31 +689,37 @@ class SpreadsheetApp {
     }
     
     handleColumnHeaderClick(event) {
+        // Ignore clicks on resize handles or after resize
+        if (event.target.closest('.column-resize-handle') || this.justResized) {
+            return;
+        }
+        
         const header = event.target.closest('.column-header');
         if (!header) return;
         
         const colIndex = parseInt(header.dataset.col);
         
         if (event.ctrlKey || event.metaKey) {
-            // Add column to existing selection
             this.addFullColumnToSelection(colIndex);
         } else {
-            // Replace selection with this column
             this.selectFullColumn(colIndex);
         }
     }
 
     handleRowHeaderClick(event) {
+        // Ignore clicks on resize handles or after resize
+        if (event.target.closest('.row-resize-handle') || this.justResized) {
+            return;
+        }
+        
         const header = event.target.closest('.row-header');
         if (!header) return;
         
         const rowIndex = parseInt(header.dataset.row);
         
         if (event.ctrlKey || event.metaKey) {
-            // Add row to existing selection
             this.addFullRowToSelection(rowIndex);
         } else {
-            // Replace selection with this row
             this.selectFullRow(rowIndex);
         }
     }
@@ -572,17 +737,55 @@ class SpreadsheetApp {
         this.columnHeaders.style.transform = `translateX(-${scrollLeft}px)`;
         this.rowHeaders.style.transform = `translateY(-${scrollTop}px)`;
 
-        // Calculate new visible area with padding for smooth scrolling
+        // Calculate new visible area with dynamic row/column sizes
         const padding = 10;
-        const newVisibleCols = {
-            start: Math.max(0, Math.floor(scrollLeft / this.config.cellWidth) - padding),
-            end: Math.min(this.config.maxCols, Math.ceil((scrollLeft + this.mainGrid.clientWidth) / this.config.cellWidth) + padding)
-        };
+        
+        // Find visible columns
+        let colStart = 0;
+        let accumulatedWidth = 0;
+        for (let c = 0; c < this.config.maxCols; c++) {
+            if (accumulatedWidth >= scrollLeft) {
+                colStart = Math.max(0, c - padding);
+                break;
+            }
+            accumulatedWidth += this.getColumnWidth(c);
+        }
+        
+        let colEnd = colStart;
+        accumulatedWidth = 0;
+        for (let c = colStart; c < this.config.maxCols; c++) {
+            accumulatedWidth += this.getColumnWidth(c);
+            if (accumulatedWidth >= this.mainGrid.clientWidth) {
+                colEnd = Math.min(this.config.maxCols, c + padding);
+                break;
+            }
+        }
+        if (colEnd === colStart) colEnd = this.config.maxCols;
+        
+        // Find visible rows
+        let rowStart = 0;
+        let accumulatedHeight = 0;
+        for (let r = 0; r < this.config.maxRows; r++) {
+            if (accumulatedHeight >= scrollTop) {
+                rowStart = Math.max(0, r - padding);
+                break;
+            }
+            accumulatedHeight += this.getRowHeight(r);
+        }
+        
+        let rowEnd = rowStart;
+        accumulatedHeight = 0;
+        for (let r = rowStart; r < this.config.maxRows; r++) {
+            accumulatedHeight += this.getRowHeight(r);
+            if (accumulatedHeight >= this.mainGrid.clientHeight) {
+                rowEnd = Math.min(this.config.maxRows, r + padding);
+                break;
+            }
+        }
+        if (rowEnd === rowStart) rowEnd = this.config.maxRows;
 
-        const newVisibleRows = {
-            start: Math.max(0, Math.floor(scrollTop / this.config.cellHeight) - padding),
-            end: Math.min(this.config.maxRows, Math.ceil((scrollTop + this.mainGrid.clientHeight) / this.config.cellHeight) + padding)
-        };
+        const newVisibleCols = { start: colStart, end: colEnd };
+        const newVisibleRows = { start: rowStart, end: rowEnd };
 
         // Update if visible area changed
         if (newVisibleCols.start !== this.visibleCols.start || 
@@ -647,6 +850,23 @@ class SpreadsheetApp {
     }
 
     handleMouseUp(event) {
+        if (this.isResizing) {
+            this.isResizing = false;
+            this.resizeType = null;
+            this.resizeIndex = null;
+            this.resizeStartPos = null;
+            this.resizeStartSize = null;
+            document.body.style.cursor = '';
+            
+            // Set flag to prevent click event from firing
+            this.justResized = true;
+            setTimeout(() => {
+                this.justResized = false;
+            }, 10);
+            
+            return;
+        }
+        
         this.isDragging = false;
         this.dragStartCell = null;
         this.isCtrlDragging = false;
@@ -1083,10 +1303,10 @@ class SpreadsheetApp {
     }
 
     scrollToCell(row, col) {
-        const cellLeft = col * this.config.cellWidth;
-        const cellTop = row * this.config.cellHeight;
-        const cellRight = cellLeft + this.config.cellWidth;
-        const cellBottom = cellTop + this.config.cellHeight;
+        const cellLeft = this.getColumnLeft(col);
+        const cellTop = this.getRowTop(row);
+        const cellRight = cellLeft + this.getColumnWidth(col);
+        const cellBottom = cellTop + this.getRowHeight(row);
 
         const viewLeft = this.mainGrid.scrollLeft;
         const viewTop = this.mainGrid.scrollTop;
