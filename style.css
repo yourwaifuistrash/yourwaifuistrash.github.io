@@ -841,6 +841,12 @@ select.form-control {
   border-bottom: 1px solid var(--color-border);
   position: relative;
   z-index: 3;
+  cursor: pointer;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.corner-cell:hover {
+  background-color: var(--color-bg-2);
 }
 
 /* Headers */

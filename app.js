@@ -393,6 +393,12 @@ class SpreadsheetApp {
         // Header click events for row/column selection
         this.columnHeaders.addEventListener('click', this.handleColumnHeaderClick.bind(this));
         this.rowHeaders.addEventListener('click', this.handleRowHeaderClick.bind(this));
+        
+        // Corner cell click for select all
+        const cornerCell = document.querySelector('.corner-cell');
+        if (cornerCell) {
+            cornerCell.addEventListener('click', this.handleCornerCellClick.bind(this));
+        }
 
         // Toolbar events
         document.getElementById('undoBtn').addEventListener('click', () => this.undo());
@@ -435,7 +441,14 @@ class SpreadsheetApp {
         if (!header) return;
         
         const colIndex = parseInt(header.dataset.col);
-        this.selectFullColumn(colIndex);
+        
+        if (event.ctrlKey || event.metaKey) {
+            // Add column to existing selection
+            this.addFullColumnToSelection(colIndex);
+        } else {
+            // Replace selection with this column
+            this.selectFullColumn(colIndex);
+        }
     }
 
     handleRowHeaderClick(event) {
@@ -443,7 +456,19 @@ class SpreadsheetApp {
         if (!header) return;
         
         const rowIndex = parseInt(header.dataset.row);
-        this.selectFullRow(rowIndex);
+        
+        if (event.ctrlKey || event.metaKey) {
+            // Add row to existing selection
+            this.addFullRowToSelection(rowIndex);
+        } else {
+            // Replace selection with this row
+            this.selectFullRow(rowIndex);
+        }
+    }
+
+    handleCornerCellClick(event) {
+        // Select all cells in the spreadsheet
+        this.selectAllCells();
     }
 
     handleScroll() {
@@ -711,6 +736,70 @@ class SpreadsheetApp {
         this.log(`Selected full column ${this.getColumnName(colIndex)}`);
     }
 
+    addFullRowToSelection(rowIndex) {
+        const cells = [];
+        for (let col = 0; col < this.config.maxCols; col++) {
+            const coordKey = `${rowIndex},${col}`;
+            this.selectedCellCoords.add(coordKey);
+            
+            // Add visible cells to selectedCells
+            const cell = this.getCellAt(rowIndex, col);
+            if (cell) {
+                cells.push(cell);
+            }
+        }
+        
+        // Select all visible cells in the row
+        cells.forEach((cell, index) => {
+            this.selectedCells.add(cell);
+            cell.classList.add('selected');
+            
+            // Set primary cell if none exists
+            if (!this.primaryCell && index === 0) {
+                this.primaryCell = cell;
+                this.primaryCellCoord = `${rowIndex},0`;
+                cell.classList.add('primary-selected');
+            }
+        });
+        
+        this.updateCellReference();
+        this.updateFormulaBar();
+        this.updateFormattingButtons();
+        this.log(`Added full row ${rowIndex + 1} to selection`);
+    }
+
+    addFullColumnToSelection(colIndex) {
+        const cells = [];
+        for (let row = 0; row < this.config.maxRows; row++) {
+            const coordKey = `${row},${colIndex}`;
+            this.selectedCellCoords.add(coordKey);
+            
+            // Add visible cells to selectedCells
+            const cell = this.getCellAt(row, colIndex);
+            if (cell) {
+                cells.push(cell);
+            }
+        }
+        
+        // Select all visible cells in the column
+        cells.forEach((cell, index) => {
+            this.selectedCells.add(cell);
+            cell.classList.add('selected');
+            
+            // Set primary cell if none exists
+            if (!this.primaryCell && index === 0) {
+                this.primaryCell = cell;
+                this.primaryCellCoord = `0,${colIndex}`;
+                cell.classList.add('primary-selected');
+            }
+        });
+        
+        this.updateCellReference();
+        this.updateFormulaBar();
+        this.updateFormattingButtons();
+        this.log(`Added full column ${this.getColumnName(colIndex)} to selection`);
+    }
+    
     clearAllSelections() {
         this.selectedCells.forEach(cell => {
             cell.classList.remove('selected', 'primary-selected');
