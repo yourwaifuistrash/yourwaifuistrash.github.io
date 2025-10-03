@@ -1195,6 +1195,23 @@ select.form-control {
   font-style: italic;
 }
 
+.cell.underline {
+  text-decoration: underline;
+}
+
+.cell.strikethrough {
+  text-decoration: line-through;
+}
+
+/* Handle multiple text-decorations */
+.cell.underline.strikethrough {
+  text-decoration: underline line-through;
+}
+
+.cell.italic {
+  font-style: italic;
+}
+
 /* Header resize handles */
 .column-header::after, .row-header::after {
   content: '';

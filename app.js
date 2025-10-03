@@ -176,7 +176,21 @@ class SpreadsheetApp {
             } else {
                 cell.classList.remove('italic');
             }
+
+            if (cellData.underline) {
+                cell.classList.add('underline');
+            } else {
+                cell.classList.remove('underline');
+            }
+
+            if (cellData.strikethrough) {
+                cell.classList.add('strikethrough');
+            } else {
+                cell.classList.remove('strikethrough');
+            }
         });
+        
+        this.updateFormattingButtons();
     }
 
     // Fixed column numbering: A, B, C, ..., Z, AA, AB, AC, ... 
@@ -330,6 +344,12 @@ class SpreadsheetApp {
         if (cellData.italic) {
             cell.classList.add('italic');
         }
+        if (cellData.underline) {
+            cell.classList.add('underline');
+        }
+        if (cellData.strikethrough) {
+            cell.classList.add('strikethrough');
+        }
 
         // Restore selection state
         const coordKey = `${row},${col}`;
@@ -363,6 +383,8 @@ class SpreadsheetApp {
         document.getElementById('redoBtn').addEventListener('click', () => this.redo());
         document.getElementById('boldBtn').addEventListener('click', () => this.toggleFormat('bold'));
         document.getElementById('italicBtn').addEventListener('click', () => this.toggleFormat('italic'));
+        document.getElementById('underlineBtn').addEventListener('click', () => this.toggleFormat('underline'));
+        document.getElementById('strikethroughBtn').addEventListener('click', () => this.toggleFormat('strikethrough'));
         document.getElementById('colorBtn').addEventListener('click', this.showColorPalette.bind(this));
 
         // Formula bar events
@@ -975,14 +997,17 @@ class SpreadsheetApp {
                 delete data.backgroundColor;
                 delete data.bold;
                 delete data.italic;
+                delete data.underline;
+                delete data.strikethrough;
             }
         });
 
         this.selectedCells.forEach(cell => {
             cell.style.backgroundColor = '';
-            cell.classList.remove('bold', 'italic');
+            cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
         });
 
+        this.updateFormattingButtons();
         this.log(`Cleared formatting from ${this.selectedCellCoords.size} cells`);
     }
 
@@ -1067,6 +1092,8 @@ class SpreadsheetApp {
             // No cells selected - deactivate all formatting buttons
             document.getElementById('boldBtn').classList.remove('active');
             document.getElementById('italicBtn').classList.remove('active');
+            document.getElementById('underlineBtn').classList.remove('active');
+            document.getElementById('strikethroughBtn').classList.remove('active');
             return;
         }
 
@@ -1084,6 +1111,22 @@ class SpreadsheetApp {
             document.getElementById('italicBtn').classList.add('active');
         } else {
             document.getElementById('italicBtn').classList.remove('active');
+        }
+
+        // Update underline button
+        const allUnderline = this.checkIfAllCellsHaveFormat('underline');
+        if (allUnderline) {
+            document.getElementById('underlineBtn').classList.add('active');
+        } else {
+            document.getElementById('underlineBtn').classList.remove('active');
+        }
+
+        // Update strikethrough button
+        const allStrikethrough = this.checkIfAllCellsHaveFormat('strikethrough');
+        if (allStrikethrough) {
+            document.getElementById('strikethroughBtn').classList.add('active');
+        } else {
+            document.getElementById('strikethroughBtn').classList.remove('active');
         }
     }
 
@@ -1258,13 +1301,15 @@ class SpreadsheetApp {
         this.gridContent.querySelectorAll('.cell').forEach(cell => {
             cell.textContent = '';
             cell.style.backgroundColor = '';
-            cell.classList.remove('bold', 'italic');
+            cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
         });
         
         this.formulaInput.value = '';
         
         document.getElementById('boldBtn').classList.remove('active');
         document.getElementById('italicBtn').classList.remove('active');
+        document.getElementById('underlineBtn').classList.remove('active');
+        document.getElementById('strikethroughBtn').classList.remove('active');
         
         this.log('Reset all data and formatting');
     }
