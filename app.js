@@ -480,6 +480,11 @@ class SpreadsheetApp {
         this.isCtrlDragging = false;
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells.clear();
+        
+        // Update formatting buttons after any selection change
+        if (this.selectedCells.size > 0) {
+            this.updateFormattingButtons();
+        }
     }
 
     handleDoubleClick(event) {
@@ -534,6 +539,7 @@ class SpreadsheetApp {
         }
         this.ctrlDragProcessedCells.add(cell);
         this.updateCellReference();
+        this.updateFormattingButtons(); // Add this line
     }
 
     getCellsInRect(startCell, endCell) {
@@ -582,6 +588,7 @@ class SpreadsheetApp {
         });
         this.updateCellReference();
         this.updateFormulaBar();
+        this.updateFormattingButtons(); // Add this line
     }
 
     clearAllSelections() {
@@ -594,6 +601,7 @@ class SpreadsheetApp {
         this.primaryCellCoord = null;
         this.updateCellReference();
         this.updateFormulaBar();
+        this.updateFormattingButtons(); // Add this line
         this.log('Cleared all selections');
     }
 
@@ -997,57 +1005,86 @@ class SpreadsheetApp {
     toggleFormat(format) {
         if (this.selectedCellCoords.size === 0) return;
 
+        // Check if all selected cells have this format
+        const allHaveFormat = this.checkIfAllCellsHaveFormat(format);
+        
         // Save state before formatting
         this.saveState(`Toggle ${format} for ${this.selectedCellCoords.size} cells`);
 
         const button = document.getElementById(format + 'Btn');
-        const isActive = button.classList.contains('active');
         
-        if (isActive) {
+        // Apply or remove format based on current state
+        if (allHaveFormat) {
+            // Remove format from all cells
             button.classList.remove('active');
+            
+            this.selectedCellCoords.forEach(coordKey => {
+                if (this.cellData.has(coordKey)) {
+                    const data = this.cellData.get(coordKey);
+                    delete data[format];
+                }
+            });
+
+            this.selectedCells.forEach(cell => {
+                cell.classList.remove(format);
+            });
         } else {
+            // Add format to all cells
             button.classList.add('active');
+            
+            this.selectedCellCoords.forEach(coordKey => {
+                if (!this.cellData.has(coordKey)) {
+                    this.cellData.set(coordKey, {});
+                }
+                this.cellData.get(coordKey)[format] = true;
+            });
+
+            this.selectedCells.forEach(cell => {
+                cell.classList.add(format);
+            });
         }
 
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
-            }
-            
-            const data = this.cellData.get(coordKey);
-            
-            if (format === 'bold') {
-                if (isActive) {
-                    delete data.bold;
-                } else {
-                    data.bold = true;
-                }
-            } else if (format === 'italic') {
-                if (isActive) {
-                    delete data.italic;
-                } else {
-                    data.italic = true;
-                }
-            }
-        });
-
-        this.selectedCells.forEach(cell => {
-            if (format === 'bold') {
-                if (isActive) {
-                    cell.classList.remove('bold');
-                } else {
-                    cell.classList.add('bold');
-                }
-            } else if (format === 'italic') {
-                if (isActive) {
-                    cell.classList.remove('italic');
-                } else {
-                    cell.classList.add('italic');
-                }
-            }
-        });
-
         this.log(`Toggled ${format} for ${this.selectedCellCoords.size} cells`);
+    }
+    
+    checkIfAllCellsHaveFormat(format) {
+        // Check if all selected cells have the specified format
+        let allHaveFormat = true;
+        
+        for (const coordKey of this.selectedCellCoords) {
+            const cellData = this.cellData.get(coordKey);
+            if (!cellData || !cellData[format]) {
+                allHaveFormat = false;
+                break;
+            }
+        }
+        
+        return allHaveFormat;
+    }
+
+    updateFormattingButtons() {
+        if (this.selectedCellCoords.size === 0) {
+            // No cells selected - deactivate all formatting buttons
+            document.getElementById('boldBtn').classList.remove('active');
+            document.getElementById('italicBtn').classList.remove('active');
+            return;
+        }
+
+        // Update bold button
+        const allBold = this.checkIfAllCellsHaveFormat('bold');
+        if (allBold) {
+            document.getElementById('boldBtn').classList.add('active');
+        } else {
+            document.getElementById('boldBtn').classList.remove('active');
+        }
+
+        // Update italic button
+        const allItalic = this.checkIfAllCellsHaveFormat('italic');
+        if (allItalic) {
+            document.getElementById('italicBtn').classList.add('active');
+        } else {
+            document.getElementById('italicBtn').classList.remove('active');
+        }
     }
 
     showColorPalette() {
