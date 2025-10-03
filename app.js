@@ -32,6 +32,9 @@ class SpreadsheetApp {
         this.resizeStartPos = null;
         this.resizeStartSize = null;
         this.justResized = false;
+        this.resizeAnimationFrame = null;
+        this.lastHeightUpdate = null; // Add this
+        this.lastWidthUpdate = null;  // Add this
 
         // Undo/Redo system
         this.undoStack = [];
@@ -556,6 +559,7 @@ class SpreadsheetApp {
             this.resizeIndex = parseInt(columnHandle.dataset.col);
             this.resizeStartPos = event.clientX;
             this.resizeStartSize = this.getColumnWidth(this.resizeIndex);
+            this.lastWidthUpdate = null; // Reset
             
             document.body.style.cursor = 'col-resize';
         } else if (rowHandle) {
@@ -567,6 +571,7 @@ class SpreadsheetApp {
             this.resizeIndex = parseInt(rowHandle.dataset.row);
             this.resizeStartPos = event.clientY;
             this.resizeStartSize = this.getRowHeight(this.resizeIndex);
+            this.lastHeightUpdate = null; // Reset
             
             document.body.style.cursor = 'row-resize';
         }
@@ -575,23 +580,98 @@ class SpreadsheetApp {
     handleDocumentMouseMove(event) {
         if (!this.isResizing) return;
         
-        if (this.resizeType === 'column') {
-            const delta = event.clientX - this.resizeStartPos;
-            const newWidth = Math.max(30, this.resizeStartSize + delta);
-            this.columnWidths.set(this.resizeIndex, newWidth);
-            
-            this.updateHeaderPositions();
-            this.updateGridSize();
-            this.repositionCells();
-        } else if (this.resizeType === 'row') {
-            const delta = event.clientY - this.resizeStartPos;
-            const newHeight = Math.max(20, this.resizeStartSize + delta);
-            this.rowHeights.set(this.resizeIndex, newHeight);
-            
-            this.updateHeaderPositions();
-            this.updateGridSize();
-            this.repositionCells();
+        // Use requestAnimationFrame to throttle updates
+        if (this.resizeAnimationFrame) {
+            return;
         }
+        
+        this.resizeAnimationFrame = requestAnimationFrame(() => {
+            this.resizeAnimationFrame = null;
+            
+            if (this.resizeType === 'column') {
+                const delta = event.clientX - this.resizeStartPos;
+                const newWidth = Math.max(30, this.resizeStartSize + delta);
+                this.columnWidths.set(this.resizeIndex, newWidth);
+                
+                this.updateColumnLayout(this.resizeIndex);
+            } else if (this.resizeType === 'row') {
+                const delta = event.clientY - this.resizeStartPos;
+                const newHeight = Math.max(20, this.resizeStartSize + delta);
+                this.rowHeights.set(this.resizeIndex, newHeight);
+                
+                this.updateRowLayout(this.resizeIndex);
+            }
+        });
+    }
+    
+    updateColumnLayout(colIndex) {
+        const newWidth = this.getColumnWidth(colIndex);
+        
+        // Update the specific column header
+        const columnHeaders = this.columnHeaders.querySelectorAll('.column-header');
+        const affectedHeader = columnHeaders[colIndex];
+        if (affectedHeader) {
+            affectedHeader.style.width = newWidth + 'px';
+        }
+        
+        // Only update visible headers plus a small buffer
+        const startUpdate = Math.max(colIndex + 1, this.visibleCols.start);
+        const endUpdate = Math.min(columnHeaders.length, this.visibleCols.end + 5);
+        
+        for (let c = startUpdate; c < endUpdate; c++) {
+            if (columnHeaders[c]) {
+                columnHeaders[c].style.left = this.getColumnLeft(c) + 'px';
+            }
+        }
+        
+        // Update grid width
+        this.gridContent.style.width = this.getTotalGridWidth() + 'px';
+        
+        // Update only visible cells
+        const cells = this.gridContent.querySelectorAll('.cell');
+        cells.forEach(cell => {
+            const col = parseInt(cell.dataset.col);
+            if (col === colIndex) {
+                cell.style.width = newWidth + 'px';
+            } else if (col > colIndex) {
+                cell.style.left = this.getColumnLeft(col) + 'px';
+            }
+        });
+    }
+
+    updateRowLayout(rowIndex) {
+        const newHeight = this.getRowHeight(rowIndex);
+        
+        // Update the specific row header
+        const rowHeaders = this.rowHeaders.querySelectorAll('.row-header');
+        const affectedHeader = rowHeaders[rowIndex];
+        if (affectedHeader) {
+            affectedHeader.style.height = newHeight + 'px';
+        }
+        
+        // Only update visible headers plus a small buffer
+        const startUpdate = Math.max(rowIndex + 1, this.visibleRows.start);
+        const endUpdate = Math.min(rowHeaders.length, this.visibleRows.end + 5);
+        
+        for (let r = startUpdate; r < endUpdate; r++) {
+            if (rowHeaders[r]) {
+                rowHeaders[r].style.top = this.getRowTop(r) + 'px';
+            }
+        }
+        
+        // Update grid height
+        this.gridContent.style.height = this.getTotalGridHeight() + 'px';
+        
+        // Update only visible cells
+        const cells = this.gridContent.querySelectorAll('.cell');
+        cells.forEach(cell => {
+            const row = parseInt(cell.dataset.row);
+            if (row === rowIndex) {
+                cell.style.height = newHeight + 'px';
+            } else if (row > rowIndex) {
+                cell.style.top = this.getRowTop(row) + 'px';
+            }
+        });
     }
 
     updateGridSize() {
@@ -857,6 +937,12 @@ class SpreadsheetApp {
             this.resizeStartPos = null;
             this.resizeStartSize = null;
             document.body.style.cursor = '';
+            
+            // Cancel any pending animation frame
+            if (this.resizeAnimationFrame) {
+                cancelAnimationFrame(this.resizeAnimationFrame);
+                this.resizeAnimationFrame = null;
+            }
             
             // Set flag to prevent click event from firing
             this.justResized = true;
