@@ -834,8 +834,56 @@ class SpreadsheetApp {
         }
     }
     
+    selectRange(type, index, addToSelection = false) {
+        // Step 1: Clear or keep existing selection
+        if (!addToSelection) {
+            this.clearAllSelections();
+        }
+        
+        // Step 2: Determine if we're selecting a row or column
+        const isRow = type === 'row';
+        const limit = isRow ? this.config.maxCols : this.config.maxRows;
+        
+        // Step 3: Add all coordinates in the range
+        const cells = [];
+        for (let i = 0; i < limit; i++) {
+            const coordKey = isRow ? `${index},${i}` : `${i},${index}`;
+            this.selectedCellCoords.add(coordKey);
+            
+            // Find visible cells
+            const [row, col] = coordKey.split(',').map(Number);
+            const cell = this.getCellAt(row, col);
+            if (cell) {
+                cells.push(cell);
+            }
+        }
+        
+        // Step 4: Mark visible cells as selected
+        cells.forEach((cell, idx) => {
+            this.selectedCells.add(cell);
+            cell.classList.add('selected');
+            
+            // Set primary cell (first cell, or if none exists)
+            if (idx === 0 && (!this.primaryCell || !addToSelection)) {
+                this.primaryCell = cell;
+                this.primaryCellCoord = `${cell.dataset.row},${cell.dataset.col}`;
+                cell.classList.add('primary-selected');
+            }
+        });
+        
+        // Step 5: Update UI
+        this.updateCellReference();
+        this.updateFormulaBar();
+        this.updateFormattingButtons();
+        
+        // Logging
+        const typeName = isRow ? 'row' : 'column';
+        const displayIndex = isRow ? index + 1 : this.getColumnName(index);
+        const action = addToSelection ? 'Added' : 'Selected';
+        this.log(`${action} full ${typeName} ${displayIndex}`);
+    }
+    
     handleColumnHeaderClick(event) {
-        // Ignore clicks on resize handles or after resize
         if (event.target.closest('.column-resize-handle') || this.justResized) {
             return;
         }
@@ -844,16 +892,10 @@ class SpreadsheetApp {
         if (!header) return;
         
         const colIndex = parseInt(header.dataset.col);
-        
-        if (event.ctrlKey || event.metaKey) {
-            this.addFullColumnToSelection(colIndex);
-        } else {
-            this.selectFullColumn(colIndex);
-        }
+        this.selectRange('column', colIndex, event.ctrlKey || event.metaKey);
     }
 
     handleRowHeaderClick(event) {
-        // Ignore clicks on resize handles or after resize
         if (event.target.closest('.row-resize-handle') || this.justResized) {
             return;
         }
@@ -862,12 +904,7 @@ class SpreadsheetApp {
         if (!header) return;
         
         const rowIndex = parseInt(header.dataset.row);
-        
-        if (event.ctrlKey || event.metaKey) {
-            this.addFullRowToSelection(rowIndex);
-        } else {
-            this.selectFullRow(rowIndex);
-        }
+        this.selectRange('row', rowIndex, event.ctrlKey || event.metaKey);
     }
 
     handleCornerCellClick(event) {
@@ -1137,136 +1174,6 @@ class SpreadsheetApp {
         this.updateFontSizeInput();
         this.updateFontColorButton();
         this.updateBackgroundColorButton();
-    }
-    
-    selectFullRow(rowIndex) {
-        this.clearAllSelections();
-        
-        const cells = [];
-        for (let col = 0; col < this.config.maxCols; col++) {
-            const coordKey = `${rowIndex},${col}`;
-            this.selectedCellCoords.add(coordKey);
-            
-            // Add visible cells to selectedCells
-            const cell = this.getCellAt(rowIndex, col);
-            if (cell) {
-                cells.push(cell);
-            }
-        }
-        
-        // Select all visible cells in the row
-        cells.forEach((cell, index) => {
-            this.selectedCells.add(cell);
-            cell.classList.add('selected');
-            
-            if (index === 0) {
-                this.primaryCell = cell;
-                this.primaryCellCoord = `${rowIndex},0`;
-                cell.classList.add('primary-selected');
-            }
-        });
-        
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
-        this.log(`Selected full row ${rowIndex + 1}`);
-    }
-
-    selectFullColumn(colIndex) {
-        this.clearAllSelections();
-        
-        const cells = [];
-        for (let row = 0; row < this.config.maxRows; row++) {
-            const coordKey = `${row},${colIndex}`;
-            this.selectedCellCoords.add(coordKey);
-            
-            // Add visible cells to selectedCells
-            const cell = this.getCellAt(row, colIndex);
-            if (cell) {
-                cells.push(cell);
-            }
-        }
-        
-        // Select all visible cells in the column
-        cells.forEach((cell, index) => {
-            this.selectedCells.add(cell);
-            cell.classList.add('selected');
-            
-            if (index === 0) {
-                this.primaryCell = cell;
-                this.primaryCellCoord = `0,${colIndex}`;
-                cell.classList.add('primary-selected');
-            }
-        });
-        
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
-        this.log(`Selected full column ${this.getColumnName(colIndex)}`);
-    }
-
-    addFullRowToSelection(rowIndex) {
-        const cells = [];
-        for (let col = 0; col < this.config.maxCols; col++) {
-            const coordKey = `${rowIndex},${col}`;
-            this.selectedCellCoords.add(coordKey);
-            
-            // Add visible cells to selectedCells
-            const cell = this.getCellAt(rowIndex, col);
-            if (cell) {
-                cells.push(cell);
-            }
-        }
-        
-        // Select all visible cells in the row
-        cells.forEach((cell, index) => {
-            this.selectedCells.add(cell);
-            cell.classList.add('selected');
-            
-            // Set primary cell if none exists
-            if (!this.primaryCell && index === 0) {
-                this.primaryCell = cell;
-                this.primaryCellCoord = `${rowIndex},0`;
-                cell.classList.add('primary-selected');
-            }
-        });
-        
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
-        this.log(`Added full row ${rowIndex + 1} to selection`);
-    }
-
-    addFullColumnToSelection(colIndex) {
-        const cells = [];
-        for (let row = 0; row < this.config.maxRows; row++) {
-            const coordKey = `${row},${colIndex}`;
-            this.selectedCellCoords.add(coordKey);
-            
-            // Add visible cells to selectedCells
-            const cell = this.getCellAt(row, colIndex);
-            if (cell) {
-                cells.push(cell);
-            }
-        }
-        
-        // Select all visible cells in the column
-        cells.forEach((cell, index) => {
-            this.selectedCells.add(cell);
-            cell.classList.add('selected');
-            
-            // Set primary cell if none exists
-            if (!this.primaryCell && index === 0) {
-                this.primaryCell = cell;
-                this.primaryCellCoord = `0,${colIndex}`;
-                cell.classList.add('primary-selected');
-            }
-        });
-        
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
-        this.log(`Added full column ${this.getColumnName(colIndex)} to selection`);
     }
     
     clearAllSelections() {
