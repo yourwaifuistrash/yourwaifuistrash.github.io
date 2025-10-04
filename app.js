@@ -202,10 +202,22 @@ class SpreadsheetApp {
             } else {
                 cell.classList.remove('strikethrough');
             }
+
+            // Remove existing alignment classes
+            cell.classList.remove('align-left', 'align-center', 'align-right', 
+                                'align-top', 'align-middle', 'align-bottom');
+
+            // Apply alignment
+            if (cellData.textAlign) {
+                cell.classList.add(`align-${cellData.textAlign}`);
+            }
+            if (cellData.verticalAlign) {
+                cell.classList.add(`align-${cellData.verticalAlign}`);
+            }
         });
         
         this.updateFormattingButtons();
-        this.updateFontSizeInput(); // Changed
+        this.updateFontSizeInput();
     }
 
     // Fixed column numbering: A, B, C, ..., Z, AA, AB, AC, ... 
@@ -414,6 +426,12 @@ class SpreadsheetApp {
         if (cellData.strikethrough) {
             cell.classList.add('strikethrough');
         }
+        if (cellData.textAlign) {
+            cell.classList.add(`align-${cellData.textAlign}`);
+        }
+        if (cellData.verticalAlign) {
+            cell.classList.add(`align-${cellData.verticalAlign}`);
+        }
 
         // Restore selection state
         const coordKey = `${row},${col}`;
@@ -505,6 +523,12 @@ class SpreadsheetApp {
         document.getElementById('italicBtn').addEventListener('click', () => this.toggleFormat('italic'));
         document.getElementById('underlineBtn').addEventListener('click', () => this.toggleFormat('underline'));
         document.getElementById('strikethroughBtn').addEventListener('click', () => this.toggleFormat('strikethrough'));
+        document.getElementById('alignLeftBtn').addEventListener('click', () => this.setTextAlign('left'));
+        document.getElementById('alignCenterBtn').addEventListener('click', () => this.setTextAlign('center'));
+        document.getElementById('alignRightBtn').addEventListener('click', () => this.setTextAlign('right'));
+        document.getElementById('alignTopBtn').addEventListener('click', () => this.setVerticalAlign('top'));
+        document.getElementById('alignMiddleBtn').addEventListener('click', () => this.setVerticalAlign('middle'));
+        document.getElementById('alignBottomBtn').addEventListener('click', () => this.setVerticalAlign('bottom'));
         
         // Font size input events
         const fontSizeInput = document.getElementById('fontSizeInput');
@@ -544,6 +568,105 @@ class SpreadsheetApp {
                 e.preventDefault();
             }
         });
+    }
+    
+    setTextAlign(alignment) {
+        if (this.selectedCellCoords.size === 0) return;
+
+        this.saveState(`Set text alignment to ${alignment}`);
+
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
+            }
+            this.cellData.get(coordKey).textAlign = alignment;
+        });
+
+        this.selectedCells.forEach(cell => {
+            // Remove all text alignment classes
+            cell.classList.remove('align-left', 'align-center', 'align-right');
+            // Add new alignment class
+            cell.classList.add(`align-${alignment}`);
+        });
+
+        this.updateAlignmentButtons();
+        this.log(`Applied text alignment ${alignment} to ${this.selectedCellCoords.size} cells`);
+    }
+
+    setVerticalAlign(alignment) {
+        if (this.selectedCellCoords.size === 0) return;
+
+        this.saveState(`Set vertical alignment to ${alignment}`);
+
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
+            }
+            this.cellData.get(coordKey).verticalAlign = alignment;
+        });
+
+        this.selectedCells.forEach(cell => {
+            // Remove all vertical alignment classes
+            cell.classList.remove('align-top', 'align-middle', 'align-bottom');
+            // Add new alignment class
+            cell.classList.add(`align-${alignment}`);
+        });
+
+        this.updateAlignmentButtons();
+        this.log(`Applied vertical alignment ${alignment} to ${this.selectedCellCoords.size} cells`);
+    }
+
+    updateAlignmentButtons() {
+        if (this.selectedCellCoords.size === 0) {
+            // Deactivate all alignment buttons
+            ['alignLeftBtn', 'alignCenterBtn', 'alignRightBtn', 
+            'alignTopBtn', 'alignMiddleBtn', 'alignBottomBtn'].forEach(id => {
+                document.getElementById(id).classList.remove('active');
+            });
+            return;
+        }
+
+        // Check text alignment
+        let commonTextAlign = null;
+        let allSameText = true;
+        
+        for (const coordKey of this.selectedCellCoords) {
+            const cellData = this.cellData.get(coordKey);
+            const textAlign = cellData?.textAlign || 'left'; // default is left
+            
+            if (commonTextAlign === null) {
+                commonTextAlign = textAlign;
+            } else if (commonTextAlign !== textAlign) {
+                allSameText = false;
+                break;
+            }
+        }
+        
+        // Update text alignment buttons
+        document.getElementById('alignLeftBtn').classList.toggle('active', allSameText && commonTextAlign === 'left');
+        document.getElementById('alignCenterBtn').classList.toggle('active', allSameText && commonTextAlign === 'center');
+        document.getElementById('alignRightBtn').classList.toggle('active', allSameText && commonTextAlign === 'right');
+
+        // Check vertical alignment
+        let commonVerticalAlign = null;
+        let allSameVertical = true;
+        
+        for (const coordKey of this.selectedCellCoords) {
+            const cellData = this.cellData.get(coordKey);
+            const verticalAlign = cellData?.verticalAlign || 'bottom'; // default is bottom
+            
+            if (commonVerticalAlign === null) {
+                commonVerticalAlign = verticalAlign;
+            } else if (commonVerticalAlign !== verticalAlign) {
+                allSameVertical = false;
+                break;
+            }
+        }
+        
+        // Update vertical alignment buttons
+        document.getElementById('alignTopBtn').classList.toggle('active', allSameVertical && commonVerticalAlign === 'top');
+        document.getElementById('alignMiddleBtn').classList.toggle('active', allSameVertical && commonVerticalAlign === 'middle');
+        document.getElementById('alignBottomBtn').classList.toggle('active', allSameVertical && commonVerticalAlign === 'bottom');
     }
     
     handleResizeMouseDown(event) {
@@ -1603,6 +1726,8 @@ class SpreadsheetApp {
                 delete data.underline;
                 delete data.strikethrough;
                 delete data.fontSize;
+                delete data.textAlign;
+                delete data.verticalAlign;
             }
         });
 
@@ -1610,6 +1735,8 @@ class SpreadsheetApp {
             cell.style.backgroundColor = '';
             cell.style.fontSize = '';
             cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
+            cell.classList.remove('align-left', 'align-center', 'align-right',
+                      'align-top', 'align-middle', 'align-bottom');
         });
 
         this.updateFormattingButtons();
@@ -1734,6 +1861,8 @@ class SpreadsheetApp {
         } else {
             document.getElementById('strikethroughBtn').classList.remove('active');
         }
+        
+        this.updateAlignmentButtons();
     }
 
     showColorPalette() {
