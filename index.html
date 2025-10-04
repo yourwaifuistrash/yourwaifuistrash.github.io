@@ -33,6 +33,12 @@
                     <span style="text-decoration: line-through;">S</span>
                 </button>
                 <input type="number" id="fontSizeInput" class="form-control" style="width: 70px; padding: 4px 8px; font-size: 12px;" placeholder="Size" min="6" max="200" title="Font Size (px)">
+                <button class="btn btn--sm toolbar-btn" id="fontColorBtn" title="Font Color">
+                    <span style="position: relative; display: inline-block;">
+                        A
+                        <span style="position: absolute; bottom: -2px; left: 0; right: 0; height: 3px; background: currentColor;"></span>
+                    </span>
+                </button>
                 <button class="btn btn--sm toolbar-btn" id="colorBtn" title="Background Color">
                     <span>🎨</span>
                 </button>
@@ -142,6 +148,12 @@
     </div>
 
     <!-- Color Palette Modal -->
+    <div id="fontColorPalette" class="font-color-palette hidden">
+        <div class="font-color-palette-content">
+            <div class="font-color-palette-title">Font Colors</div>
+            <div class="font-color-palette-grid" id="fontColorPaletteGrid"></div>
+        </div>
+    </div>
     <div id="colorPalette" class="color-palette hidden">
         <div class="color-palette-content">
             <div class="color-palette-title">Background Colors</div>

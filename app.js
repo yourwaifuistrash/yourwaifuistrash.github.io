@@ -57,6 +57,7 @@ class SpreadsheetApp {
         this.formulaInput = document.getElementById('formulaInput');
         this.contextMenu = document.getElementById('contextMenu');
         this.colorPalette = document.getElementById('colorPalette');
+        this.fontColorPalette = document.getElementById('fontColorPalette');
 
         this.init();
     }
@@ -66,6 +67,7 @@ class SpreadsheetApp {
         this.generateHeaders();
         this.generateInitialGrid();
         this.setupColorPalette();
+        this.setupFontColorPalette();
         this.updateUndoRedoButtons();
         this.log('Spreadsheet initialized');
     }
@@ -178,6 +180,7 @@ class SpreadsheetApp {
             // Update formatting
             cell.style.backgroundColor = cellData.backgroundColor || '';
             cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
+            cell.style.color = cellData.fontColor || '';
             
             if (cellData.bold) {
                 cell.classList.add('bold');
@@ -414,6 +417,9 @@ class SpreadsheetApp {
         if (cellData.fontSize) {
             cell.style.fontSize = cellData.fontSize + 'px';
         }
+        if (cellData.fontColor) {
+            cell.style.color = cellData.fontColor;
+        }
         if (cellData.bold) {
             cell.classList.add('bold');
         }
@@ -542,6 +548,7 @@ class SpreadsheetApp {
         });
         
         document.getElementById('colorBtn').addEventListener('click', this.showColorPalette.bind(this));
+        document.getElementById('fontColorBtn').addEventListener('click', this.showFontColorPalette.bind(this));
 
         // Formula bar events
         this.formulaInput.addEventListener('keydown', this.handleFormulaKeyDown.bind(this));
@@ -1184,7 +1191,8 @@ class SpreadsheetApp {
         this.updateCellReference();
         this.updateFormulaBar();
         this.updateFormattingButtons();
-        this.updateFontSizeInput(); // Changed
+        this.updateFontSizeInput();
+        this.updateFontColorButton();
     }
     
     selectFullRow(rowIndex) {
@@ -1726,6 +1734,7 @@ class SpreadsheetApp {
                 delete data.underline;
                 delete data.strikethrough;
                 delete data.fontSize;
+                delete data.fontColor;
                 delete data.textAlign;
                 delete data.verticalAlign;
             }
@@ -1734,6 +1743,7 @@ class SpreadsheetApp {
         this.selectedCells.forEach(cell => {
             cell.style.backgroundColor = '';
             cell.style.fontSize = '';
+            cell.style.color = '';
             cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
             cell.classList.remove('align-left', 'align-center', 'align-right',
                       'align-top', 'align-middle', 'align-bottom');
@@ -1751,9 +1761,13 @@ class SpreadsheetApp {
         if (!event.target.closest('#colorPalette') && !event.target.closest('#colorBtn')) {
             this.hideColorPalette();
         }
+        if (!event.target.closest('#fontColorPalette') && !event.target.closest('#fontColorBtn')) {
+            this.hideFontColorPalette();
+        }
         if (!event.target.closest('.spreadsheet-container') && 
             !event.target.closest('#contextMenu') && 
-            !event.target.closest('#colorPalette')) {
+            !event.target.closest('#colorPalette') &&
+            !event.target.closest('#fontColorPalette')) {
             if (this.currentEditingCell) {
                 this.stopEditingCell();
             }
@@ -1863,6 +1877,7 @@ class SpreadsheetApp {
         }
         
         this.updateAlignmentButtons();
+        this.updateFontColorButton();
     }
 
     showColorPalette() {
@@ -1875,9 +1890,24 @@ class SpreadsheetApp {
         this.colorPalette.style.left = rect.left + 'px';
         this.colorPalette.style.top = (rect.bottom + 5) + 'px';
     }
+    
+    showFontColorPalette() {
+        if (this.selectedCells.size === 0) return;
+        
+        const button = document.getElementById('fontColorBtn');
+        const rect = button.getBoundingClientRect();
+        
+        this.fontColorPalette.classList.remove('hidden');
+        this.fontColorPalette.style.left = rect.left + 'px';
+        this.fontColorPalette.style.top = (rect.bottom + 5) + 'px';
+    }
 
     hideColorPalette() {
         this.colorPalette.classList.add('hidden');
+    }
+    
+    hideFontColorPalette() {
+        this.fontColorPalette.classList.add('hidden');
     }
 
     setupColorPalette() {
@@ -1900,6 +1930,41 @@ class SpreadsheetApp {
             swatch.addEventListener('click', () => {
                 this.applyBackgroundColor(color);
                 this.hideColorPalette();
+            });
+            grid.appendChild(swatch);
+        });
+    }
+    
+    setupFontColorPalette() {
+        const grid = document.getElementById('fontColorPaletteGrid');
+        
+        // Add default/black color swatch
+        const defaultSwatch = document.createElement('div');
+        defaultSwatch.className = 'color-swatch';
+        defaultSwatch.style.backgroundColor = '#000000';
+        defaultSwatch.title = 'Default (Black)';
+        defaultSwatch.addEventListener('click', () => {
+            this.applyFontColor('');
+            this.hideFontColorPalette();
+        });
+        grid.appendChild(defaultSwatch);
+
+        // Add color swatches
+        const fontColors = [
+            '#ff0000', '#00ff00', '#0000ff', '#ffff00', 
+            '#ff00ff', '#00ffff', '#ffffff', '#808080',
+            '#800000', '#008000', '#000080', '#808000',
+            '#800080', '#008080', '#c0c0c0', '#000000'
+        ];
+
+        fontColors.forEach(color => {
+            const swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            swatch.style.backgroundColor = color;
+            swatch.title = color;
+            swatch.addEventListener('click', () => {
+                this.applyFontColor(color);
+                this.hideFontColorPalette();
             });
             grid.appendChild(swatch);
         });
@@ -1932,6 +1997,71 @@ class SpreadsheetApp {
         });
 
         this.log(`Applied background color ${color || 'none'} to ${this.selectedCellCoords.size} cells`);
+    }
+    
+    applyFontColor(color) {
+        if (this.selectedCellCoords.size === 0) return;
+
+        // Save state before applying color
+        this.saveState(`Apply font color to ${this.selectedCellCoords.size} cells`);
+
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
+            }
+            
+            if (color) {
+                this.cellData.get(coordKey).fontColor = color;
+            } else {
+                delete this.cellData.get(coordKey).fontColor;
+            }
+        });
+
+        this.selectedCells.forEach(cell => {
+            if (color) {
+                cell.style.color = color;
+            } else {
+                cell.style.color = '';
+            }
+        });
+
+        this.updateFontColorButton();
+        this.log(`Applied font color ${color || 'default'} to ${this.selectedCellCoords.size} cells`);
+    }
+    
+    updateFontColorButton() {
+        const button = document.getElementById('fontColorBtn');
+        const colorBar = button.querySelector('span span');
+        
+        if (this.selectedCellCoords.size === 0) {
+            colorBar.style.backgroundColor = 'currentColor';
+            return;
+        }
+
+        // Check if all selected cells have the same font color
+        let commonColor = null;
+        let allSame = true;
+        
+        for (const coordKey of this.selectedCellCoords) {
+            const cellData = this.cellData.get(coordKey);
+            const fontColor = cellData?.fontColor || null;
+            
+            if (commonColor === null) {
+                commonColor = fontColor;
+            } else if (commonColor !== fontColor) {
+                allSame = false;
+                break;
+            }
+        }
+        
+        if (allSame && commonColor) {
+            colorBar.style.backgroundColor = commonColor;
+        } else if (allSame && !commonColor) {
+            colorBar.style.backgroundColor = 'var(--color-text)';
+        } else {
+            // Mixed colors - show a gradient or default
+            colorBar.style.backgroundColor = 'currentColor';
+        }
     }
 
     handleFormulaKeyDown(event) {
