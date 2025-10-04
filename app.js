@@ -58,6 +58,12 @@ class SpreadsheetApp {
         this.contextMenu = document.getElementById('contextMenu');
         this.colorPalette = document.getElementById('colorPalette');
         this.fontColorPalette = document.getElementById('fontColorPalette');
+        
+        this.clipboard = {
+            data: null,
+            mode: null, // 'copy' or 'cut'
+            sourceCells: null // Store original cell coordinates for cut
+        };
 
         this.init();
     }
@@ -1571,6 +1577,27 @@ class SpreadsheetApp {
             this.selectAllCells();
             return;
         }
+        
+        // Handle Ctrl+C for copy
+        if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
+            event.preventDefault();
+            this.copyCells();
+            return;
+        }
+
+        // Handle Ctrl+X for cut
+        if ((event.ctrlKey || event.metaKey) && event.key === 'x') {
+            event.preventDefault();
+            this.cutCells();
+            return;
+        }
+
+        // Handle Ctrl+V for paste
+        if ((event.ctrlKey || event.metaKey) && event.key === 'v') {
+            event.preventDefault();
+            this.pasteCells();
+            return;
+        }
 
         switch (event.key) {
             case 'Enter':
@@ -1713,6 +1740,15 @@ class SpreadsheetApp {
 
     executeContextAction(action) {
         switch (action) {
+            case 'cut':
+                this.cutCells();
+                break;
+            case 'copy':
+                this.copyCells();
+                break;
+            case 'paste':
+                this.pasteCells();
+                break;
             case 'clearContent':
                 this.clearCellContent();
                 break;
@@ -1720,6 +1756,172 @@ class SpreadsheetApp {
                 this.clearCellFormatting();
                 break;
         }
+    }
+    
+    cutCells() {
+        if (this.selectedCellCoords.size === 0) return;
+
+        // Copy the data first
+        this.clipboard.data = new Map();
+        this.clipboard.mode = 'cut';
+        this.clipboard.sourceCells = new Set(this.selectedCellCoords); // Store original cell coordinates
+
+        // Store relative positions and cell data
+        const coords = Array.from(this.selectedCellCoords).map(coord => {
+            const [row, col] = coord.split(',').map(Number);
+            return { row, col };
+        });
+
+        // Find the top-left corner
+        const minRow = Math.min(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+
+        // Store data with relative positions
+        this.selectedCellCoords.forEach(coordKey => {
+            const [row, col] = coordKey.split(',').map(Number);
+            const relativeKey = `${row - minRow},${col - minCol}`;
+            const cellData = this.cellData.get(coordKey);
+            if (cellData) {
+                this.clipboard.data.set(relativeKey, { ...cellData });
+            } else {
+                // Store empty cell data to ensure we paste empty cells too
+                this.clipboard.data.set(relativeKey, {});
+            }
+        });
+
+        // Visual feedback - add dashed border to cut cells
+        this.selectedCells.forEach(cell => {
+            cell.style.border = '2px dashed var(--color-primary)';
+        });
+
+        this.log(`Cut ${this.selectedCellCoords.size} cells to clipboard`);
+    }
+
+    copyCells() {
+        if (this.selectedCellCoords.size === 0) return;
+
+        this.clipboard.data = new Map();
+        this.clipboard.mode = 'copy';
+
+        // Store relative positions and cell data
+        const coords = Array.from(this.selectedCellCoords).map(coord => {
+            const [row, col] = coord.split(',').map(Number);
+            return { row, col };
+        });
+
+        // Find the top-left corner
+        const minRow = Math.min(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+
+        // Store data with relative positions
+        this.selectedCellCoords.forEach(coordKey => {
+            const [row, col] = coordKey.split(',').map(Number);
+            const relativeKey = `${row - minRow},${col - minCol}`;
+            const cellData = this.cellData.get(coordKey);
+            if (cellData) {
+                this.clipboard.data.set(relativeKey, { ...cellData });
+            }
+        });
+
+        this.log(`Copied ${this.selectedCellCoords.size} cells to clipboard`);
+    }
+
+    pasteCells() {
+        if (!this.clipboard.data || this.clipboard.data.size === 0) {
+            this.log('Clipboard is empty');
+            return;
+        }
+
+        if (!this.primaryCell) {
+            this.log('No target cell selected for paste');
+            return;
+        }
+
+        const targetRow = parseInt(this.primaryCell.dataset.row);
+        const targetCol = parseInt(this.primaryCell.dataset.col);
+
+        // Save state before pasting
+        this.saveState(`Paste ${this.clipboard.data.size} cells`);
+
+        // If it was a cut operation and this is the first paste, clear the original cells
+        if (this.clipboard.mode === 'cut' && this.clipboard.sourceCells) {
+            this.clipboard.sourceCells.forEach(coordKey => {
+                // Clear the cell data
+                this.cellData.delete(coordKey);
+
+                // Update visible cells
+                const [row, col] = coordKey.split(',').map(Number);
+                const cell = this.getCellAt(row, col);
+                if (cell) {
+                    cell.textContent = '';
+                    cell.style.backgroundColor = '';
+                    cell.style.color = '';
+                    cell.style.fontSize = '';
+                    cell.style.border = ''; // Remove the dashed border
+                    cell.classList.remove('bold', 'italic', 'underline', 'strikethrough',
+                                        'align-left', 'align-center', 'align-right',
+                                        'align-top', 'align-middle', 'align-bottom');
+                }
+            });
+
+            // Clear source cells but keep clipboard data for repeated pasting
+            this.clipboard.sourceCells = null;
+            // Convert cut to copy mode so subsequent pastes don't try to clear again
+            this.clipboard.mode = 'copy';
+        }
+
+        // Paste data
+        this.clipboard.data.forEach((cellData, relativeKey) => {
+            const [relRow, relCol] = relativeKey.split(',').map(Number);
+            const newRow = targetRow + relRow;
+            const newCol = targetCol + relCol;
+            const newKey = `${newRow},${newCol}`;
+
+            // Only paste within grid bounds
+            if (newRow >= 0 && newRow < this.config.maxRows && 
+                newCol >= 0 && newCol < this.config.maxCols) {
+                
+                // Copy all cell data (even if empty)
+                if (Object.keys(cellData).length > 0) {
+                    this.cellData.set(newKey, { ...cellData });
+                } else {
+                    // Ensure the cell exists in cellData even if empty
+                    if (!this.cellData.has(newKey)) {
+                        this.cellData.set(newKey, {});
+                    }
+                }
+
+                // Update the cell if it's visible
+                const cell = this.getCellAt(newRow, newCol);
+                if (cell) {
+                    this.updateCellDisplay(cell, cellData);
+                }
+            }
+        });
+
+        this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
+    }
+
+    updateCellDisplay(cell, cellData) {
+        // Update content
+        cell.textContent = cellData.value || '';
+        
+        // Update styles
+        cell.style.backgroundColor = cellData.backgroundColor || '';
+        cell.style.color = cellData.fontColor || '';
+        cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
+        
+        // Update classes
+        cell.classList.remove('bold', 'italic', 'underline', 'strikethrough',
+                            'align-left', 'align-center', 'align-right',
+                            'align-top', 'align-middle', 'align-bottom');
+        
+        if (cellData.bold) cell.classList.add('bold');
+        if (cellData.italic) cell.classList.add('italic');
+        if (cellData.underline) cell.classList.add('underline');
+        if (cellData.strikethrough) cell.classList.add('strikethrough');
+        if (cellData.textAlign) cell.classList.add(`align-${cellData.textAlign}`);
+        if (cellData.verticalAlign) cell.classList.add(`align-${cellData.verticalAlign}`);
     }
 
     clearCellFormatting() {
