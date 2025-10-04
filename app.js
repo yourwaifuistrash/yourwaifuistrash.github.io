@@ -180,13 +180,22 @@ class SpreadsheetApp {
             const cellKey = `${row},${col}`;
             const cellData = this.cellData.get(cellKey) || {};
             
-            // Update content
-            cell.textContent = cellData.value || '';
+            // Update content - evaluate formulas
+            if (cellData.value) {
+                if (cellData.value.startsWith('=')) {
+                    const result = this.parseFormula(cellData.value, row, col);
+                    cell.textContent = result;
+                } else {
+                    cell.textContent = cellData.value;
+                }
+            } else {
+                cell.textContent = '';
+            }
             
             // Update formatting
             cell.style.backgroundColor = cellData.backgroundColor || '';
-            cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
             cell.style.color = cellData.fontColor || '';
+            cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
             
             if (cellData.bold) {
                 cell.classList.add('bold');
@@ -414,17 +423,26 @@ class SpreadsheetApp {
         // Get cell data
         const cellKey = `${row},${col}`;
         const cellData = this.cellData.get(cellKey) || {};
-        cell.textContent = cellData.value || '';
         
-        // Apply formatting
+        // Display formula result or value
+        if (cellData.value) {
+            if (cellData.value.startsWith('=')) {
+                const result = this.parseFormula(cellData.value, row, col);
+                cell.textContent = result;
+            } else {
+                cell.textContent = cellData.value;
+            }
+        }
+        
+        // Apply formatting (rest of the existing code...)
         if (cellData.backgroundColor) {
             cell.style.backgroundColor = cellData.backgroundColor;
         }
-        if (cellData.fontSize) {
-            cell.style.fontSize = cellData.fontSize + 'px';
-        }
         if (cellData.fontColor) {
             cell.style.color = cellData.fontColor;
+        }
+        if (cellData.fontSize) {
+            cell.style.fontSize = cellData.fontSize + 'px';
         }
         if (cellData.bold) {
             cell.classList.add('bold');
@@ -1471,13 +1489,20 @@ class SpreadsheetApp {
         const oldValue = this.currentEditingCell.dataset.originalValue || '';
         const newValue = cancel ? oldValue : input.value;
 
-        this.currentEditingCell.textContent = newValue;
-        this.currentEditingCell.classList.remove('editing');
-        delete this.currentEditingCell.dataset.originalValue;
-
         const row = parseInt(this.currentEditingCell.dataset.row);
         const col = parseInt(this.currentEditingCell.dataset.col);
         const cellKey = `${row},${col}`;
+        
+        // Display formula result or value
+        if (newValue.startsWith('=')) {
+            const result = this.parseFormula(newValue, row, col);
+            this.currentEditingCell.textContent = result;
+        } else {
+            this.currentEditingCell.textContent = newValue;
+        }
+        
+        this.currentEditingCell.classList.remove('editing');
+        delete this.currentEditingCell.dataset.originalValue;
         
         if (!cancel && oldValue !== newValue) {
             // Save state before making changes
@@ -1489,13 +1514,22 @@ class SpreadsheetApp {
         }
         this.cellData.get(cellKey).value = newValue;
 
+        // Update formula bar to show the formula, not the result
         this.formulaInput.value = newValue;
 
         if (!cancel && oldValue !== newValue) {
             this.log(`Cell ${this.currentEditingCell.dataset.address} edited: "${oldValue}" → "${newValue}"`);
+            
+            // Recalculate all cells that might depend on this cell
+            this.recalculateAllFormulas();
         }
 
         this.currentEditingCell = null;
+    }
+
+    recalculateAllFormulas() {
+        // Refresh all visible cells to recalculate formulas
+        this.refreshAllVisibleCells();
     }
 
     moveSelection(deltaRow, deltaCol) {
@@ -1881,9 +1915,21 @@ class SpreadsheetApp {
             if (newRow >= 0 && newRow < this.config.maxRows && 
                 newCol >= 0 && newCol < this.config.maxCols) {
                 
-                // Copy all cell data (even if empty)
-                if (Object.keys(cellData).length > 0) {
-                    this.cellData.set(newKey, { ...cellData });
+                // Copy cell data
+                const newCellData = { ...cellData };
+                
+                // Adjust formula references if the value is a formula
+                if (newCellData.value && newCellData.value.startsWith('=')) {
+                    newCellData.value = this.adjustFormulaReferences(
+                        newCellData.value, 
+                        relRow, 
+                        relCol
+                    );
+                }
+                
+                // Store the adjusted data
+                if (Object.keys(newCellData).length > 0) {
+                    this.cellData.set(newKey, newCellData);
                 } else {
                     // Ensure the cell exists in cellData even if empty
                     if (!this.cellData.has(newKey)) {
@@ -1894,7 +1940,7 @@ class SpreadsheetApp {
                 // Update the cell if it's visible
                 const cell = this.getCellAt(newRow, newCol);
                 if (cell) {
-                    this.updateCellDisplay(cell, cellData);
+                    this.updateCellDisplay(cell, newCellData);
                 }
             }
         });
@@ -1903,8 +1949,20 @@ class SpreadsheetApp {
     }
 
     updateCellDisplay(cell, cellData) {
-        // Update content
-        cell.textContent = cellData.value || '';
+        const row = parseInt(cell.dataset.row);
+        const col = parseInt(cell.dataset.col);
+        
+        // Update content - evaluate formulas
+        if (cellData.value) {
+            if (cellData.value.startsWith('=')) {
+                const result = this.parseFormula(cellData.value, row, col);
+                cell.textContent = result;
+            } else {
+                cell.textContent = cellData.value || '';
+            }
+        } else {
+            cell.textContent = '';
+        }
         
         // Update styles
         cell.style.backgroundColor = cellData.backgroundColor || '';
@@ -2327,10 +2385,42 @@ class SpreadsheetApp {
             this.updateCellValue(this.primaryCell, newValue);
         }
     }
+    
+    adjustFormulaReferences(formula, rowOffset, colOffset) {
+        if (!formula || !formula.startsWith('=')) {
+            return formula;
+        }
+
+        // Match cell references like A1, $A1, A$1, $A$1
+        const cellRefRegex = /(\$?)([A-Z]+)(\$?)(\d+)/g;
+        
+        return formula.replace(cellRefRegex, (match, colAbs, colName, rowAbs, rowNum) => {
+            let targetCol = this.getColumnIndex(colName);
+            let targetRow = parseInt(rowNum) - 1;
+            
+            // Adjust column if not absolute
+            if (colAbs !== '$') {
+                targetCol += colOffset;
+            }
+            
+            // Adjust row if not absolute
+            if (rowAbs !== '$') {
+                targetRow += rowOffset;
+            }
+            
+            // Ensure we don't go out of bounds
+            targetCol = Math.max(0, Math.min(this.config.maxCols - 1, targetCol));
+            targetRow = Math.max(0, Math.min(this.config.maxRows - 1, targetRow));
+            
+            // Reconstruct the reference
+            const newColName = this.getColumnName(targetCol);
+            const newRowNum = targetRow + 1;
+            
+            return `${colAbs}${newColName}${rowAbs}${newRowNum}`;
+        });
+    }
 
     updateCellValue(cell, value) {
-        cell.textContent = value;
-        
         const row = parseInt(cell.dataset.row);
         const col = parseInt(cell.dataset.col);
         const cellKey = `${row},${col}`;
@@ -2339,6 +2429,14 @@ class SpreadsheetApp {
             this.cellData.set(cellKey, {});
         }
         this.cellData.get(cellKey).value = value;
+        
+        // If it's a formula, evaluate and display the result
+        if (value.startsWith('=')) {
+            const result = this.parseFormula(value, row, col);
+            cell.textContent = result;
+        } else {
+            cell.textContent = value;
+        }
     }
 
     handleFormulaFocus() {
@@ -2391,6 +2489,182 @@ class SpreadsheetApp {
             }
             this.cellReference.blur();
         }
+    }
+    
+    parseFormula(formula, cellRow, cellCol) {
+        if (!formula || !formula.startsWith('=')) {
+            return formula;
+        }
+
+        try {
+            // Remove the leading '='
+            let expression = formula.substring(1).trim();
+            
+            // Replace cell references with their values
+            expression = this.replaceCellReferences(expression, cellRow, cellCol);
+            
+            // Evaluate the expression
+            const result = this.evaluateExpression(expression);
+            
+            return result;
+        } catch (error) {
+            return '#ERROR!';
+        }
+    }
+
+    replaceCellReferences(expression, currentRow, currentCol) {
+        // Match cell references like A1, $A1, A$1, $A$1, B2, etc.
+        const cellRefRegex = /(\$?)([A-Z]+)(\$?)(\d+)/g;
+        
+        return expression.replace(cellRefRegex, (match, colAbs, colName, rowAbs, rowNum) => {
+            let targetCol = this.getColumnIndex(colName);
+            let targetRow = parseInt(rowNum) - 1;
+            
+            // Handle relative references (non-absolute references are not implemented for copying yet)
+            // For now, we just get the absolute reference
+            
+            const cellKey = `${targetRow},${targetCol}`;
+            const cellData = this.cellData.get(cellKey);
+            
+            if (!cellData || !cellData.value) {
+                return '0'; // Empty cells are treated as 0
+            }
+            
+            // If the cell contains a formula, evaluate it recursively
+            if (cellData.value.startsWith('=')) {
+                const evaluated = this.parseFormula(cellData.value, targetRow, targetCol);
+                return this.isNumeric(evaluated) ? evaluated : '0';
+            }
+            
+            // Return the cell value
+            return this.isNumeric(cellData.value) ? cellData.value : `"${cellData.value}"`;
+        });
+    }
+
+    isNumeric(value) {
+        if (typeof value === 'number') return true;
+        if (typeof value === 'string') {
+            return !isNaN(value) && !isNaN(parseFloat(value));
+        }
+        return false;
+    }
+
+    evaluateExpression(expression) {
+        // Handle basic functions
+        expression = this.replaceFunctions(expression);
+        
+        try {
+            // Use Function constructor for safe evaluation
+            // This is safer than eval but still requires caution
+            const func = new Function('return ' + expression);
+            const result = func();
+            
+            // Round to avoid floating point issues
+            if (typeof result === 'number') {
+                return Math.round(result * 1000000000) / 1000000000;
+            }
+            
+            return result;
+        } catch (error) {
+            return '#ERROR!';
+        }
+    }
+
+    replaceFunctions(expression) {
+        // Replace SUM function
+        expression = expression.replace(/SUM\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
+            (match, start, end) => {
+                return this.calculateSum(start, end);
+            });
+        
+        // Replace AVERAGE function
+        expression = expression.replace(/AVERAGE\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
+            (match, start, end) => {
+                return this.calculateAverage(start, end);
+            });
+        
+        // Replace COUNT function
+        expression = expression.replace(/COUNT\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
+            (match, start, end) => {
+                return this.calculateCount(start, end);
+            });
+        
+        // Replace MIN function
+        expression = expression.replace(/MIN\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
+            (match, start, end) => {
+                return this.calculateMin(start, end);
+            });
+        
+        // Replace MAX function
+        expression = expression.replace(/MAX\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
+            (match, start, end) => {
+                return this.calculateMax(start, end);
+            });
+        
+        return expression;
+    }
+
+    getRangeValues(startRef, endRef) {
+        const start = this.parseCellAddress(startRef);
+        const end = this.parseCellAddress(endRef);
+        
+        if (!start || !end) return [];
+        
+        const values = [];
+        const minRow = Math.min(start.row, end.row);
+        const maxRow = Math.max(start.row, end.row);
+        const minCol = Math.min(start.col, end.col);
+        const maxCol = Math.max(start.col, end.col);
+        
+        for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+                const cellKey = `${row},${col}`;
+                const cellData = this.cellData.get(cellKey);
+                
+                if (cellData && cellData.value) {
+                    let value = cellData.value;
+                    
+                    // If it's a formula, evaluate it
+                    if (value.startsWith('=')) {
+                        value = this.parseFormula(value, row, col);
+                    }
+                    
+                    if (this.isNumeric(value)) {
+                        values.push(parseFloat(value));
+                    }
+                }
+            }
+        }
+        
+        return values;
+    }
+
+    calculateSum(startRef, endRef) {
+        const values = this.getRangeValues(startRef, endRef);
+        return values.reduce((sum, val) => sum + val, 0);
+    }
+
+    calculateAverage(startRef, endRef) {
+        const values = this.getRangeValues(startRef, endRef);
+        if (values.length === 0) return 0;
+        return values.reduce((sum, val) => sum + val, 0) / values.length;
+    }
+
+    calculateCount(startRef, endRef) {
+        const values = this.getRangeValues(startRef, endRef);
+        return values.length;
+    }
+
+    calculateMin(startRef, endRef) {
+        const values = this.getRangeValues(startRef, endRef);
+        if (values.length === 0) return 0;
+        return Math.min(...values);
+    }
+
+    calculateMax(startRef, endRef) {
+        const values = this.getRangeValues(startRef, endRef);
+        if (values.length === 0) return 0;
+        return Math.max(...values);
     }
 
     resetAll() {
