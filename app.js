@@ -180,58 +180,8 @@ class SpreadsheetApp {
             const cellKey = `${row},${col}`;
             const cellData = this.cellData.get(cellKey) || {};
             
-            // Update content - evaluate formulas
-            if (cellData.value) {
-                if (cellData.value.startsWith('=')) {
-                    const result = this.parseFormula(cellData.value, row, col);
-                    cell.textContent = result;
-                } else {
-                    cell.textContent = cellData.value;
-                }
-            } else {
-                cell.textContent = '';
-            }
-            
-            // Update formatting
-            cell.style.backgroundColor = cellData.backgroundColor || '';
-            cell.style.color = cellData.fontColor || '';
-            cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
-            
-            if (cellData.bold) {
-                cell.classList.add('bold');
-            } else {
-                cell.classList.remove('bold');
-            }
-            
-            if (cellData.italic) {
-                cell.classList.add('italic');
-            } else {
-                cell.classList.remove('italic');
-            }
-
-            if (cellData.underline) {
-                cell.classList.add('underline');
-            } else {
-                cell.classList.remove('underline');
-            }
-
-            if (cellData.strikethrough) {
-                cell.classList.add('strikethrough');
-            } else {
-                cell.classList.remove('strikethrough');
-            }
-
-            // Remove existing alignment classes
-            cell.classList.remove('align-left', 'align-center', 'align-right', 
-                                'align-top', 'align-middle', 'align-bottom');
-
-            // Apply alignment
-            if (cellData.textAlign) {
-                cell.classList.add(`align-${cellData.textAlign}`);
-            }
-            if (cellData.verticalAlign) {
-                cell.classList.add(`align-${cellData.verticalAlign}`);
-            }
+            this.applyCellContent(cell, cellData);
+            this.applyCellFormatting(cell, cellData);
         });
         
         this.updateFormattingButtons();
@@ -407,6 +357,46 @@ class SpreadsheetApp {
         }
     }
 
+    applyCellFormatting(cell, cellData) {
+        // Remove all possible formatting classes first
+        const formatClasses = [
+            'bold', 'italic', 'underline', 'strikethrough',
+            'align-left', 'align-center', 'align-right',
+            'align-top', 'align-middle', 'align-bottom'
+        ];
+        cell.classList.remove(...formatClasses);
+        
+        // Apply style formatting
+        if (cellData.bold) cell.classList.add('bold');
+        if (cellData.italic) cell.classList.add('italic');
+        if (cellData.underline) cell.classList.add('underline');
+        if (cellData.strikethrough) cell.classList.add('strikethrough');
+        
+        // Apply alignment
+        if (cellData.textAlign) cell.classList.add(`align-${cellData.textAlign}`);
+        if (cellData.verticalAlign) cell.classList.add(`align-${cellData.verticalAlign}`);
+        
+        // Apply inline styles
+        cell.style.backgroundColor = cellData.backgroundColor || '';
+        cell.style.color = cellData.fontColor || '';
+        cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
+    }
+    
+    applyCellContent(cell, cellData) {
+        const row = parseInt(cell.dataset.row);
+        const col = parseInt(cell.dataset.col);
+        
+        if (cellData.value) {
+            if (cellData.value.startsWith('=')) {
+                cell.textContent = this.parseFormula(cellData.value, row, col);
+            } else {
+                cell.textContent = cellData.value;
+            }
+        } else {
+            cell.textContent = '';
+        }
+    }
+    
     createCell(row, col) {
         const cell = document.createElement('div');
         cell.className = 'cell';
@@ -414,7 +404,7 @@ class SpreadsheetApp {
         cell.dataset.col = col;
         cell.dataset.address = this.getCellAddress(row, col);
         
-        // Position the cell with dynamic sizing
+        // Position the cell
         cell.style.left = this.getColumnLeft(col) + 'px';
         cell.style.top = this.getRowTop(row) + 'px';
         cell.style.width = this.getColumnWidth(col) + 'px';
@@ -424,44 +414,9 @@ class SpreadsheetApp {
         const cellKey = `${row},${col}`;
         const cellData = this.cellData.get(cellKey) || {};
         
-        // Display formula result or value
-        if (cellData.value) {
-            if (cellData.value.startsWith('=')) {
-                const result = this.parseFormula(cellData.value, row, col);
-                cell.textContent = result;
-            } else {
-                cell.textContent = cellData.value;
-            }
-        }
-        
-        // Apply formatting (rest of the existing code...)
-        if (cellData.backgroundColor) {
-            cell.style.backgroundColor = cellData.backgroundColor;
-        }
-        if (cellData.fontColor) {
-            cell.style.color = cellData.fontColor;
-        }
-        if (cellData.fontSize) {
-            cell.style.fontSize = cellData.fontSize + 'px';
-        }
-        if (cellData.bold) {
-            cell.classList.add('bold');
-        }
-        if (cellData.italic) {
-            cell.classList.add('italic');
-        }
-        if (cellData.underline) {
-            cell.classList.add('underline');
-        }
-        if (cellData.strikethrough) {
-            cell.classList.add('strikethrough');
-        }
-        if (cellData.textAlign) {
-            cell.classList.add(`align-${cellData.textAlign}`);
-        }
-        if (cellData.verticalAlign) {
-            cell.classList.add(`align-${cellData.verticalAlign}`);
-        }
+        // Apply content and formatting using helper methods
+        this.applyCellContent(cell, cellData);
+        this.applyCellFormatting(cell, cellData);
 
         // Restore selection state
         const coordKey = `${row},${col}`;
@@ -1913,37 +1868,8 @@ class SpreadsheetApp {
     }
 
     updateCellDisplay(cell, cellData) {
-        const row = parseInt(cell.dataset.row);
-        const col = parseInt(cell.dataset.col);
-        
-        // Update content - evaluate formulas
-        if (cellData.value) {
-            if (cellData.value.startsWith('=')) {
-                const result = this.parseFormula(cellData.value, row, col);
-                cell.textContent = result;
-            } else {
-                cell.textContent = cellData.value || '';
-            }
-        } else {
-            cell.textContent = '';
-        }
-        
-        // Update styles
-        cell.style.backgroundColor = cellData.backgroundColor || '';
-        cell.style.color = cellData.fontColor || '';
-        cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
-        
-        // Update classes
-        cell.classList.remove('bold', 'italic', 'underline', 'strikethrough',
-                            'align-left', 'align-center', 'align-right',
-                            'align-top', 'align-middle', 'align-bottom');
-        
-        if (cellData.bold) cell.classList.add('bold');
-        if (cellData.italic) cell.classList.add('italic');
-        if (cellData.underline) cell.classList.add('underline');
-        if (cellData.strikethrough) cell.classList.add('strikethrough');
-        if (cellData.textAlign) cell.classList.add(`align-${cellData.textAlign}`);
-        if (cellData.verticalAlign) cell.classList.add(`align-${cellData.verticalAlign}`);
+        this.applyCellContent(cell, cellData);
+        this.applyCellFormatting(cell, cellData);
     }
 
     clearCellFormatting() {
