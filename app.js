@@ -1193,6 +1193,7 @@ class SpreadsheetApp {
         this.updateFormattingButtons();
         this.updateFontSizeInput();
         this.updateFontColorButton();
+        this.updateBackgroundColorButton();
     }
     
     selectFullRow(rowIndex) {
@@ -1878,6 +1879,7 @@ class SpreadsheetApp {
         
         this.updateAlignmentButtons();
         this.updateFontColorButton();
+        this.updateBackgroundColorButton();
     }
 
     showColorPalette() {
@@ -1996,6 +1998,7 @@ class SpreadsheetApp {
             }
         });
 
+        this.updateBackgroundColorButton(); // Add this line
         this.log(`Applied background color ${color || 'none'} to ${this.selectedCellCoords.size} cells`);
     }
     
@@ -2027,6 +2030,40 @@ class SpreadsheetApp {
 
         this.updateFontColorButton();
         this.log(`Applied font color ${color || 'default'} to ${this.selectedCellCoords.size} cells`);
+    }
+    
+    updateBackgroundColorButton() {
+        const colorIndicator = document.getElementById('bgColorIndicator');
+        
+        if (this.selectedCellCoords.size === 0) {
+            colorIndicator.style.backgroundColor = 'transparent';
+            return;
+        }
+
+        // Check if all selected cells have the same background color
+        let commonColor = null;
+        let allSame = true;
+        
+        for (const coordKey of this.selectedCellCoords) {
+            const cellData = this.cellData.get(coordKey);
+            const bgColor = cellData?.backgroundColor || null;
+            
+            if (commonColor === null) {
+                commonColor = bgColor;
+            } else if (commonColor !== bgColor) {
+                allSame = false;
+                break;
+            }
+        }
+        
+        if (allSame && commonColor) {
+            colorIndicator.style.backgroundColor = commonColor;
+        } else if (allSame && !commonColor) {
+            colorIndicator.style.backgroundColor = 'transparent';
+        } else {
+            // Mixed colors - show transparent or a pattern
+            colorIndicator.style.backgroundColor = 'transparent';
+        }
     }
     
     updateFontColorButton() {
