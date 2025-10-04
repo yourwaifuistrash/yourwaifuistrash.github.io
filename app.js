@@ -358,28 +358,25 @@ class SpreadsheetApp {
     }
 
     applyCellFormatting(cell, cellData) {
-        // Remove all possible formatting classes first
-        const formatClasses = [
-            'bold', 'italic', 'underline', 'strikethrough',
-            'align-left', 'align-center', 'align-right',
-            'align-top', 'align-middle', 'align-bottom'
-        ];
-        cell.classList.remove(...formatClasses);
+        const fmt = {
+            base: ['bold', 'italic', 'underline', 'strikethrough'],
+            align: ['left', 'center', 'right', 'top', 'middle', 'bottom']
+        };
         
-        // Apply style formatting
-        if (cellData.bold) cell.classList.add('bold');
-        if (cellData.italic) cell.classList.add('italic');
-        if (cellData.underline) cell.classList.add('underline');
-        if (cellData.strikethrough) cell.classList.add('strikethrough');
+        // Remove all possible format classes
+        cell.classList.remove(...fmt.base, ...fmt.align.map(a => `align-${a}`));
         
-        // Apply alignment
-        if (cellData.textAlign) cell.classList.add(`align-${cellData.textAlign}`);
-        if (cellData.verticalAlign) cell.classList.add(`align-${cellData.verticalAlign}`);
+        // Add active formats
+        fmt.base.forEach(f => cellData[f] && cell.classList.add(f));
+        cellData.textAlign && cell.classList.add(`align-${cellData.textAlign}`);
+        cellData.verticalAlign && cell.classList.add(`align-${cellData.verticalAlign}`);
         
         // Apply inline styles
-        cell.style.backgroundColor = cellData.backgroundColor || '';
-        cell.style.color = cellData.fontColor || '';
-        cell.style.fontSize = cellData.fontSize ? cellData.fontSize + 'px' : '';
+        Object.assign(cell.style, {
+            backgroundColor: cellData.backgroundColor || '',
+            color: cellData.fontColor || '',
+            fontSize: cellData.fontSize ? `${cellData.fontSize}px` : ''
+        });
     }
     
     applyCellContent(cell, cellData) {
