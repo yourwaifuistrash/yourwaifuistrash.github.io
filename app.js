@@ -553,51 +553,38 @@ class SpreadsheetApp {
         });
     }
     
-    setTextAlign(alignment) {
-        if (this.selectedCellCoords.size === 0) return;
-
-        this.saveState(`Set text alignment to ${alignment}`);
-
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
-            }
-            this.cellData.get(coordKey).textAlign = alignment;
+    applyFormatting(type, value) {
+        if (!this.selectedCellCoords.size) return;
+        
+        const configs = {
+            bold: [['bold']], italic: [['italic']], underline: [['underline']], strikethrough: [['strikethrough']],
+            textAlign: [['align-left', 'align-center', 'align-right'], 'align-'],
+            verticalAlign: [['align-top', 'align-middle', 'align-bottom'], 'align-']
+        };
+        
+        const [classes, prefix] = configs[type];
+        const isToggle = typeof value === 'boolean';
+        const remove = isToggle && this.checkIfAllCellsHaveFormat(type);
+        
+        this.saveState(`${isToggle ? 'Toggle' : 'Set'} ${type}`);
+        
+        this.selectedCellCoords.forEach(coord => {
+            const data = this.cellData.get(coord) || {};
+            remove ? delete data[type] : data[type] = isToggle ? true : value;
+            this.cellData.set(coord, data);
         });
-
+        
         this.selectedCells.forEach(cell => {
-            // Remove all text alignment classes
-            cell.classList.remove('align-left', 'align-center', 'align-right');
-            // Add new alignment class
-            cell.classList.add(`align-${alignment}`);
+            cell.classList.remove(...classes);
+            !remove && cell.classList.add(prefix ? `${prefix}${value}` : type);
         });
-
-        this.updateAlignmentButtons();
-        this.log(`Applied text alignment ${alignment} to ${this.selectedCellCoords.size} cells`);
+        
+        (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
     }
-
-    setVerticalAlign(alignment) {
-        if (this.selectedCellCoords.size === 0) return;
-
-        this.saveState(`Set vertical alignment to ${alignment}`);
-
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
-            }
-            this.cellData.get(coordKey).verticalAlign = alignment;
-        });
-
-        this.selectedCells.forEach(cell => {
-            // Remove all vertical alignment classes
-            cell.classList.remove('align-top', 'align-middle', 'align-bottom');
-            // Add new alignment class
-            cell.classList.add(`align-${alignment}`);
-        });
-
-        this.updateAlignmentButtons();
-        this.log(`Applied vertical alignment ${alignment} to ${this.selectedCellCoords.size} cells`);
-    }
+    
+    toggleFormat(format) { this.applyFormatting(format, true); }
+    setTextAlign(alignment) { this.applyFormatting('textAlign', alignment); }
+    setVerticalAlign(alignment) { this.applyFormatting('verticalAlign', alignment); }
 
     updateAlignmentButtons() {
         const buttons = {
@@ -1744,51 +1731,6 @@ class SpreadsheetApp {
                 this.stopEditingCell();
             }
         }
-    }
-
-    toggleFormat(format) {
-        if (this.selectedCellCoords.size === 0) return;
-
-        // Check if all selected cells have this format
-        const allHaveFormat = this.checkIfAllCellsHaveFormat(format);
-        
-        // Save state before formatting
-        this.saveState(`Toggle ${format} for ${this.selectedCellCoords.size} cells`);
-
-        const button = document.getElementById(format + 'Btn');
-        
-        // Apply or remove format based on current state
-        if (allHaveFormat) {
-            // Remove format from all cells
-            button.classList.remove('active');
-            
-            this.selectedCellCoords.forEach(coordKey => {
-                if (this.cellData.has(coordKey)) {
-                    const data = this.cellData.get(coordKey);
-                    delete data[format];
-                }
-            });
-
-            this.selectedCells.forEach(cell => {
-                cell.classList.remove(format);
-            });
-        } else {
-            // Add format to all cells
-            button.classList.add('active');
-            
-            this.selectedCellCoords.forEach(coordKey => {
-                if (!this.cellData.has(coordKey)) {
-                    this.cellData.set(coordKey, {});
-                }
-                this.cellData.get(coordKey)[format] = true;
-            });
-
-            this.selectedCells.forEach(cell => {
-                cell.classList.add(format);
-            });
-        }
-
-        this.log(`Toggled ${format} for ${this.selectedCellCoords.size} cells`);
     }
     
     checkIfAllCellsHaveFormat(format) {
