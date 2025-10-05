@@ -2139,30 +2139,20 @@ class SpreadsheetApp {
         }
     }
 
-    getOps() {
-        return {
-            SUM: v => v.reduce((a, b) => a + b, 0),
-            AVERAGE: v => v.reduce((a, b) => a + b, 0) / v.length,
+    replaceFunctions(expr) {
+        const ops = {
+            SUM: v => v.reduce((a,b) => a+b, 0),
+            AVG: v => v.reduce((a,b) => a+b, 0) / v.length,
             COUNT: v => v.length,
             MIN: v => Math.min(...v),
             MAX: v => Math.max(...v),
-            MEDIAN: v => {
-                const s = [...v].sort((a, b) => a - b), m = s.length >> 1;
-                return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
-            }
+            MEDIAN: v => {const s=[...v].sort((a,b)=>a-b), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2}
         };
-    }
-
-    calc(op, start, end) {
-        const v = this.getRangeValues(start, end);
-        return v.length ? (this.getOps()[op]?.(v) ?? 0) : 0;
-    }
-
-    replaceFunctions(expr) {
-        return expr.replace(
-            new RegExp(`(${Object.keys(this.getOps()).join('|')})\\s*\\(\\s*([A-Z]+\\d+)\\s*:\\s*([A-Z]+\\d+)\\s*\\)`, 'gi'),
-            (_, fn, s, e) => this.calc(fn.toUpperCase(), s, e)
-        );
+        
+        return expr.replace(/(\w+)\(([A-Z]+\d+):([A-Z]+\d+)\)/gi, (_, fn, s, e) => {
+            const v = this.getRangeValues(s, e);
+            return v.length ? (ops[fn.toUpperCase()]?.(v) ?? 0) : 0;
+        });
     }
 
     getRangeValues(startRef, endRef) {
