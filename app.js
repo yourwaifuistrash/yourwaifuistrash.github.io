@@ -2238,15 +2238,15 @@ class SpreadsheetApp {
         }
 
         try {
-            // Remove the leading '='
             let expression = formula.substring(1).trim();
             
-            // Replace cell references with their values
+            // Replace functions FIRST (before cell refs are replaced)
+            expression = this.replaceFunctions(expression);
+            
+            // Then replace individual cell references
             expression = this.replaceCellReferences(expression, cellRow, cellCol);
             
-            // Evaluate the expression
             const result = this.evaluateExpression(expression);
-            
             return result;
         } catch (error) {
             return '#ERROR!';
@@ -2311,38 +2311,30 @@ class SpreadsheetApp {
         }
     }
 
-    replaceFunctions(expression) {
-        // Replace SUM function
-        expression = expression.replace(/SUM\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
-            (match, start, end) => {
-                return this.calculateSum(start, end);
-            });
-        
-        // Replace AVERAGE function
-        expression = expression.replace(/AVERAGE\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
-            (match, start, end) => {
-                return this.calculateAverage(start, end);
-            });
-        
-        // Replace COUNT function
-        expression = expression.replace(/COUNT\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
-            (match, start, end) => {
-                return this.calculateCount(start, end);
-            });
-        
-        // Replace MIN function
-        expression = expression.replace(/MIN\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
-            (match, start, end) => {
-                return this.calculateMin(start, end);
-            });
-        
-        // Replace MAX function
-        expression = expression.replace(/MAX\s*\(\s*([A-Z]+\d+)\s*:\s*([A-Z]+\d+)\s*\)/gi, 
-            (match, start, end) => {
-                return this.calculateMax(start, end);
-            });
-        
-        return expression;
+    getOps() {
+        return {
+            SUM: v => v.reduce((a, b) => a + b, 0),
+            AVERAGE: v => v.reduce((a, b) => a + b, 0) / v.length,
+            COUNT: v => v.length,
+            MIN: v => Math.min(...v),
+            MAX: v => Math.max(...v),
+            MEDIAN: v => {
+                const s = [...v].sort((a, b) => a - b), m = s.length >> 1;
+                return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+            }
+        };
+    }
+
+    calc(op, start, end) {
+        const v = this.getRangeValues(start, end);
+        return v.length ? (this.getOps()[op]?.(v) ?? 0) : 0;
+    }
+
+    replaceFunctions(expr) {
+        return expr.replace(
+            new RegExp(`(${Object.keys(this.getOps()).join('|')})\\s*\\(\\s*([A-Z]+\\d+)\\s*:\\s*([A-Z]+\\d+)\\s*\\)`, 'gi'),
+            (_, fn, s, e) => this.calc(fn.toUpperCase(), s, e)
+        );
     }
 
     getRangeValues(startRef, endRef) {
@@ -2378,34 +2370,6 @@ class SpreadsheetApp {
         }
         
         return values;
-    }
-
-    calculateSum(startRef, endRef) {
-        const values = this.getRangeValues(startRef, endRef);
-        return values.reduce((sum, val) => sum + val, 0);
-    }
-
-    calculateAverage(startRef, endRef) {
-        const values = this.getRangeValues(startRef, endRef);
-        if (values.length === 0) return 0;
-        return values.reduce((sum, val) => sum + val, 0) / values.length;
-    }
-
-    calculateCount(startRef, endRef) {
-        const values = this.getRangeValues(startRef, endRef);
-        return values.length;
-    }
-
-    calculateMin(startRef, endRef) {
-        const values = this.getRangeValues(startRef, endRef);
-        if (values.length === 0) return 0;
-        return Math.min(...values);
-    }
-
-    calculateMax(startRef, endRef) {
-        const values = this.getRangeValues(startRef, endRef);
-        if (values.length === 0) return 0;
-        return Math.max(...values);
     }
 
     resetAll() {
