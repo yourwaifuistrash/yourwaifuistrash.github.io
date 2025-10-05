@@ -598,38 +598,29 @@ class SpreadsheetApp {
     }
     
     updateLayout(index, type) {
-        const isColumn = type === 'column';
-        const getSize = isColumn ? this.getColumnWidth : this.getRowHeight;
-        const headers = isColumn ? this.columnHeaders : this.rowHeaders;
-        const headerElements = headers.querySelectorAll(isColumn ? '.column-header' : '.row-header');
-        const newSize = getSize.call(this, index);
+        const [isCol, cfg] = [type === 'column', {
+            column: ['width', 'left', 'col', '.column-header', this.columnHeaders, this.visibleCols, 
+                    this.getColumnWidth, this.getColumnLeft, this.getTotalGridWidth],
+            row: ['height', 'top', 'row', '.row-header', this.rowHeaders, this.visibleRows,
+                this.getRowHeight, this.getRowTop, this.getTotalGridHeight]
+        }[type]];
         
-        if (headerElements[index]) {
-            headerElements[index].style[isColumn ? 'width' : 'height'] = newSize + 'px';
+        const [sizeProp, posProp, dataAttr, headerClass, headers, vis, getSz, getPos, getTotal] = cfg;
+        const els = headers.querySelectorAll(headerClass);
+        const sz = getSz.call(this, index);
+        
+        if (els[index]) els[index].style[sizeProp] = sz + 'px';
+        
+        for (let i = Math.max(index + 1, vis.start); i < Math.min(els.length, vis.end + 5); i++) {
+            if (els[i]) els[i].style[posProp] = getPos.call(this, i) + 'px';
         }
         
-        const startUpdate = Math.max(index + 1, isColumn ? this.visibleCols.start : this.visibleRows.start);
-        const endUpdate = Math.min(headerElements.length, (isColumn ? this.visibleCols.end : this.visibleRows.end) + 5);
+        this.gridContent.style[sizeProp] = getTotal.call(this) + 'px';
         
-        for (let i = startUpdate; i < endUpdate; i++) {
-            if (headerElements[i]) {
-                headerElements[i].style[isColumn ? 'left' : 'top'] = 
-                    (isColumn ? this.getColumnLeft(i) : this.getRowTop(i)) + 'px';
-            }
-        }
-        
-        this.gridContent.style[isColumn ? 'width' : 'height'] = 
-            (isColumn ? this.getTotalGridWidth() : this.getTotalGridHeight()) + 'px';
-        
-        // Update cells
         this.gridContent.querySelectorAll('.cell').forEach(cell => {
-            const cellIndex = parseInt(cell.dataset[isColumn ? 'col' : 'row']);
-            if (cellIndex === index) {
-                cell.style[isColumn ? 'width' : 'height'] = newSize + 'px';
-            } else if (cellIndex > index) {
-                cell.style[isColumn ? 'left' : 'top'] = 
-                    (isColumn ? this.getColumnLeft(cellIndex) : this.getRowTop(cellIndex)) + 'px';
-            }
+            const idx = parseInt(cell.dataset[dataAttr]);
+            if (idx === index) cell.style[sizeProp] = sz + 'px';
+            else if (idx > index) cell.style[posProp] = getPos.call(this, idx) + 'px';
         });
     }
 
