@@ -1736,65 +1736,22 @@ class SpreadsheetApp {
         });
     }
 
-    applyBackgroundColor(color) {
-        if (this.selectedCellCoords.size === 0) return;
-
-        // Save state before applying color
-        this.saveState(`Apply background color to ${this.selectedCellCoords.size} cells`);
-
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
-            }
-            
-            if (color) {
-                this.cellData.get(coordKey).backgroundColor = color;
-            } else {
-                delete this.cellData.get(coordKey).backgroundColor;
-            }
+    _applyColor(prop, styleProp, color, updateFn) {
+        if (!this.selectedCellCoords.size) return;
+        this.saveState(`Apply ${prop}`);
+        
+        this.selectedCellCoords.forEach(c => {
+            const d = this.cellData.get(c) || {};
+            color ? d[prop] = color : delete d[prop];
+            this.cellData.set(c, d);
         });
-
-        this.selectedCells.forEach(cell => {
-            if (color) {
-                cell.style.backgroundColor = color;
-            } else {
-                cell.style.backgroundColor = '';
-            }
-        });
-
-        this.updateBackgroundColorButton(); // Add this line
-        this.log(`Applied background color ${color || 'none'} to ${this.selectedCellCoords.size} cells`);
+        
+        this.selectedCells.forEach(el => el.style[styleProp] = color || '');
+        updateFn.call(this);
     }
-    
-    applyFontColor(color) {
-        if (this.selectedCellCoords.size === 0) return;
 
-        // Save state before applying color
-        this.saveState(`Apply font color to ${this.selectedCellCoords.size} cells`);
-
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
-            }
-            
-            if (color) {
-                this.cellData.get(coordKey).fontColor = color;
-            } else {
-                delete this.cellData.get(coordKey).fontColor;
-            }
-        });
-
-        this.selectedCells.forEach(cell => {
-            if (color) {
-                cell.style.color = color;
-            } else {
-                cell.style.color = '';
-            }
-        });
-
-        this.updateFontColorButton();
-        this.log(`Applied font color ${color || 'default'} to ${this.selectedCellCoords.size} cells`);
-    }
+    applyBackgroundColor(c) { this._applyColor('backgroundColor', 'backgroundColor', c, this.updateBackgroundColorButton); }
+    applyFontColor(c) { this._applyColor('fontColor', 'color', c, this.updateFontColorButton); }
     
     updateBackgroundColorButton() {
         const colorIndicator = document.getElementById('bgColorIndicator');
