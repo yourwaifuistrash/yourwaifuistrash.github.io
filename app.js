@@ -855,64 +855,45 @@ class SpreadsheetApp {
         // Select all cells in the spreadsheet
         this.selectAllCells();
     }
+    
+    findVisibleRange(scrollPos, viewportSize, max, getSizeFn, padding = 10) {
+        const findIndex = (targetPos) => {
+            let pos = 0;
+            for (let i = 0; i < max; i++) {
+                if (pos >= targetPos) return i;
+                pos += getSizeFn.call(this, i);
+            }
+            return max;
+        };
+        
+        const start = Math.max(0, findIndex(scrollPos) - padding);
+        const end = Math.min(max, findIndex(scrollPos + viewportSize) + padding);
+        
+        return { start, end };
+    }
 
     handleScroll() {
         const scrollLeft = this.mainGrid.scrollLeft;
         const scrollTop = this.mainGrid.scrollTop;
         
-        // Update header positions to keep them visible during scroll
+        // Update header positions
         this.columnHeaders.style.transform = `translateX(-${scrollLeft}px)`;
         this.rowHeaders.style.transform = `translateY(-${scrollTop}px)`;
 
-        // Calculate new visible area with dynamic row/column sizes
-        const padding = 10;
+        // Calculate visible ranges using the helper
+        const newVisibleCols = this.findVisibleRange(
+            scrollLeft,
+            this.mainGrid.clientWidth,
+            this.config.maxCols,
+            this.getColumnWidth
+        );
         
-        // Find visible columns
-        let colStart = 0;
-        let accumulatedWidth = 0;
-        for (let c = 0; c < this.config.maxCols; c++) {
-            if (accumulatedWidth >= scrollLeft) {
-                colStart = Math.max(0, c - padding);
-                break;
-            }
-            accumulatedWidth += this.getColumnWidth(c);
-        }
-        
-        let colEnd = colStart;
-        accumulatedWidth = 0;
-        for (let c = colStart; c < this.config.maxCols; c++) {
-            accumulatedWidth += this.getColumnWidth(c);
-            if (accumulatedWidth >= this.mainGrid.clientWidth) {
-                colEnd = Math.min(this.config.maxCols, c + padding);
-                break;
-            }
-        }
-        if (colEnd === colStart) colEnd = this.config.maxCols;
-        
-        // Find visible rows
-        let rowStart = 0;
-        let accumulatedHeight = 0;
-        for (let r = 0; r < this.config.maxRows; r++) {
-            if (accumulatedHeight >= scrollTop) {
-                rowStart = Math.max(0, r - padding);
-                break;
-            }
-            accumulatedHeight += this.getRowHeight(r);
-        }
-        
-        let rowEnd = rowStart;
-        accumulatedHeight = 0;
-        for (let r = rowStart; r < this.config.maxRows; r++) {
-            accumulatedHeight += this.getRowHeight(r);
-            if (accumulatedHeight >= this.mainGrid.clientHeight) {
-                rowEnd = Math.min(this.config.maxRows, r + padding);
-                break;
-            }
-        }
-        if (rowEnd === rowStart) rowEnd = this.config.maxRows;
-
-        const newVisibleCols = { start: colStart, end: colEnd };
-        const newVisibleRows = { start: rowStart, end: rowEnd };
+        const newVisibleRows = this.findVisibleRange(
+            scrollTop,
+            this.mainGrid.clientHeight,
+            this.config.maxRows,
+            this.getRowHeight
+        );
 
         // Update if visible area changed
         if (newVisibleCols.start !== this.visibleCols.start || 
@@ -1334,27 +1315,16 @@ class SpreadsheetApp {
         const viewRight = viewLeft + this.mainGrid.clientWidth;
         const viewBottom = viewTop + this.mainGrid.clientHeight;
 
-        let newScrollLeft = viewLeft;
-        let newScrollTop = viewTop;
-
-        if (cellLeft < viewLeft) {
-            newScrollLeft = cellLeft;
-        } else if (cellRight > viewRight) {
-            newScrollLeft = cellRight - this.mainGrid.clientWidth;
-        }
-
-        if (cellTop < viewTop) {
-            newScrollTop = cellTop;
-        } else if (cellBottom > viewBottom) {
-            newScrollTop = cellBottom - this.mainGrid.clientHeight;
-        }
+        const newScrollLeft = cellLeft < viewLeft ? cellLeft : 
+                            cellRight > viewRight ? cellRight - this.mainGrid.clientWidth : 
+                            viewLeft;
+        
+        const newScrollTop = cellTop < viewTop ? cellTop : 
+                            cellBottom > viewBottom ? cellBottom - this.mainGrid.clientHeight : 
+                            viewTop;
 
         if (newScrollLeft !== viewLeft || newScrollTop !== viewTop) {
-            this.mainGrid.scrollTo({
-                left: newScrollLeft,
-                top: newScrollTop,
-                behavior: 'smooth'
-            });
+            this.mainGrid.scrollTo({ left: newScrollLeft, top: newScrollTop, behavior: 'smooth' });
         }
     }
 
