@@ -33,8 +33,6 @@ class SpreadsheetApp {
         this.resizeStartSize = null;
         this.justResized = false;
         this.resizeAnimationFrame = null;
-        this.lastHeightUpdate = null; // Add this
-        this.lastWidthUpdate = null;  // Add this
 
         // Undo/Redo system
         this.undoStack = [];
@@ -2078,39 +2076,6 @@ class SpreadsheetApp {
         return values;
     }
 
-    resetAll() {
-        this.clearAllSelections();
-        this.cellData.clear();
-        
-        // Clear undo/redo stacks
-        this.undoStack = [];
-        this.redoStack = [];
-        this.updateUndoRedoButtons();
-        
-        this.gridContent.querySelectorAll('.cell').forEach(cell => {
-            cell.textContent = '';
-            cell.style.backgroundColor = '';
-            cell.style.fontSize = '';
-            cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
-        });
-        
-        this.formulaInput.value = '';
-        
-        document.getElementById('boldBtn').classList.remove('active');
-        document.getElementById('italicBtn').classList.remove('active');
-        document.getElementById('underlineBtn').classList.remove('active');
-        document.getElementById('strikethroughBtn').classList.remove('active');
-        document.getElementById('fontSizeInput').value = ''; // Changed
-        
-        this.log('Reset all data and formatting');
-    }
-
-    applyContextColor() {
-        const color = document.getElementById('contextColorPicker').value;
-        this.applyBackgroundColor(color);
-        this.hideContextMenu();
-    }
-
     log(message, data = null) {
         const timestamp = new Date().toLocaleTimeString();
         console.log(`[${timestamp}] ${message}`, data || '');
@@ -2119,8 +2084,3 @@ class SpreadsheetApp {
 
 // Initialize the application
 const app = new SpreadsheetApp();
-
-// Make applyContextColor available globally for the context menu
-window.applyContextColor = function() {
-    app.applyContextColor();
-};
