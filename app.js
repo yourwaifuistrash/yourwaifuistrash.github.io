@@ -430,45 +430,19 @@ class SpreadsheetApp {
         return cell;
     }
     
-    getRowHeight(row) {
-        return this.rowHeights.get(row) || this.config.cellHeight;
+    getRowHeight(row) { return this.rowHeights.get(row) || this.config.cellHeight; }
+    getColumnWidth(col) { return this.columnWidths.get(col) || this.config.cellWidth; }
+
+    _sum(count, getFn) {
+        let total = 0;
+        for (let i = 0; i < count; i++) total += getFn.call(this, i);
+        return total;
     }
 
-    getColumnWidth(col) {
-        return this.columnWidths.get(col) || this.config.cellWidth;
-    }
-
-    getRowTop(row) {
-        let top = 0;
-        for (let r = 0; r < row; r++) {
-            top += this.getRowHeight(r);
-        }
-        return top;
-    }
-
-    getColumnLeft(col) {
-        let left = 0;
-        for (let c = 0; c < col; c++) {
-            left += this.getColumnWidth(c);
-        }
-        return left;
-    }
-
-    getTotalGridHeight() {
-        let height = 0;
-        for (let r = 0; r < this.config.maxRows; r++) {
-            height += this.getRowHeight(r);
-        }
-        return height;
-    }
-
-    getTotalGridWidth() {
-        let width = 0;
-        for (let c = 0; c < this.config.maxCols; c++) {
-            width += this.getColumnWidth(c);
-        }
-        return width;
-    }
+    getRowTop(row) { return this._sum(row, this.getRowHeight); }
+    getColumnLeft(col) { return this._sum(col, this.getColumnWidth); }
+    getTotalGridHeight() { return this._sum(this.config.maxRows, this.getRowHeight); }
+    getTotalGridWidth() { return this._sum(this.config.maxCols, this.getColumnWidth); }
 
     setupEventListeners() {
         // Main grid events
