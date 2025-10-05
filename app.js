@@ -1505,72 +1505,47 @@ class SpreadsheetApp {
         }
     }
     
-    cutCells() {
-        if (this.selectedCellCoords.size === 0) return;
-
-        // Copy the data first
-        this.clipboard.data = new Map();
-        this.clipboard.mode = 'cut';
-        this.clipboard.sourceCells = new Set(this.selectedCellCoords); // Store original cell coordinates
-
-        // Store relative positions and cell data
+    _getRelativeCoords() {
         const coords = Array.from(this.selectedCellCoords).map(coord => {
             const [row, col] = coord.split(',').map(Number);
             return { row, col };
         });
-
-        // Find the top-left corner
+        
         const minRow = Math.min(...coords.map(c => c.row));
         const minCol = Math.min(...coords.map(c => c.col));
-
-        // Store data with relative positions
-        this.selectedCellCoords.forEach(coordKey => {
-            const [row, col] = coordKey.split(',').map(Number);
-            const relativeKey = `${row - minRow},${col - minCol}`;
-            const cellData = this.cellData.get(coordKey);
-            if (cellData) {
-                this.clipboard.data.set(relativeKey, { ...cellData });
-            } else {
-                // Store empty cell data to ensure we paste empty cells too
-                this.clipboard.data.set(relativeKey, {});
-            }
-        });
-
-        // Visual feedback - add dashed border to cut cells
-        this.selectedCells.forEach(cell => {
-            cell.style.border = '2px dashed var(--color-primary)';
-        });
-
-        this.log(`Cut ${this.selectedCellCoords.size} cells to clipboard`);
+        
+        return { coords, minRow, minCol };
     }
+    
+    cutCells() { this.copyCells(true); }
+    copyCells(isCut = false) {
+        if (!this.selectedCellCoords.size) return;
 
-    copyCells() {
-        if (this.selectedCellCoords.size === 0) return;
+        this.clipboard = {
+            data: new Map(),
+            mode: isCut ? 'cut' : 'copy',
+            sourceCells: isCut ? new Set(this.selectedCellCoords) : null
+        };
 
-        this.clipboard.data = new Map();
-        this.clipboard.mode = 'copy';
+        const { minRow, minCol } = this._getRelativeCoords();
 
-        // Store relative positions and cell data
-        const coords = Array.from(this.selectedCellCoords).map(coord => {
-            const [row, col] = coord.split(',').map(Number);
-            return { row, col };
-        });
-
-        // Find the top-left corner
-        const minRow = Math.min(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-
-        // Store data with relative positions
         this.selectedCellCoords.forEach(coordKey => {
             const [row, col] = coordKey.split(',').map(Number);
             const relativeKey = `${row - minRow},${col - minCol}`;
             const cellData = this.cellData.get(coordKey);
-            if (cellData) {
-                this.clipboard.data.set(relativeKey, { ...cellData });
+            
+            if (cellData || isCut) {
+                this.clipboard.data.set(relativeKey, cellData ? { ...cellData } : {});
             }
         });
 
-        this.log(`Copied ${this.selectedCellCoords.size} cells to clipboard`);
+        if (isCut) {
+            this.selectedCells.forEach(cell => 
+                cell.style.border = '2px dashed var(--color-primary)'
+            );
+        }
+
+        this.log(`${isCut ? 'Cut' : 'Copied'} ${this.selectedCellCoords.size} cells`);
     }
 
     pasteCells() {
