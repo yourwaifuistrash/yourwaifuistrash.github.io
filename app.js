@@ -77,6 +77,30 @@ class SpreadsheetApp {
         this.updateUndoRedoButtons();
         this.log('Spreadsheet initialized');
     }
+    
+    // Convert cell element to coordinate string "row,col"
+    getCoord(cell) {
+        return `${cell.dataset.row},${cell.dataset.col}`;
+    }
+
+    // Parse coordinate string to [row, col] numbers
+    parseCoord(coord) {
+        return coord.split(',').map(Number);
+    }
+
+    // Get row and col from cell as object
+    getCellPos(cell) {
+        return {
+            row: parseInt(cell.dataset.row),
+            col: parseInt(cell.dataset.col)
+        };
+    }
+
+    // Get row and col from coordinate string as object
+    getCoordPos(coord) {
+        const [row, col] = this.parseCoord(coord);
+        return { row, col };
+    }
 
     // Undo/Redo Methods
     saveState(action) {
@@ -175,11 +199,7 @@ class SpreadsheetApp {
     refreshAllVisibleCells() {
         const visibleCells = this.gridContent.querySelectorAll('.cell');
         visibleCells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
-            const cellKey = `${row},${col}`;
-            const cellData = this.cellData.get(cellKey) || {};
-            
+            const cellData = this.cellData.get(this.getCoord(cell)) || {};
             this.updateCellDisplay(cell, cellData);
         });
         
@@ -310,8 +330,7 @@ class SpreadsheetApp {
         // Clear references to cells that are being removed
         const cellsToRemove = [];
         this.selectedCells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
+            const { row, col } = this.getCellPos(cell);
             if (row < this.visibleRows.start || row >= this.visibleRows.end ||
                 col < this.visibleCols.start || col >= this.visibleCols.end) {
                 cellsToRemove.push(cell);
@@ -323,8 +342,7 @@ class SpreadsheetApp {
         // Remove existing cells that are outside visible area
         const existingCells = this.gridContent.querySelectorAll('.cell');
         existingCells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
+            const { row, col } = this.getCellPos(cell);
             if (row < this.visibleRows.start || row >= this.visibleRows.end ||
                 col < this.visibleCols.start || col >= this.visibleCols.end) {
                 if (cell === this.primaryCell) {
@@ -345,7 +363,7 @@ class SpreadsheetApp {
         
         // Restore primary cell reference if it's now visible
         if (!this.primaryCell && this.primaryCellCoord) {
-            const [pRow, pCol] = this.primaryCellCoord.split(',').map(Number);
+            const [pRow, pCol] = this.parseCoord(this.primaryCellCoord);
             if (pRow >= this.visibleRows.start && pRow < this.visibleRows.end &&
                 pCol >= this.visibleCols.start && pCol < this.visibleCols.end) {
                 this.primaryCell = this.getCellAt(pRow, pCol);
@@ -370,8 +388,7 @@ class SpreadsheetApp {
         cell.style.height = this.getRowHeight(row) + 'px';
 
         // Get cell data
-        const cellKey = `${row},${col}`;
-        const cellData = this.cellData.get(cellKey) || {};
+        const cellData = this.cellData.get(`${row},${col}`) || {};
         
         // Apply content and formatting using helper method
         this.updateCellDisplay(cell, cellData);
@@ -632,8 +649,7 @@ class SpreadsheetApp {
     repositionCells() {
         const cells = this.gridContent.querySelectorAll('.cell');
         cells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
+            const { row, col } = this.getCellPos(cell);
             
             cell.style.left = this.getColumnLeft(col) + 'px';
             cell.style.top = this.getRowTop(row) + 'px';
@@ -709,7 +725,7 @@ class SpreadsheetApp {
             const coord = isRow ? `${index},${i}` : `${i},${index}`;
             this.selectedCellCoords.add(coord);
             
-            const [row, col] = coord.split(',').map(Number);
+            const [row, col] = this.parseCoord(coord);
             const cell = this.getCellAt(row, col);
             if (cell) cells.push(cell);
         }
@@ -918,9 +934,7 @@ class SpreadsheetApp {
     }
 
     processCtrlDragCell(cell) {
-        const row = parseInt(cell.dataset.row);
-        const col = parseInt(cell.dataset.col);
-        const coordKey = `${row},${col}`;
+        const coordKey = this.getCoord(cell);
         
         if (this.ctrlDragAction === 'select') {
             this.selectedCells.add(cell);
@@ -947,10 +961,8 @@ class SpreadsheetApp {
     }
 
     getCellsInRect(startCell, endCell) {
-        const startRow = parseInt(startCell.dataset.row);
-        const startCol = parseInt(startCell.dataset.col);
-        const endRow = parseInt(endCell.dataset.row);
-        const endCol = parseInt(endCell.dataset.col);
+        const { row: startRow, col: startCol } = this.getCellPos(startCell);
+        const { row: endRow, col: endCol } = this.getCellPos(endCell);
 
         const minRow = Math.min(startRow, endRow);
         const maxRow = Math.max(startRow, endRow);
@@ -973,9 +985,7 @@ class SpreadsheetApp {
 
     selectCells(cells, isPrimary = false) {
         cells.forEach((cell, index) => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
-            const coordKey = `${row},${col}`;
+            const coordKey = this.getCoord(cell);
             
             this.selectedCells.add(cell);
             this.selectedCellCoords.add(coordKey);
@@ -1026,10 +1036,9 @@ class SpreadsheetApp {
             return;
         }
         
-        const coords = Array.from(this.selectedCellCoords).map(coord => {
-            const [row, col] = coord.split(',').map(Number);
-            return { row, col };
-        });
+        const coords = Array.from(this.selectedCellCoords).map(coord => 
+            this.getCoordPos(coord)
+        );
         
         coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
         
@@ -1072,9 +1081,7 @@ class SpreadsheetApp {
 
     updateFormulaBar() {
         if (this.primaryCell) {
-            const row = parseInt(this.primaryCell.dataset.row);
-            const col = parseInt(this.primaryCell.dataset.col);
-            const cellKey = `${row},${col}`;
+            const cellKey = this.getCoord(this.primaryCell);
             const cellData = this.cellData.get(cellKey);
             this.formulaInput.value = cellData ? (cellData.value || '') : '';
         } else {
@@ -1089,9 +1096,7 @@ class SpreadsheetApp {
         }
 
         this.currentEditingCell = cell;
-        const row = parseInt(cell.dataset.row);
-        const col = parseInt(cell.dataset.col);
-        const cellKey = `${row},${col}`;
+        const cellKey = this.getCoord(cell);
         const cellData = this.cellData.get(cellKey);
         const currentText = cellData ? (cellData.value || '') : '';
         
@@ -1137,9 +1142,8 @@ class SpreadsheetApp {
         const oldValue = this.currentEditingCell.dataset.originalValue || '';
         const newValue = cancel ? oldValue : input.value;
 
-        const row = parseInt(this.currentEditingCell.dataset.row);
-        const col = parseInt(this.currentEditingCell.dataset.col);
-        const cellKey = `${row},${col}`;
+        const cellKey = this.getCoord(this.currentEditingCell);
+        const { row, col } = this.getCellPos(this.currentEditingCell);
         
         // Display formula result or value
         if (newValue.startsWith('=')) {
@@ -1183,8 +1187,7 @@ class SpreadsheetApp {
     moveSelection(deltaRow, deltaCol) {
         if (!this.primaryCell) return;
 
-        const currentRow = parseInt(this.primaryCell.dataset.row);
-        const currentCol = parseInt(this.primaryCell.dataset.col);
+        const { row: currentRow, col: currentCol } = this.getCellPos(this.primaryCell);
         const newRow = Math.max(0, Math.min(this.config.maxRows - 1, currentRow + deltaRow));
         const newCol = Math.max(0, Math.min(this.config.maxCols - 1, currentCol + deltaCol));
 
@@ -1322,9 +1325,7 @@ class SpreadsheetApp {
         
         const visibleCells = this.gridContent.querySelectorAll('.cell');
         visibleCells.forEach(cell => {
-            const row = parseInt(cell.dataset.row);
-            const col = parseInt(cell.dataset.col);
-            const coordKey = `${row},${col}`;
+            const coordKey = this.getCoord(cell);
             
             if (this.selectedCellCoords.has(coordKey)) {
                 cell.classList.add('selected');
@@ -1430,10 +1431,9 @@ class SpreadsheetApp {
     }
     
     _getRelativeCoords() {
-        const coords = Array.from(this.selectedCellCoords).map(coord => {
-            const [row, col] = coord.split(',').map(Number);
-            return { row, col };
-        });
+        const coords = Array.from(this.selectedCellCoords).map(coord => 
+            this.getCoordPos(coord)
+        );
         
         const minRow = Math.min(...coords.map(c => c.row));
         const minCol = Math.min(...coords.map(c => c.col));
@@ -1454,7 +1454,7 @@ class SpreadsheetApp {
         const { minRow, minCol } = this._getRelativeCoords();
 
         this.selectedCellCoords.forEach(coordKey => {
-            const [row, col] = coordKey.split(',').map(Number);
+            const { row, col } = this.getCoordPos(coordKey);
             const relativeKey = `${row - minRow},${col - minCol}`;
             const cellData = this.cellData.get(coordKey);
             
@@ -1483,8 +1483,7 @@ class SpreadsheetApp {
             return;
         }
 
-        const targetRow = parseInt(this.primaryCell.dataset.row);
-        const targetCol = parseInt(this.primaryCell.dataset.col);
+        const { row: targetRow, col: targetCol } = this.getCellPos(this.primaryCell);
 
         // Save state before pasting
         this.saveState(`Paste ${this.clipboard.data.size} cells`);
@@ -1496,7 +1495,7 @@ class SpreadsheetApp {
                 this.cellData.delete(coordKey);
 
                 // Update visible cells
-                const [row, col] = coordKey.split(',').map(Number);
+                const [row, col] = this.parseCoord(coordKey);
                 const cell = this.getCellAt(row, col);
                 if (cell) {
                     cell.textContent = '';
@@ -1561,8 +1560,8 @@ class SpreadsheetApp {
     }
 
     updateCellDisplay(cell, d = {}) {
-        const [row, col] = [+cell.dataset.row, +cell.dataset.col];
-        const coord = `${row},${col}`;
+        const coord = this.getCoord(cell);
+        const { row, col } = this.getCellPos(cell);
         
         // Content
         cell.textContent = d.value?.startsWith('=') ? this.parseFormula(d.value, row, col) : d.value || '';
@@ -1888,7 +1887,7 @@ class SpreadsheetApp {
         if (event.key === 'Enter') {
             event.preventDefault();
             if (this.primaryCell) {
-                const oldValue = this.cellData.get(`${this.primaryCell.dataset.row},${this.primaryCell.dataset.col}`)?.value || '';
+                const oldValue = this.cellData.get(this.getCoord(this.primaryCell))?.value || '';
                 const newValue = this.formulaInput.value;
                 
                 if (oldValue !== newValue) {
@@ -1944,9 +1943,8 @@ class SpreadsheetApp {
     }
 
     updateCellValue(cell, value) {
-        const row = parseInt(cell.dataset.row);
-        const col = parseInt(cell.dataset.col);
-        const cellKey = `${row},${col}`;
+        const cellKey = this.getCoord(cell);
+        const { row, col } = this.getCellPos(cell);
         
         if (!this.cellData.has(cellKey)) {
             this.cellData.set(cellKey, {});
@@ -1964,9 +1962,7 @@ class SpreadsheetApp {
 
     handleFormulaFocus() {
         if (this.primaryCell) {
-            const row = parseInt(this.primaryCell.dataset.row);
-            const col = parseInt(this.primaryCell.dataset.col);
-            const cellKey = `${row},${col}`;
+            const cellKey = this.getCoord(this.primaryCell);
             const cellData = this.cellData.get(cellKey);
             this.formulaInput.value = cellData ? (cellData.value || '') : '';
         }
