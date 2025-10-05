@@ -111,90 +111,35 @@ class SpreadsheetApp {
 
     // Undo/Redo Methods
     saveState(action) {
-        // Create a snapshot of current cell data
-        const state = {
-            action: action,
-            cellData: new Map(this.cellData),
-            timestamp: Date.now()
-        };
-
-        this.undoStack.push(state);
-        
-        // Limit undo stack size
-        if (this.undoStack.length > this.maxUndoSteps) {
-            this.undoStack.shift();
-        }
-
-        // Clear redo stack when new action is performed
+        this.undoStack.push({ action, cellData: new Map(this.cellData), timestamp: Date.now() });
+        if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
         this.redoStack = [];
-        
         this.updateUndoRedoButtons();
-        this.log(`Saved state: ${action}`);
     }
 
     undo() {
-        if (this.undoStack.length === 0) {
-            this.log('Nothing to undo');
-            return;
-        }
-
-        // Save current state to redo stack
-        const currentState = {
-            action: 'current',
-            cellData: new Map(this.cellData),
-            timestamp: Date.now()
-        };
-        this.redoStack.push(currentState);
-
-        // Get previous state
-        const previousState = this.undoStack.pop();
-        
-        // Restore previous state
-        this.cellData = new Map(previousState.cellData);
-        
+        if (!this.undoStack.length) return;
+        this.redoStack.push({ cellData: new Map(this.cellData), timestamp: Date.now() });
+        this.cellData = new Map(this.undoStack.pop().cellData);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
-        this.log(`Undone: ${previousState.action}`);
     }
 
     redo() {
-        if (this.redoStack.length === 0) {
-            this.log('Nothing to redo');
-            return;
-        }
-
-        // Save current state to undo stack
-        const currentState = {
-            action: 'redo-previous',
-            cellData: new Map(this.cellData),
-            timestamp: Date.now()
-        };
-        this.undoStack.push(currentState);
-
-        // Get next state
-        const nextState = this.redoStack.pop();
-        
-        // Restore next state
-        this.cellData = new Map(nextState.cellData);
-        
+        if (!this.redoStack.length) return;
+        this.undoStack.push({ cellData: new Map(this.cellData), timestamp: Date.now() });
+        this.cellData = new Map(this.redoStack.pop().cellData);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
-        this.log('Redone action');
     }
 
     updateUndoRedoButtons() {
-        const undoBtn = document.getElementById('undoBtn');
-        const redoBtn = document.getElementById('redoBtn');
-        
-        if (undoBtn) {
-            undoBtn.disabled = this.undoStack.length === 0;
-            undoBtn.style.opacity = this.undoStack.length === 0 ? '0.5' : '1';
-        }
-        
-        if (redoBtn) {
-            redoBtn.disabled = this.redoStack.length === 0;
-            redoBtn.style.opacity = this.redoStack.length === 0 ? '0.5' : '1';
-        }
+        ['undo', 'redo'].forEach(type => {
+            const btn = document.getElementById(`${type}Btn`);
+            const enabled = this[`${type}Stack`].length > 0;
+            btn.disabled = !enabled;
+            btn.style.opacity = enabled ? '1' : '0.5';
+        });
     }
 
     refreshAllVisibleCells() {
