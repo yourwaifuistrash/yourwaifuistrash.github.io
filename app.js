@@ -485,8 +485,8 @@ class SpreadsheetApp {
         document.addEventListener('click', this.handleDocumentClick.bind(this));
 
         // Header click events for row/column selection
-        this.columnHeaders.addEventListener('click', this.handleColumnHeaderClick.bind(this));
-        this.rowHeaders.addEventListener('click', this.handleRowHeaderClick.bind(this));
+        this.columnHeaders.addEventListener('click', (e) => this.handleHeaderClick(e, 'column'));
+        this.rowHeaders.addEventListener('click', (e) => this.handleHeaderClick(e, 'row'));
         
         // Resize handle events
         this.columnHeaders.addEventListener('mousedown', this.handleResizeMouseDown.bind(this));
@@ -801,35 +801,27 @@ class SpreadsheetApp {
     }
     
     selectRange(type, index, addToSelection = false) {
-        // Step 1: Clear or keep existing selection
-        if (!addToSelection) {
-            this.clearAllSelections();
-        }
+        if (!addToSelection) this.clearAllSelections();
         
-        // Step 2: Determine if we're selecting a row or column
         const isRow = type === 'row';
         const limit = isRow ? this.config.maxCols : this.config.maxRows;
-        
-        // Step 3: Add all coordinates in the range
         const cells = [];
+        
+        // Build coordinate list and collect visible cells
         for (let i = 0; i < limit; i++) {
-            const coordKey = isRow ? `${index},${i}` : `${i},${index}`;
-            this.selectedCellCoords.add(coordKey);
+            const coord = isRow ? `${index},${i}` : `${i},${index}`;
+            this.selectedCellCoords.add(coord);
             
-            // Find visible cells
-            const [row, col] = coordKey.split(',').map(Number);
+            const [row, col] = coord.split(',').map(Number);
             const cell = this.getCellAt(row, col);
-            if (cell) {
-                cells.push(cell);
-            }
+            if (cell) cells.push(cell);
         }
         
-        // Step 4: Mark visible cells as selected
+        // Mark cells as selected and set primary
         cells.forEach((cell, idx) => {
             this.selectedCells.add(cell);
             cell.classList.add('selected');
             
-            // Set primary cell (first cell, or if none exists)
             if (idx === 0 && (!this.primaryCell || !addToSelection)) {
                 this.primaryCell = cell;
                 this.primaryCellCoord = `${cell.dataset.row},${cell.dataset.col}`;
@@ -837,40 +829,26 @@ class SpreadsheetApp {
             }
         });
         
-        // Step 5: Update UI
+        // Update UI once at the end
         this.updateCellReference();
         this.updateFormulaBar();
         this.updateFormattingButtons();
         
-        // Logging
-        const typeName = isRow ? 'row' : 'column';
         const displayIndex = isRow ? index + 1 : this.getColumnName(index);
         const action = addToSelection ? 'Added' : 'Selected';
-        this.log(`${action} full ${typeName} ${displayIndex}`);
-    }
-    
-    handleColumnHeaderClick(event) {
-        if (event.target.closest('.column-resize-handle') || this.justResized) {
-            return;
-        }
-        
-        const header = event.target.closest('.column-header');
-        if (!header) return;
-        
-        const colIndex = parseInt(header.dataset.col);
-        this.selectRange('column', colIndex, event.ctrlKey || event.metaKey);
+        this.log(`${action} full ${type} ${displayIndex}`);
     }
 
-    handleRowHeaderClick(event) {
-        if (event.target.closest('.row-resize-handle') || this.justResized) {
+    handleHeaderClick(event, type) {
+        if (event.target.closest(`.${type}-resize-handle`) || this.justResized) {
             return;
         }
         
-        const header = event.target.closest('.row-header');
+        const header = event.target.closest(`.${type}-header`);
         if (!header) return;
         
-        const rowIndex = parseInt(header.dataset.row);
-        this.selectRange('row', rowIndex, event.ctrlKey || event.metaKey);
+        const index = parseInt(header.dataset[type === 'column' ? 'col' : 'row']);
+        this.selectRange(type, index, event.ctrlKey || event.metaKey);
     }
 
     handleCornerCellClick(event) {
