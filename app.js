@@ -1552,25 +1552,19 @@ class SpreadsheetApp {
         const coord = this.getCoord(cell);
         const { row, col } = this.getCellPos(cell);
         
-        // Content
         cell.textContent = d.value?.startsWith('=') ? this.parseFormula(d.value, row, col) : d.value || '';
         
-        // Classes: base + formats + alignments + selection
-        const fmts = ['bold', 'italic', 'underline', 'strikethrough'].filter(f => d[f]);
-        const aligns = [d.textAlign && `align-${d.textAlign}`, d.verticalAlign && `align-${d.verticalAlign}`].filter(Boolean);
-        const selection = [
+        cell.className = ['cell',
+            d.bold && 'bold', d.italic && 'italic', d.underline && 'underline', d.strikethrough && 'strikethrough',
+            d.textAlign && `align-${d.textAlign}`, d.verticalAlign && `align-${d.verticalAlign}`,
             this.selectedCellCoords.has(coord) && 'selected',
             this.primaryCellCoord === coord && 'primary-selected'
-        ].filter(Boolean);
+        ].filter(Boolean).join(' ');
         
-        cell.className = ['cell', ...fmts, ...aligns, ...selection].join(' ');
-        
-        // Styles
-        Object.assign(cell.style, {
-            backgroundColor: d.backgroundColor || '',
-            color: d.fontColor || '',
-            fontSize: d.fontSize ? d.fontSize + 'px' : ''
-        });
+        // Direct assignment without Object.assign overhead
+        cell.style.backgroundColor = d.backgroundColor || '';
+        cell.style.color = d.fontColor || '';
+        cell.style.fontSize = d.fontSize ? d.fontSize + 'px' : '';
     }
 
     clearCellFormatting() {
