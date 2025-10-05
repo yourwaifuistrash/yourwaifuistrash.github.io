@@ -2087,10 +2087,9 @@ class SpreadsheetApp {
             MEDIAN: v => {const s=[...v].sort((a,b)=>a-b), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2}
         };
         
-        return expr.replace(/(\w+)\(([A-Z]+\d+):([A-Z]+\d+)\)/gi, (_, fn, s, e) => {
-            const v = this.getRangeValues(s, e);
-            return v.length ? (ops[fn.toUpperCase()]?.(v) ?? 0) : 0;
-        });
+        return expr.replace(/(\w+)\(([A-Z]+\d+):([A-Z]+\d+)\)/gi, 
+            (_, fn, s, e) => (v => v.length ? (ops[fn.toUpperCase()]?.(v) ?? 0) : 0)(this.getRangeValues(s, e))
+        );
     }
 
     getRangeValues(startRef, endRef) {
