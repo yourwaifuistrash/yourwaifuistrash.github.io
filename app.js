@@ -1654,46 +1654,11 @@ class SpreadsheetApp {
     }
 
     updateFormattingButtons() {
-        if (this.selectedCellCoords.size === 0) {
-            // No cells selected - deactivate all formatting buttons
-            document.getElementById('boldBtn').classList.remove('active');
-            document.getElementById('italicBtn').classList.remove('active');
-            document.getElementById('underlineBtn').classList.remove('active');
-            document.getElementById('strikethroughBtn').classList.remove('active');
-            return;
-        }
-
-        // Update bold button
-        const allBold = this.checkIfAllCellsHaveFormat('bold');
-        if (allBold) {
-            document.getElementById('boldBtn').classList.add('active');
-        } else {
-            document.getElementById('boldBtn').classList.remove('active');
-        }
-
-        // Update italic button
-        const allItalic = this.checkIfAllCellsHaveFormat('italic');
-        if (allItalic) {
-            document.getElementById('italicBtn').classList.add('active');
-        } else {
-            document.getElementById('italicBtn').classList.remove('active');
-        }
-
-        // Update underline button
-        const allUnderline = this.checkIfAllCellsHaveFormat('underline');
-        if (allUnderline) {
-            document.getElementById('underlineBtn').classList.add('active');
-        } else {
-            document.getElementById('underlineBtn').classList.remove('active');
-        }
-
-        // Update strikethrough button
-        const allStrikethrough = this.checkIfAllCellsHaveFormat('strikethrough');
-        if (allStrikethrough) {
-            document.getElementById('strikethroughBtn').classList.add('active');
-        } else {
-            document.getElementById('strikethroughBtn').classList.remove('active');
-        }
+        ['bold', 'italic', 'underline', 'strikethrough'].forEach(fmt => 
+            document.getElementById(`${fmt}Btn`).classList.toggle('active', 
+                this.selectedCellCoords.size && this.checkIfAllCellsHaveFormat(fmt)
+            )
+        );
         
         this.updateAlignmentButtons();
         this.updateFontColorButton();
