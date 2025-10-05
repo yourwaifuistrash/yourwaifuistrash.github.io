@@ -719,48 +719,34 @@ class SpreadsheetApp {
     }
     
     handleFontSizeChange(event) {
-        const fontSizeInput = document.getElementById('fontSizeInput');
-        const fontSize = parseInt(fontSizeInput.value);
+        const input = document.getElementById('fontSizeInput');
+        const size = parseInt(input.value);
         
-        if (!fontSize || isNaN(fontSize) || fontSize < 1 || this.selectedCellCoords.size === 0) {
-            return;
-        }
+        if (!size || isNaN(size) || size < 1 || !this.selectedCellCoords.size) return;
         
-        // Clamp to reasonable values
-        const clampedSize = Math.max(6, Math.min(200, fontSize));
-        fontSizeInput.value = clampedSize;
-        
-        this.applyFontSize(clampedSize);
+        const clamped = Math.max(6, Math.min(200, size));
+        input.value = clamped;
+        this.applyFontSize(clamped);
     }
 
     applyFontSize(fontSize) {
-        if (this.selectedCellCoords.size === 0) return;
-
-        // Save state before applying font size
-        this.saveState(`Apply font size ${fontSize}px to ${this.selectedCellCoords.size} cells`);
-
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
-            }
-            
-            if (fontSize) {
-                this.cellData.get(coordKey).fontSize = fontSize;
-            } else {
-                delete this.cellData.get(coordKey).fontSize;
-            }
+        if (!this.selectedCellCoords.size) return;
+        
+        this.saveState(`Apply font size ${fontSize}px`);
+        
+        // Update data model
+        this.selectedCellCoords.forEach(coord => {
+            const data = this.cellData.get(coord) || {};
+            fontSize ? data.fontSize = fontSize : delete data.fontSize;
+            this.cellData.set(coord, data);
         });
 
+        // Update DOM
         this.selectedCells.forEach(cell => {
-            if (fontSize) {
-                cell.style.fontSize = fontSize + 'px';
-            } else {
-                cell.style.fontSize = '';
-            }
+            cell.style.fontSize = fontSize ? `${fontSize}px` : '';
         });
 
-        this.updateFontSizeInput(); // Changed
-        this.log(`Applied font size ${fontSize}px to ${this.selectedCellCoords.size} cells`);
+        this.updateFontSizeInput();
     }
 
     updateFontSizeInput() {
