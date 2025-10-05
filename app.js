@@ -600,56 +600,25 @@ class SpreadsheetApp {
     }
 
     updateAlignmentButtons() {
-        if (this.selectedCellCoords.size === 0) {
-            // Deactivate all alignment buttons
-            ['alignLeftBtn', 'alignCenterBtn', 'alignRightBtn', 
-            'alignTopBtn', 'alignMiddleBtn', 'alignBottomBtn'].forEach(id => {
-                document.getElementById(id).classList.remove('active');
+        const buttons = {
+            textAlign: { default: 'left', buttons: ['alignLeftBtn', 'alignCenterBtn', 'alignRightBtn'] },
+            verticalAlign: { default: 'bottom', buttons: ['alignTopBtn', 'alignMiddleBtn', 'alignBottomBtn'] }
+        };
+
+        Object.entries(buttons).forEach(([prop, config]) => {
+            let common = null, allSame = true;
+            
+            for (const coord of this.selectedCellCoords) {
+                const val = this.cellData.get(coord)?.[prop] || config.default;
+                if (common === null) common = val;
+                else if (common !== val) { allSame = false; break; }
+            }
+            
+            config.buttons.forEach((btn, i) => {
+                const values = prop === 'textAlign' ? ['left', 'center', 'right'] : ['top', 'middle', 'bottom'];
+                document.getElementById(btn).classList.toggle('active', allSame && common === values[i]);
             });
-            return;
-        }
-
-        // Check text alignment
-        let commonTextAlign = null;
-        let allSameText = true;
-        
-        for (const coordKey of this.selectedCellCoords) {
-            const cellData = this.cellData.get(coordKey);
-            const textAlign = cellData?.textAlign || 'left'; // default is left
-            
-            if (commonTextAlign === null) {
-                commonTextAlign = textAlign;
-            } else if (commonTextAlign !== textAlign) {
-                allSameText = false;
-                break;
-            }
-        }
-        
-        // Update text alignment buttons
-        document.getElementById('alignLeftBtn').classList.toggle('active', allSameText && commonTextAlign === 'left');
-        document.getElementById('alignCenterBtn').classList.toggle('active', allSameText && commonTextAlign === 'center');
-        document.getElementById('alignRightBtn').classList.toggle('active', allSameText && commonTextAlign === 'right');
-
-        // Check vertical alignment
-        let commonVerticalAlign = null;
-        let allSameVertical = true;
-        
-        for (const coordKey of this.selectedCellCoords) {
-            const cellData = this.cellData.get(coordKey);
-            const verticalAlign = cellData?.verticalAlign || 'bottom'; // default is bottom
-            
-            if (commonVerticalAlign === null) {
-                commonVerticalAlign = verticalAlign;
-            } else if (commonVerticalAlign !== verticalAlign) {
-                allSameVertical = false;
-                break;
-            }
-        }
-        
-        // Update vertical alignment buttons
-        document.getElementById('alignTopBtn').classList.toggle('active', allSameVertical && commonVerticalAlign === 'top');
-        document.getElementById('alignMiddleBtn').classList.toggle('active', allSameVertical && commonVerticalAlign === 'middle');
-        document.getElementById('alignBottomBtn').classList.toggle('active', allSameVertical && commonVerticalAlign === 'bottom');
+        });
     }
     
     handleResizeMouseDown(event) {
