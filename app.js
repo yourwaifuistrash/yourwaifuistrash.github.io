@@ -78,6 +78,15 @@ class SpreadsheetApp {
         this.log('Spreadsheet initialized');
     }
     
+    updateUI() {
+        this.updateCellReference();
+        this.updateFormulaBar();
+        this.updateFormattingButtons();
+        this.updateFontSizeInput();
+        this.updateFontColorButton();
+        this.updateBackgroundColorButton();
+    }
+    
     // Convert cell element to coordinate string "row,col"
     getCoord(cell) {
         return `${cell.dataset.row},${cell.dataset.col}`;
@@ -145,11 +154,8 @@ class SpreadsheetApp {
         // Restore previous state
         this.cellData = new Map(previousState.cellData);
         
-        // Update all visible cells
         this.refreshAllVisibleCells();
-        
         this.updateUndoRedoButtons();
-        this.updateFormulaBar();
         this.log(`Undone: ${previousState.action}`);
     }
 
@@ -173,11 +179,8 @@ class SpreadsheetApp {
         // Restore next state
         this.cellData = new Map(nextState.cellData);
         
-        // Update all visible cells
         this.refreshAllVisibleCells();
-        
         this.updateUndoRedoButtons();
-        this.updateFormulaBar();
         this.log('Redone action');
     }
 
@@ -203,8 +206,7 @@ class SpreadsheetApp {
             this.updateCellDisplay(cell, cellData);
         });
         
-        this.updateFormattingButtons();
-        this.updateFontSizeInput();
+        this.updateUI();
     }
 
     // Fixed column numbering: A, B, C, ..., Z, AA, AB, AC, ... 
@@ -743,9 +745,7 @@ class SpreadsheetApp {
         });
         
         // Update UI once at the end
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
+        this.updateUI();
         
         const displayIndex = isRow ? index + 1 : this.getColumnName(index);
         const action = addToSelection ? 'Added' : 'Selected';
@@ -900,9 +900,9 @@ class SpreadsheetApp {
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells.clear();
         
-        // Update formatting buttons after any selection change
+        // Update UI elements after any selection change
         if (this.selectedCells.size > 0) {
-            this.updateFormattingButtons();
+            this.updateUI();
         }
     }
 
@@ -955,9 +955,7 @@ class SpreadsheetApp {
             }
         }
         this.ctrlDragProcessedCells.add(cell);
-        this.updateCellReference();
-        this.updateFormattingButtons();
-        this.updateFontSizeInput(); // Changed
+        this.updateUI();
     }
 
     getCellsInRect(startCell, endCell) {
@@ -1000,12 +998,7 @@ class SpreadsheetApp {
                 cell.classList.add('primary-selected');
             }
         });
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
-        this.updateFontSizeInput();
-        this.updateFontColorButton();
-        this.updateBackgroundColorButton();
+        this.updateUI();
     }
     
     clearAllSelections() {
@@ -1016,10 +1009,7 @@ class SpreadsheetApp {
         this.selectedCellCoords.clear();
         this.primaryCell = null;
         this.primaryCellCoord = null;
-        this.updateCellReference();
-        this.updateFormulaBar();
-        this.updateFormattingButtons();
-        this.updateFontSizeInput(); // Changed
+        this.updateUI();
         this.log('Cleared all selections');
     }
 
@@ -1338,8 +1328,7 @@ class SpreadsheetApp {
             }
         });
         
-        this.updateCellReference();
-        this.updateFormulaBar();
+        this.updateUI();
         this.log(`Selected all cells: ${this.config.maxRows * this.config.maxCols} cells`);
     }
 
@@ -1612,8 +1601,7 @@ class SpreadsheetApp {
                       'align-top', 'align-middle', 'align-bottom');
         });
 
-        this.updateFormattingButtons();
-        this.updateFontSizeInput(); // Changed
+        this.updateUI();
         this.log(`Cleared formatting from ${this.selectedCellCoords.size} cells`);
     }
 
