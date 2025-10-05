@@ -180,8 +180,7 @@ class SpreadsheetApp {
             const cellKey = `${row},${col}`;
             const cellData = this.cellData.get(cellKey) || {};
             
-            this.applyCellContent(cell, cellData);
-            this.applyCellFormatting(cell, cellData);
+            this.updateCellDisplay(cell, cellData);
         });
         
         this.updateFormattingButtons();
@@ -356,43 +355,6 @@ class SpreadsheetApp {
             }
         }
     }
-
-    applyCellFormatting(cell, cellData) {
-        const fmt = {
-            base: ['bold', 'italic', 'underline', 'strikethrough'],
-            align: ['left', 'center', 'right', 'top', 'middle', 'bottom']
-        };
-        
-        // Remove all possible format classes
-        cell.classList.remove(...fmt.base, ...fmt.align.map(a => `align-${a}`));
-        
-        // Add active formats
-        fmt.base.forEach(f => cellData[f] && cell.classList.add(f));
-        cellData.textAlign && cell.classList.add(`align-${cellData.textAlign}`);
-        cellData.verticalAlign && cell.classList.add(`align-${cellData.verticalAlign}`);
-        
-        // Apply inline styles
-        Object.assign(cell.style, {
-            backgroundColor: cellData.backgroundColor || '',
-            color: cellData.fontColor || '',
-            fontSize: cellData.fontSize ? `${cellData.fontSize}px` : ''
-        });
-    }
-    
-    applyCellContent(cell, cellData) {
-        const row = parseInt(cell.dataset.row);
-        const col = parseInt(cell.dataset.col);
-        
-        if (cellData.value) {
-            if (cellData.value.startsWith('=')) {
-                cell.textContent = this.parseFormula(cellData.value, row, col);
-            } else {
-                cell.textContent = cellData.value;
-            }
-        } else {
-            cell.textContent = '';
-        }
-    }
     
     createCell(row, col) {
         const cell = document.createElement('div');
@@ -411,9 +373,8 @@ class SpreadsheetApp {
         const cellKey = `${row},${col}`;
         const cellData = this.cellData.get(cellKey) || {};
         
-        // Apply content and formatting using helper methods
-        this.applyCellContent(cell, cellData);
-        this.applyCellFormatting(cell, cellData);
+        // Apply content and formatting using helper method
+        this.updateCellDisplay(cell, cellData);
 
         // Restore selection state
         const coordKey = `${row},${col}`;
@@ -1610,9 +1571,29 @@ class SpreadsheetApp {
         this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
     }
 
-    updateCellDisplay(cell, cellData) {
-        this.applyCellContent(cell, cellData);
-        this.applyCellFormatting(cell, cellData);
+    updateCellDisplay(cell, d = {}) {
+        const [row, col] = [+cell.dataset.row, +cell.dataset.col];
+        const coord = `${row},${col}`;
+        
+        // Content
+        cell.textContent = d.value?.startsWith('=') ? this.parseFormula(d.value, row, col) : d.value || '';
+        
+        // Classes: base + formats + alignments + selection
+        const fmts = ['bold', 'italic', 'underline', 'strikethrough'].filter(f => d[f]);
+        const aligns = [d.textAlign && `align-${d.textAlign}`, d.verticalAlign && `align-${d.verticalAlign}`].filter(Boolean);
+        const selection = [
+            this.selectedCellCoords.has(coord) && 'selected',
+            this.primaryCellCoord === coord && 'primary-selected'
+        ].filter(Boolean);
+        
+        cell.className = ['cell', ...fmts, ...aligns, ...selection].join(' ');
+        
+        // Styles
+        Object.assign(cell.style, {
+            backgroundColor: d.backgroundColor || '',
+            color: d.fontColor || '',
+            fontSize: d.fontSize ? d.fontSize + 'px' : ''
+        });
     }
 
     clearCellFormatting() {
