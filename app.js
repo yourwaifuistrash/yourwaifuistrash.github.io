@@ -543,59 +543,57 @@ class SpreadsheetApp {
         });
     }
     
+    getResizeConfig(type) {
+        return type === 'column' ? {
+            axis: 'clientX',
+            cursor: 'col-resize',
+            minSize: 30,
+            sizeMap: this.columnWidths,
+            getSizeFn: this.getColumnWidth,
+            dataset: 'col'
+        } : {
+            axis: 'clientY',
+            cursor: 'row-resize',
+            minSize: 20,
+            sizeMap: this.rowHeights,
+            getSizeFn: this.getRowHeight,
+            dataset: 'row'
+        };
+    }
+    
     handleResizeMouseDown(event) {
-        const columnHandle = event.target.closest('.column-resize-handle');
-        const rowHandle = event.target.closest('.row-resize-handle');
+        const handle = event.target.closest('.column-resize-handle, .row-resize-handle');
+        if (!handle) return;
         
-        if (columnHandle) {
-            event.stopPropagation();
-            event.preventDefault();
-            
-            this.isResizing = true;
-            this.resizeType = 'column';
-            this.resizeIndex = parseInt(columnHandle.dataset.col);
-            this.resizeStartPos = event.clientX;
-            this.resizeStartSize = this.getColumnWidth(this.resizeIndex);
-            this.lastWidthUpdate = null; // Reset
-            
-            document.body.style.cursor = 'col-resize';
-        } else if (rowHandle) {
-            event.stopPropagation();
-            event.preventDefault();
-            
-            this.isResizing = true;
-            this.resizeType = 'row';
-            this.resizeIndex = parseInt(rowHandle.dataset.row);
-            this.resizeStartPos = event.clientY;
-            this.resizeStartSize = this.getRowHeight(this.resizeIndex);
-            this.lastHeightUpdate = null; // Reset
-            
-            document.body.style.cursor = 'row-resize';
-        }
+        event.stopPropagation();
+        event.preventDefault();
+        
+        // Determine type from class
+        this.resizeType = handle.classList.contains('column-resize-handle') ? 'column' : 'row';
+        const config = this.getResizeConfig(this.resizeType);
+        
+        // Store config for use in mouse move
+        this.resizeConfig = config;
+        this.isResizing = true;
+        this.resizeIndex = parseInt(handle.dataset[config.dataset]);
+        this.resizeStartPos = event[config.axis];
+        this.resizeStartSize = config.getSizeFn.call(this, this.resizeIndex);
+        
+        document.body.style.cursor = config.cursor;
     }
 
     handleDocumentMouseMove(event) {
-        if (!this.isResizing) return;
-        
-        // Use requestAnimationFrame to throttle updates
-        if (this.resizeAnimationFrame) {
-            return;
-        }
+        if (!this.isResizing || this.resizeAnimationFrame) return;
         
         this.resizeAnimationFrame = requestAnimationFrame(() => {
             this.resizeAnimationFrame = null;
             
-            if (this.resizeType === 'column') {
-                const delta = event.clientX - this.resizeStartPos;
-                const newWidth = Math.max(30, this.resizeStartSize + delta);
-                this.columnWidths.set(this.resizeIndex, newWidth);
-                this.updateLayout(this.resizeIndex, 'column');
-            } else if (this.resizeType === 'row') {
-                const delta = event.clientY - this.resizeStartPos;
-                const newHeight = Math.max(20, this.resizeStartSize + delta);
-                this.rowHeights.set(this.resizeIndex, newHeight);
-                this.updateLayout(this.resizeIndex, 'row');
-            }
+            const { axis, minSize, sizeMap } = this.resizeConfig;
+            const delta = event[axis] - this.resizeStartPos;
+            const newSize = Math.max(minSize, this.resizeStartSize + delta);
+            
+            sizeMap.set(this.resizeIndex, newSize);
+            this.updateLayout(this.resizeIndex, this.resizeType);
         });
     }
     
