@@ -1695,73 +1695,43 @@ class SpreadsheetApp {
     applyBackgroundColor(c) { this._applyColor('backgroundColor', 'backgroundColor', c, this.updateBackgroundColorButton); }
     applyFontColor(c) { this._applyColor('fontColor', 'color', c, this.updateFontColorButton); }
     
-    updateBackgroundColorButton() {
-        const colorIndicator = document.getElementById('bgColorIndicator');
+    _getCommonCellProperty(property) {
+        if (this.selectedCellCoords.size === 0) return { hasValue: false, value: null, allSame: false };
         
-        if (this.selectedCellCoords.size === 0) {
-            colorIndicator.style.backgroundColor = 'transparent';
-            return;
-        }
-
-        // Check if all selected cells have the same background color
-        let commonColor = null;
+        let commonValue = null;
         let allSame = true;
         
-        for (const coordKey of this.selectedCellCoords) {
-            const cellData = this.cellData.get(coordKey);
-            const bgColor = cellData?.backgroundColor || null;
+        for (const coord of this.selectedCellCoords) {
+            const value = this.cellData.get(coord)?.[property] || null;
             
-            if (commonColor === null) {
-                commonColor = bgColor;
-            } else if (commonColor !== bgColor) {
+            if (commonValue === null) {
+                commonValue = value;
+            } else if (commonValue !== value) {
                 allSame = false;
                 break;
             }
         }
         
-        if (allSame && commonColor) {
-            colorIndicator.style.backgroundColor = commonColor;
-        } else if (allSame && !commonColor) {
-            colorIndicator.style.backgroundColor = 'transparent';
-        } else {
-            // Mixed colors - show transparent or a pattern
-            colorIndicator.style.backgroundColor = 'transparent';
-        }
+        return { hasValue: true, value: commonValue, allSame };
     }
-    
-    updateFontColorButton() {
-        const button = document.getElementById('fontColorBtn');
-        const colorBar = button.querySelector('span span');
-        
-        if (this.selectedCellCoords.size === 0) {
-            colorBar.style.backgroundColor = 'currentColor';
-            return;
-        }
 
-        // Check if all selected cells have the same font color
-        let commonColor = null;
-        let allSame = true;
+    updateBackgroundColorButton() {
+        const indicator = document.getElementById('bgColorIndicator');
+        const { hasValue, value, allSame } = this._getCommonCellProperty('backgroundColor');
         
-        for (const coordKey of this.selectedCellCoords) {
-            const cellData = this.cellData.get(coordKey);
-            const fontColor = cellData?.fontColor || null;
-            
-            if (commonColor === null) {
-                commonColor = fontColor;
-            } else if (commonColor !== fontColor) {
-                allSame = false;
-                break;
-            }
-        }
+        indicator.style.backgroundColor = (hasValue && allSame && value) 
+            ? value 
+            : 'transparent';
+    }
+
+    updateFontColorButton() {
+        const colorBar = document.getElementById('fontColorBtn').querySelector('span span');
+        const { hasValue, value, allSame } = this._getCommonCellProperty('fontColor');
         
-        if (allSame && commonColor) {
-            colorBar.style.backgroundColor = commonColor;
-        } else if (allSame && !commonColor) {
-            colorBar.style.backgroundColor = 'var(--color-text)';
-        } else {
-            // Mixed colors - show a gradient or default
-            colorBar.style.backgroundColor = 'currentColor';
-        }
+        colorBar.style.backgroundColor = !hasValue ? 'currentColor' :
+            (allSame && value) ? value :
+            (allSame && !value) ? 'var(--color-text)' :
+            'currentColor';
     }
 
     handleFormulaKeyDown(event) {
