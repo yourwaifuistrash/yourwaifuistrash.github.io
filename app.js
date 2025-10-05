@@ -559,30 +559,29 @@ class SpreadsheetApp {
         });
     }
     
-    updateLayout(index, type) {
-        const [isCol, cfg] = [type === 'column', {
-            column: ['width', 'left', 'col', '.column-header', this.columnHeaders, this.visibleCols, 
-                    this.getColumnWidth, this.getColumnLeft, this.getTotalGridWidth],
-            row: ['height', 'top', 'row', '.row-header', this.rowHeaders, this.visibleRows,
-                this.getRowHeight, this.getRowTop, this.getTotalGridHeight]
-        }[type]];
+    updateLayout(idx, type) {
+        const isCol = type === 'column';
+        const [prop, pos, attr, sel, cont, vis, getSz, getPos, getTotal] = isCol
+            ? ['width', 'left', 'col', '.column-header', this.columnHeaders, this.visibleCols, 
+            this.getColumnWidth, this.getColumnLeft, this.getTotalGridWidth]
+            : ['height', 'top', 'row', '.row-header', this.rowHeaders, this.visibleRows,
+            this.getRowHeight, this.getRowTop, this.getTotalGridHeight];
         
-        const [sizeProp, posProp, dataAttr, headerClass, headers, vis, getSz, getPos, getTotal] = cfg;
-        const els = headers.querySelectorAll(headerClass);
-        const sz = getSz.call(this, index);
+        const sz = getSz.call(this, idx);
+        const hdrs = cont.querySelectorAll(sel);
         
-        if (els[index]) els[index].style[sizeProp] = sz + 'px';
-        
-        for (let i = Math.max(index + 1, vis.start); i < Math.min(els.length, vis.end + 5); i++) {
-            if (els[i]) els[i].style[posProp] = getPos.call(this, i) + 'px';
+        // Update resized element and subsequent positions
+        hdrs[idx]?.style.setProperty(prop, sz + 'px');
+        for (let i = Math.max(idx + 1, vis.start); i < Math.min(hdrs.length, vis.end + 5); i++) {
+            hdrs[i]?.style.setProperty(pos, getPos.call(this, i) + 'px');
         }
         
-        this.gridContent.style[sizeProp] = getTotal.call(this) + 'px';
-        
+        // Update grid and cells
+        this.gridContent.style[prop] = getTotal.call(this) + 'px';
         this.gridContent.querySelectorAll('.cell').forEach(cell => {
-            const idx = parseInt(cell.dataset[dataAttr]);
-            if (idx === index) cell.style[sizeProp] = sz + 'px';
-            else if (idx > index) cell.style[posProp] = getPos.call(this, idx) + 'px';
+            const i = parseInt(cell.dataset[attr]);
+            cell.style[i === idx ? prop : i > idx && pos] = 
+                (i === idx ? sz : i > idx && getPos.call(this, i)) + 'px';
         });
     }
 
