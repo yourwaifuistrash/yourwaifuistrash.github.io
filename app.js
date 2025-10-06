@@ -1116,11 +1116,16 @@ class SpreadsheetApp {
         const cellKey = this.getCoord(this.currentEditingCell);
         const { row, col } = this.getCellPos(this.currentEditingCell);
         
-        // Display formula result or value
-        if (newValue.startsWith('=')) {
+        // Display based on value type
+        if (newValue.startsWith("'")) {
+            // Escaped text - display without the apostrophe
+            this.currentEditingCell.textContent = newValue.substring(1);
+        } else if (newValue.startsWith('=')) {
+            // Formula - display result
             const result = this.parseFormula(newValue, row, col);
             this.currentEditingCell.textContent = result;
         } else {
+            // Regular text
             this.currentEditingCell.textContent = newValue;
         }
         
@@ -1533,7 +1538,22 @@ class SpreadsheetApp {
         const coord = this.getCoord(cell);
         const { row, col } = this.getCellPos(cell);
         
-        cell.textContent = d.value?.startsWith('=') ? this.parseFormula(d.value, row, col) : d.value || '';
+        // Handle display text based on value type
+        let displayText = '';
+        if (d.value) {
+            if (d.value.startsWith("'")) {
+                // Escaped text - show without the leading apostrophe
+                displayText = d.value.substring(1);
+            } else if (d.value.startsWith('=')) {
+                // Formula - evaluate and show result
+                displayText = this.parseFormula(d.value, row, col);
+            } else {
+                // Regular text
+                displayText = d.value;
+            }
+        }
+        
+        cell.textContent = displayText;
         
         cell.className = ['cell',
             d.bold && 'bold', d.italic && 'italic', d.underline && 'underline', d.strikethrough && 'strikethrough',
@@ -1829,8 +1849,13 @@ class SpreadsheetApp {
         }
         this.cellData.get(cellKey).value = value;
         
+        // Handle escaped formulas (starting with ')
+        if (value.startsWith("'")) {
+            // Display without the leading apostrophe
+            cell.textContent = value.substring(1);
+        }
         // If it's a formula, evaluate and display the result
-        if (value.startsWith('=')) {
+        else if (value.startsWith('=')) {
             const result = this.parseFormula(value, row, col);
             cell.textContent = result;
         } else {
