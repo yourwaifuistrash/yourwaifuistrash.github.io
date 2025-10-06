@@ -674,7 +674,75 @@ class SpreadsheetApp {
         if (!header) return;
         
         const index = parseInt(header.dataset[type === 'column' ? 'col' : 'row']);
-        this.selectRange(type, index, event.ctrlKey || event.metaKey);
+        const isCtrlPressed = event.ctrlKey || event.metaKey;
+        
+        // Check if this row/column is already fully selected
+        if (isCtrlPressed && this.isRangeFullySelected(type, index)) {
+            this.deselectRange(type, index);
+        } else {
+            this.selectRange(type, index, isCtrlPressed);
+        }
+    }
+    
+    isRangeFullySelected(type, index) {
+        const isRow = type === 'row';
+        const limit = isRow ? this.config.maxCols : this.config.maxRows;
+        
+        // Check if all cells in this row/column are selected
+        for (let i = 0; i < limit; i++) {
+            const coord = isRow ? `${index},${i}` : `${i},${index}`;
+            if (!this.selectedCellCoords.has(coord)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    deselectRange(type, index) {
+        const isRow = type === 'row';
+        const limit = isRow ? this.config.maxCols : this.config.maxRows;
+        
+        // Remove coordinates and visible cells from selection
+        for (let i = 0; i < limit; i++) {
+            const coord = isRow ? `${index},${i}` : `${i},${index}`;
+            this.selectedCellCoords.delete(coord);
+            
+            const [row, col] = this.parseCoord(coord);
+            const cell = this.getCellAt(row, col);
+            if (cell) {
+                this.selectedCells.delete(cell);
+                cell.classList.remove('selected', 'primary-selected');
+                
+                // Clear primary cell if it was in this range
+                if (cell === this.primaryCell) {
+                    this.primaryCell = null;
+                    this.primaryCellCoord = null;
+                }
+            }
+        }
+        
+        // If we still have selections, set a new primary cell
+        if (this.selectedCellCoords.size > 0 && !this.primaryCell) {
+            const firstCoord = Array.from(this.selectedCellCoords)[0];
+            const [row, col] = this.parseCoord(firstCoord);
+            const cell = this.getCellAt(row, col);
+            
+            if (cell) {
+                this.primaryCell = cell;
+                this.primaryCellCoord = firstCoord;
+                cell.classList.add('primary-selected');
+            } else {
+                // If not visible, just store the coordinate
+                this.primaryCellCoord = firstCoord;
+            }
+        }
+        
+        // Update UI
+        this.updateUI();
+        
+        const displayIndex = isRow ? index + 1 : this.getColumnName(index);
+        this.log(`Deselected full ${type} ${displayIndex}`);
     }
 
     handleCornerCellClick(event) {
