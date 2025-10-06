@@ -1588,35 +1588,23 @@ class SpreadsheetApp {
         this.updateBackgroundColorButton();
     }
 
-    showColorPalette() {
+    _showPalette(paletteElement, buttonId) {
         if (this.selectedCells.size === 0) return;
         
-        const button = document.getElementById('colorBtn');
-        const rect = button.getBoundingClientRect();
-        
-        this.colorPalette.classList.remove('hidden');
-        this.colorPalette.style.left = rect.left + 'px';
-        this.colorPalette.style.top = (rect.bottom + 5) + 'px';
-    }
-    
-    showFontColorPalette() {
-        if (this.selectedCells.size === 0) return;
-        
-        const button = document.getElementById('fontColorBtn');
-        const rect = button.getBoundingClientRect();
-        
-        this.fontColorPalette.classList.remove('hidden');
-        this.fontColorPalette.style.left = rect.left + 'px';
-        this.fontColorPalette.style.top = (rect.bottom + 5) + 'px';
+        const rect = document.getElementById(buttonId).getBoundingClientRect();
+        paletteElement.classList.remove('hidden');
+        paletteElement.style.left = rect.left + 'px';
+        paletteElement.style.top = (rect.bottom + 5) + 'px';
     }
 
-    hideColorPalette() {
-        this.colorPalette.classList.add('hidden');
+    _hidePalette(paletteElement) {
+        paletteElement.classList.add('hidden');
     }
-    
-    hideFontColorPalette() {
-        this.fontColorPalette.classList.add('hidden');
-    }
+
+    showColorPalette() { this._showPalette(this.colorPalette, 'colorBtn'); }
+    showFontColorPalette() { this._showPalette(this.fontColorPalette, 'fontColorBtn'); }
+    hideColorPalette() { this._hidePalette(this.colorPalette); }
+    hideFontColorPalette() { this._hidePalette(this.fontColorPalette); }
 
     setupColorPalette() {
         const grid = document.getElementById('colorPaletteGrid');
