@@ -368,86 +368,57 @@ class SpreadsheetApp {
     getTotalGridWidth() { return this._sum(this.config.maxCols, this.getColumnWidth); }
 
     setupEventListeners() {
-        // Main grid events
-        this.mainGrid.addEventListener('mousedown', this.handleMouseDown.bind(this));
-        this.mainGrid.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        this.mainGrid.addEventListener('dblclick', this.handleDoubleClick.bind(this));
-        this.mainGrid.addEventListener('scroll', this.handleScroll.bind(this));
+        const events = [
+            ['#undoBtn', 'click', () => this.undo()],
+            ['#redoBtn', 'click', () => this.redo()],
+            [this.mainGrid, 'mousedown', e => this.handleMouseDown(e)],
+            [this.mainGrid, 'mousemove', e => this.handleMouseMove(e)],
+            [this.mainGrid, 'dblclick', e => this.handleDoubleClick(e)],
+            [this.mainGrid, 'scroll', e => this.handleScroll(e)],
+            [this.mainGrid, 'selectstart', e => {
+                if ((this.isDragging || this.isResizing) && !e.target.classList.contains('cell-editor')) e.preventDefault();
+            }],
+            [document, 'mouseup', e => this.handleMouseUp(e)],
+            [document, 'mousemove', e => this.handleDocumentMouseMove(e)],
+            [document, 'keydown', e => this.handleKeyDown(e)],
+            [document, 'contextmenu', e => this.handleContextMenu(e)],
+            [document, 'click', e => this.handleDocumentClick(e)],
+            [this.columnHeaders, 'click', e => this.handleHeaderClick(e, 'column')],
+            [this.columnHeaders, 'mousedown', e => this.handleResizeMouseDown(e)],
+            [this.rowHeaders, 'click', e => this.handleHeaderClick(e, 'row')],
+            [this.rowHeaders, 'mousedown', e => this.handleResizeMouseDown(e)],
+            ['#colorBtn', 'click', () => this.showColorPalette()],
+            ['#fontColorBtn', 'click', () => this.showFontColorPalette()],
+            ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e)],
+            ['#fontSizeInput', 'keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e); e.target.blur(); }
+            }],
+            [this.formulaInput, 'keydown', e => this.handleFormulaKeyDown(e)],
+            [this.formulaInput, 'focus', e => this.handleFormulaFocus(e)],
+            [this.formulaInput, 'input', e => this.handleFormulaInput(e)],
+            [this.cellReference, 'keydown', e => this.handleCellReferenceKeyDown(e)],
+            [this.contextMenu, 'click', e => this.handleContextMenuClick(e)],
+            ['#contextColorPicker', 'input', e => this.applyBackgroundColor(e.target.value)],
+            ['.corner-cell', 'click', e => this.handleCornerCellClick(e)]
+        ];
         
-        // Document-level events for resize and mouse release
-        document.addEventListener('mouseup', this.handleMouseUp.bind(this));
-        document.addEventListener('mousemove', this.handleDocumentMouseMove.bind(this));
-        document.addEventListener('keydown', this.handleKeyDown.bind(this));
-        document.addEventListener('contextmenu', this.handleContextMenu.bind(this));
-        document.addEventListener('click', this.handleDocumentClick.bind(this));
-
-        // Header click events for row/column selection
-        this.columnHeaders.addEventListener('click', (e) => this.handleHeaderClick(e, 'column'));
-        this.rowHeaders.addEventListener('click', (e) => this.handleHeaderClick(e, 'row'));
-        
-        // Resize handle events
-        this.columnHeaders.addEventListener('mousedown', this.handleResizeMouseDown.bind(this));
-        this.rowHeaders.addEventListener('mousedown', this.handleResizeMouseDown.bind(this));
-        
-        // Corner cell click for select all
-        const cornerCell = document.querySelector('.corner-cell');
-        if (cornerCell) {
-            cornerCell.addEventListener('click', this.handleCornerCellClick.bind(this));
-        }
-
-        // Toolbar events
-        document.getElementById('undoBtn').addEventListener('click', () => this.undo());
-        document.getElementById('redoBtn').addEventListener('click', () => this.redo());
-        document.getElementById('boldBtn').addEventListener('click', () => this.toggleFormat('bold'));
-        document.getElementById('italicBtn').addEventListener('click', () => this.toggleFormat('italic'));
-        document.getElementById('underlineBtn').addEventListener('click', () => this.toggleFormat('underline'));
-        document.getElementById('strikethroughBtn').addEventListener('click', () => this.toggleFormat('strikethrough'));
-        document.getElementById('alignLeftBtn').addEventListener('click', () => this.setTextAlign('left'));
-        document.getElementById('alignCenterBtn').addEventListener('click', () => this.setTextAlign('center'));
-        document.getElementById('alignRightBtn').addEventListener('click', () => this.setTextAlign('right'));
-        document.getElementById('alignTopBtn').addEventListener('click', () => this.setVerticalAlign('top'));
-        document.getElementById('alignMiddleBtn').addEventListener('click', () => this.setVerticalAlign('middle'));
-        document.getElementById('alignBottomBtn').addEventListener('click', () => this.setVerticalAlign('bottom'));
-        
-        // Font size input events
-        const fontSizeInput = document.getElementById('fontSizeInput');
-        fontSizeInput.addEventListener('change', this.handleFontSizeChange.bind(this));
-        fontSizeInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                this.handleFontSizeChange(e);
-                fontSizeInput.blur();
-            }
+        events.forEach(([sel, evt, fn]) => {
+            const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+            if (el) el.addEventListener(evt, fn);
         });
         
-        document.getElementById('colorBtn').addEventListener('click', this.showColorPalette.bind(this));
-        document.getElementById('fontColorBtn').addEventListener('click', this.showFontColorPalette.bind(this));
-
-        // Formula bar events
-        this.formulaInput.addEventListener('keydown', this.handleFormulaKeyDown.bind(this));
-        this.formulaInput.addEventListener('focus', this.handleFormulaFocus.bind(this));
-        this.formulaInput.addEventListener('input', this.handleFormulaInput.bind(this));
-
-        // Context menu events
-        this.contextMenu.addEventListener('click', this.handleContextMenuClick.bind(this));
-
-        // Context menu color picker - instant color application
-        const contextColorPicker = document.getElementById('contextColorPicker');
-        if (contextColorPicker) {
-            contextColorPicker.addEventListener('input', (e) => {
-                this.applyBackgroundColor(e.target.value);
-            });
-        }
-
-        // Cell reference input
-        this.cellReference.addEventListener('keydown', this.handleCellReferenceKeyDown.bind(this));
-
-        // Prevent text selection while dragging
-        this.mainGrid.addEventListener('selectstart', (e) => {
-            if ((this.isDragging || this.isResizing) && !e.target.classList.contains('cell-editor')) {
-                e.preventDefault();
-            }
-        });
+        // Pattern-based toolbar buttons
+        ['bold', 'italic', 'underline', 'strikethrough'].forEach(f => 
+            document.getElementById(`${f}Btn`)?.addEventListener('click', () => this.toggleFormat(f))
+        );
+        
+        [['left','Left'], ['center','Center'], ['right','Right']].forEach(([a, n]) => 
+            document.getElementById(`align${n}Btn`)?.addEventListener('click', () => this.setTextAlign(a))
+        );
+        
+        [['top','Top'], ['middle','Middle'], ['bottom','Bottom']].forEach(([a, n]) => 
+            document.getElementById(`align${n}Btn`)?.addEventListener('click', () => this.setVerticalAlign(a))
+        );
     }
     
     applyFormatting(type, value) {
