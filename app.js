@@ -1257,7 +1257,8 @@ class SpreadsheetApp {
                 break;
             case 'Delete':
             case 'Backspace':
-                if (this.selectedCells.size > 0) {
+                // Only clear cell content if formula input is NOT focused
+                if (this.selectedCells.size > 0 && document.activeElement !== this.formulaInput) {
                     this.clearCellContent();
                 }
                 break;
