@@ -56,6 +56,10 @@ class SpreadsheetApp {
         this.contextMenu = document.getElementById('contextMenu');
         this.colorPalette = document.getElementById('colorPalette');
         this.fontColorPalette = document.getElementById('fontColorPalette');
+        this.linkEditor = document.getElementById('linkEditor');
+        console.log('Link editor found:', this.linkEditor);
+        console.log('Save button found:', document.getElementById('linkSaveBtn'));
+        console.log('Cancel button found:', document.getElementById('linkCancelBtn'));
         
         this.clipboard = {
             data: null,
@@ -399,8 +403,12 @@ class SpreadsheetApp {
             [this.cellReference, 'keydown', e => this.handleCellReferenceKeyDown(e)],
             [this.contextMenu, 'click', e => this.handleContextMenuClick(e)],
             ['#contextColorPicker', 'input', e => this.applyBackgroundColor(e.target.value)],
+            ['#linkSaveBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.saveLinkEdit(); }],
+            ['#linkCancelBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.hideLinkEditor(); }],
             ['.corner-cell', 'click', e => this.handleCornerCellClick(e)]
         ];
+        console.log('Save button:', document.getElementById('linkSaveBtn'));
+        console.log('Cancel button:', document.getElementById('linkCancelBtn'));
         
         events.forEach(([sel, evt, fn]) => {
             const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
@@ -1205,49 +1213,55 @@ class SpreadsheetApp {
     }
 
     handleKeyDown(event) {
+        // Don't intercept keyboard shortcuts if user is typing in an input field
+        const isInInput = event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA';
+        
         if (this.currentEditingCell) return;
 
         // Handle Ctrl+Z for undo
-        if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey) {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey && !isInInput) {
             event.preventDefault();
             this.undo();
             return;
         }
 
         // Handle Ctrl+Y or Ctrl+Shift+Z for redo
-        if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.key === 'z' && event.shiftKey))) {
+        if ((event.ctrlKey || event.metaKey) && (event.key === 'y' || (event.key === 'z' && event.shiftKey)) && !isInInput) {
             event.preventDefault();
             this.redo();
             return;
         }
 
         // Handle Ctrl+A / Cmd+A for select all
-        if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'a' && !isInInput) {
             event.preventDefault();
             this.selectAllCells();
             return;
         }
         
-        // Handle Ctrl+C for copy
-        if ((event.ctrlKey || event.metaKey) && event.key === 'c') {
+        // Handle Ctrl+C for copy - but allow in input fields
+        if ((event.ctrlKey || event.metaKey) && event.key === 'c' && !isInInput) {
             event.preventDefault();
             this.copyCells();
             return;
         }
 
-        // Handle Ctrl+X for cut
-        if ((event.ctrlKey || event.metaKey) && event.key === 'x') {
+        // Handle Ctrl+X for cut - but allow in input fields
+        if ((event.ctrlKey || event.metaKey) && event.key === 'x' && !isInInput) {
             event.preventDefault();
             this.cutCells();
             return;
         }
 
-        // Handle Ctrl+V for paste
-        if ((event.ctrlKey || event.metaKey) && event.key === 'v') {
+        // Handle Ctrl+V for paste - but allow in input fields
+        if ((event.ctrlKey || event.metaKey) && event.key === 'v' && !isInInput) {
             event.preventDefault();
             this.pasteCells();
             return;
         }
+
+        // Don't handle other keys if in an input field
+        if (isInInput) return;
 
         switch (event.key) {
             case 'Enter':
@@ -1361,6 +1375,26 @@ class SpreadsheetApp {
         this.contextMenu.classList.remove('hidden');
         this.contextMenu.style.left = x + 'px';
         this.contextMenu.style.top = y + 'px';
+        
+        // Check if primary cell has a link
+        const hasLink = this.primaryCell && this.cellHasLink();
+        
+        // Show/hide appropriate link menu items
+        const openLinkItem = document.getElementById('openLinkItem');
+        const editLinkItem = document.getElementById('editLinkItem');
+        const insertLinkItem = document.getElementById('insertLinkItem');
+        
+        if (openLinkItem && editLinkItem && insertLinkItem) {
+            if (hasLink) {
+                openLinkItem.style.display = 'flex';
+                editLinkItem.style.display = 'flex';
+                insertLinkItem.style.display = 'none';
+            } else {
+                openLinkItem.style.display = 'none';
+                editLinkItem.style.display = 'none';
+                insertLinkItem.style.display = 'flex';
+            }
+        }
 
         setTimeout(() => {
             const rect = this.contextMenu.getBoundingClientRect();
@@ -1372,6 +1406,16 @@ class SpreadsheetApp {
             }
         }, 0);
     }
+    
+    cellHasLink() {
+        if (!this.primaryCell) return false;
+        
+        const cellKey = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(cellKey);
+        
+        // Check if cell has a stored linkUrl OR if the value itself is a hyperlink
+        return !!(cellData?.linkUrl || (cellData?.value && this.isHyperlink(cellData.value)));
+    }
 
     hideContextMenu() {
         this.contextMenu.classList.add('hidden');
@@ -1382,8 +1426,19 @@ class SpreadsheetApp {
         if (!item) return;
 
         const action = item.dataset.action;
-        this.executeContextAction(action);
-        this.hideContextMenu();
+        
+        // For link actions, prevent the click from bubbling
+        if (action === 'editLink' || action === 'insertLink') {
+            event.stopPropagation();
+            this.hideContextMenu();
+            // Use setTimeout to show link editor after context menu closes
+            setTimeout(() => {
+                this.showLinkEditor(action === 'editLink');
+            }, 10);
+        } else {
+            this.executeContextAction(action);
+            this.hideContextMenu();
+        }
     }
 
     executeContextAction(action) {
@@ -1396,6 +1451,19 @@ class SpreadsheetApp {
                 break;
             case 'paste':
                 this.pasteCells();
+                break;
+            case 'openLink':
+                this.openLink();
+                break;
+            case 'editLink':
+                this.showLinkEditor(true);
+                // Prevent hideContextMenu from happening immediately
+                setTimeout(() => {}, 0);
+                break;
+            case 'insertLink':
+                this.showLinkEditor(false);
+                // Prevent hideContextMenu from happening immediately
+                setTimeout(() => {}, 0);
                 break;
             case 'clearContent':
                 this.clearCellContent();
@@ -1534,6 +1602,94 @@ class SpreadsheetApp {
 
         this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
     }
+    
+    openLink() {
+        if (!this.primaryCell) return;
+        
+        const cellKey = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(cellKey);
+        
+        // Use the stored linkUrl if it exists, otherwise try to parse the value
+        let url = cellData?.linkUrl || cellData?.value || '';
+        
+        if (this.isHyperlink(url) || cellData?.linkUrl) {
+            url = url.trim();
+            // Add https:// if it starts with www.
+            if (url.startsWith('www.')) {
+                url = 'https://' + url;
+            }
+            window.open(url, '_blank', 'noopener,noreferrer');
+            this.log(`Opened link: ${url}`);
+        }
+    }
+
+    showLinkEditor(prefill = false) {
+        console.log('showLinkEditor called, prefill:', prefill, 'linkEditor element:', this.linkEditor);
+        
+        if (!this.primaryCell) return;
+        
+        const cellKey = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(cellKey);
+        
+        // Populate fields - only prefill if requested (editing existing link)
+        if (prefill && cellData) {
+            document.getElementById('linkUrl').value = cellData.linkUrl || cellData.value || '';
+            document.getElementById('linkText').value = cellData.value || '';
+        } else {
+            document.getElementById('linkUrl').value = '';
+            document.getElementById('linkText').value = '';
+        }
+        
+        // Position near the cell
+        const rect = this.primaryCell.getBoundingClientRect();
+        this.linkEditor.classList.remove('hidden');
+        this.linkEditor.style.left = rect.left + 'px';
+        this.linkEditor.style.top = (rect.bottom + 5) + 'px';
+        
+        console.log('Link editor should now be visible');
+        
+        // Focus the URL field
+        setTimeout(() => document.getElementById('linkUrl').focus(), 0);
+    }
+
+    hideLinkEditor() {
+        console.log('hideLinkEditor called');
+        this.linkEditor.classList.add('hidden');
+    }
+
+    saveLinkEdit() {
+        if (!this.primaryCell) return;
+        
+        const url = document.getElementById('linkUrl').value.trim();
+        const text = document.getElementById('linkText').value.trim();
+        
+        if (!url) {
+            this.hideLinkEditor();
+            return;
+        }
+        
+        console.log('URL:', url, 'Text:', text);
+        
+        const cellKey = this.getCoord(this.primaryCell);
+        
+        this.saveState(`Edit link in ${this.primaryCell.dataset.address}`);
+        
+        // Store both URL and display text
+        if (!this.cellData.has(cellKey)) {
+            this.cellData.set(cellKey, {});
+        }
+        
+        const cellData = this.cellData.get(cellKey);
+        cellData.value = text || url; // Display text (or URL if no text provided)
+        cellData.linkUrl = url; // Store the actual URL separately
+        
+        // Refresh the cell display
+        this.updateCellDisplay(this.primaryCell, cellData);
+        this.updateFormulaBar();
+        this.hideLinkEditor();
+        
+        this.log(`Updated link in ${this.primaryCell.dataset.address}`);
+    }
 
     updateCellDisplay(cell, d = {}) {
         const coord = this.getCoord(cell);
@@ -1541,6 +1697,7 @@ class SpreadsheetApp {
         
         // Handle display text based on value type
         let displayText = '';
+        let isLink = false;
         if (d.value) {
             if (d.value.startsWith("'")) {
                 // Escaped text - show without the leading apostrophe
@@ -1554,13 +1711,17 @@ class SpreadsheetApp {
             }
         }
         
+        // Check if it's a hyperlink - either has linkUrl property or value is a URL
+        isLink = !!(d.linkUrl || this.isHyperlink(displayText));
+        
         cell.textContent = displayText;
         
         cell.className = ['cell',
             d.bold && 'bold', d.italic && 'italic', d.underline && 'underline', d.strikethrough && 'strikethrough',
             d.textAlign && `align-${d.textAlign}`, d.verticalAlign && `align-${d.verticalAlign}`,
             this.selectedCellCoords.has(coord) && 'selected',
-            this.primaryCellCoord === coord && 'primary-selected'
+            this.primaryCellCoord === coord && 'primary-selected',
+            isLink && 'cell-link'
         ].filter(Boolean).join(' ');
         
         // Direct assignment without Object.assign overhead
@@ -1568,7 +1729,14 @@ class SpreadsheetApp {
         cell.style.color = d.fontColor || '';
         cell.style.fontSize = d.fontSize ? d.fontSize + 'px' : '';
     }
-
+    
+    isHyperlink(text) {
+        if (!text) return false;
+        // Check for common URL patterns
+        const urlPattern = /^(https?:\/\/|www\.)/i;
+        return urlPattern.test(text.trim());
+    }
+    
     clearCellFormatting() {
         // Save state before clearing
         this.saveState(`Clear formatting from ${this.selectedCellCoords.size} cells`);
@@ -1602,6 +1770,7 @@ class SpreadsheetApp {
     }
 
     handleDocumentClick(event) {
+        // Check each popup separately and close if clicking outside
         if (!event.target.closest('#contextMenu')) {
             this.hideContextMenu();
         }
@@ -1611,10 +1780,17 @@ class SpreadsheetApp {
         if (!event.target.closest('#fontColorPalette') && !event.target.closest('#fontColorBtn')) {
             this.hideFontColorPalette();
         }
+        // Don't close link editor if clicking inside it OR on its buttons
+        if (!event.target.closest('#linkEditor') && 
+            !event.target.closest('#linkSaveBtn') && 
+            !event.target.closest('#linkCancelBtn')) {
+            this.hideLinkEditor();
+        }
         if (!event.target.closest('.spreadsheet-container') && 
             !event.target.closest('#contextMenu') && 
             !event.target.closest('#colorPalette') &&
-            !event.target.closest('#fontColorPalette')) {
+            !event.target.closest('#fontColorPalette') &&
+            !event.target.closest('#linkEditor')) {
             if (this.currentEditingCell) {
                 this.stopEditingCell();
             }

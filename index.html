@@ -103,6 +103,23 @@
         </div>
     </div>
 
+    <!-- Link Editor Popup -->
+    <div id="linkEditor" class="link-editor hidden">
+        <div class="link-editor-title">Edit Link</div>
+        <div class="link-editor-field">
+            <label class="link-editor-label" for="linkUrl">URL:</label>
+            <input type="text" id="linkUrl" class="form-control" placeholder="https://example.com">
+        </div>
+        <div class="link-editor-field">
+            <label class="link-editor-label" for="linkText">Display Text:</label>
+            <input type="text" id="linkText" class="form-control" placeholder="Link text">
+        </div>
+        <div class="link-editor-actions">
+            <button class="btn btn--sm" id="linkCancelBtn">Cancel</button>
+            <button class="btn btn--sm toolbar-btn" id="linkSaveBtn">Save</button>
+        </div>
+    </div>
+
     <!-- Context Menu -->
     <div id="contextMenu" class="context-menu hidden">
         <div class="context-menu-item" data-action="cut">
@@ -117,7 +134,20 @@
             <span class="context-menu-icon">📄</span>
             <span>Paste</span>
         </div>
-        <div class="context-menu-separator"></div>
+        <div class="context-menu-separator" id="linkSeparator1"></div>
+        <div class="context-menu-item" data-action="openLink" id="openLinkItem">
+            <span class="context-menu-icon">🔗</span>
+            <span>Open Link</span>
+        </div>
+        <div class="context-menu-item" data-action="editLink" id="editLinkItem">
+            <span class="context-menu-icon">✏️</span>
+            <span>Edit Link</span>
+        </div>
+        <div class="context-menu-item" data-action="insertLink" id="insertLinkItem">
+            <span class="context-menu-icon">🔗</span>
+            <span>Insert Link</span>
+        </div>
+        <div class="context-menu-separator" id="linkSeparator2"></div>
         <div class="context-menu-item" data-action="insertRow">
             <span class="context-menu-icon">➕</span>
             <span>Insert Row Above</span>
