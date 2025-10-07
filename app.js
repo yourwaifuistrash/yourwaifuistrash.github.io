@@ -1862,32 +1862,58 @@ class SpreadsheetApp {
     hideFontColorPalette() { this._hidePalette(this.fontColorPalette); }
 
     setupColorPalette() {
-        const container = document.getElementById('colorPaletteGrid');
-        container.style.display = 'block'; // Override grid display
-        
-        // Clear existing content
+        this._setupColorPaletteGeneric(
+            'colorPaletteGrid',
+            'background',
+            this.customBackgroundColors,
+            this.getBackgroundColorsInUse.bind(this),
+            this.applyBackgroundColor.bind(this),
+            this.hideColorPalette.bind(this),
+            this.refreshColorPalette.bind(this)
+        );
+    }
+
+    setupFontColorPalette() {
+        this._setupColorPaletteGeneric(
+            'fontColorPaletteGrid',
+            'font',
+            this.customFontColors,
+            this.getFontColorsInUse.bind(this),
+            this.applyFontColor.bind(this),
+            this.hideFontColorPalette.bind(this),
+            this.refreshFontColorPalette.bind(this)
+        );
+    }
+
+    _setupColorPaletteGeneric(containerId, type, customColorsArray, getColorsInUseFn, applyColorFn, hidePaletteFn, refreshPaletteFn) {
+        const container = document.getElementById(containerId);
+        container.style.display = 'block';
         container.innerHTML = '';
         
-        // Create "No fill" button row
-        const noFillRow = document.createElement('div');
-        noFillRow.style.marginBottom = 'var(--space-8)';
-        noFillRow.style.paddingBottom = 'var(--space-8)';
-        noFillRow.style.borderBottom = '1px solid var(--color-border)';
+        const isBackground = type === 'background';
         
-        const noFillBtn = document.createElement('button');
-        noFillBtn.className = 'btn btn--sm';
-        noFillBtn.style.width = '100%';
-        noFillBtn.style.justifyContent = 'flex-start';
-        noFillBtn.style.padding = 'var(--space-6) var(--space-8)';
-        noFillBtn.innerHTML = '<span class="color-swatch clear" style="margin-right: var(--space-8);"></span> No fill';
-        noFillBtn.addEventListener('click', () => {
-            this.applyBackgroundColor('');
-            this.hideColorPalette();
+        // First row - "No fill" or "Automatic" button
+        const firstRow = document.createElement('div');
+        firstRow.style.marginBottom = 'var(--space-8)';
+        firstRow.style.paddingBottom = 'var(--space-8)';
+        firstRow.style.borderBottom = '1px solid var(--color-border)';
+        
+        const firstBtn = document.createElement('button');
+        firstBtn.className = 'btn btn--sm';
+        firstBtn.style.width = '100%';
+        firstBtn.style.justifyContent = 'flex-start';
+        firstBtn.style.padding = 'var(--space-6) var(--space-8)';
+        firstBtn.innerHTML = isBackground 
+            ? '<span class="color-swatch clear" style="margin-right: var(--space-8);"></span> No fill'
+            : '<span class="color-swatch color-swatch-auto" style="margin-right: var(--space-8);">A</span> Automatic';
+        firstBtn.addEventListener('click', () => {
+            applyColorFn('');
+            hidePaletteFn();
         });
-        noFillRow.appendChild(noFillBtn);
-        container.appendChild(noFillRow);
+        firstRow.appendChild(firstBtn);
+        container.appendChild(firstRow);
         
-        // Create custom color picker section
+        // Custom color picker section
         const customSection = document.createElement('div');
         customSection.style.marginBottom = 'var(--space-8)';
         customSection.style.paddingBottom = 'var(--space-8)';
@@ -1937,20 +1963,15 @@ class SpreadsheetApp {
         
         // Sync color picker and hex input
         colorInput.addEventListener('input', (e) => {
-            hexInput.value = e.target.value.substring(1); // Remove # from color input
+            hexInput.value = e.target.value.substring(1);
         });
 
         hexInput.addEventListener('input', (e) => {
             let value = e.target.value.trim().toUpperCase();
-            // Remove any # symbols that might be pasted
             value = value.replace(/#/g, '');
-            // Limit to 6 characters
             value = value.substring(0, 6);
-            // Only allow hex characters
             value = value.replace(/[^0-9A-F]/g, '');
-            
             e.target.value = value;
-            
             if (value.length === 6) {
                 colorInput.value = '#' + value;
             }
@@ -1959,15 +1980,10 @@ class SpreadsheetApp {
         hexInput.addEventListener('paste', (e) => {
             e.preventDefault();
             let pastedText = (e.clipboardData || window.clipboardData).getData('text');
-            // Remove # if present
             pastedText = pastedText.replace(/#/g, '');
-            // Only keep hex characters
             pastedText = pastedText.replace(/[^0-9A-Fa-f]/g, '');
-            // Limit to 6 characters
             pastedText = pastedText.substring(0, 6).toUpperCase();
-            
             hexInput.value = pastedText;
-            
             if (pastedText.length === 6) {
                 colorInput.value = '#' + pastedText;
             }
@@ -1976,25 +1992,24 @@ class SpreadsheetApp {
         // Add custom color
         addBtn.addEventListener('click', () => {
             let color = colorInput.value;
-            if (color && !this.customBackgroundColors.includes(color)) {
-                this.customBackgroundColors.push(color);
-                this.refreshColorPalette();
+            if (color && !customColorsArray.includes(color)) {
+                customColorsArray.push(color);
+                refreshPaletteFn();
             }
         });
 
-        // Apply color on Enter in hex input
+        // Apply color on Enter
         hexInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 let value = hexInput.value.trim().toUpperCase();
-                // Remove any # symbols
                 value = value.replace(/#/g, '');
                 if (/^[0-9A-F]{6}$/.test(value)) {
                     const fullColor = '#' + value;
-                    if (!this.customBackgroundColors.includes(fullColor)) {
-                        this.customBackgroundColors.push(fullColor);
+                    if (!customColorsArray.includes(fullColor)) {
+                        customColorsArray.push(fullColor);
                     }
-                    this.applyBackgroundColor(fullColor);
-                    this.hideColorPalette();
+                    applyColorFn(fullColor);
+                    hidePaletteFn();
                 }
             }
         });
@@ -2006,7 +2021,7 @@ class SpreadsheetApp {
         customSection.appendChild(addBtn);
         container.appendChild(customSection);
         
-        // Create standard colors grid
+        // Standard colors title
         const standardTitle = document.createElement('div');
         standardTitle.textContent = 'Standard colors';
         standardTitle.style.fontSize = 'var(--font-size-xs)';
@@ -2015,368 +2030,77 @@ class SpreadsheetApp {
         standardTitle.style.fontWeight = 'var(--font-weight-medium)';
         container.appendChild(standardTitle);
         
+        // Standard colors grid
         const grid = document.createElement('div');
         grid.style.display = 'grid';
         grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
         grid.style.gap = 'var(--space-4)';
         
-        // Extended color palette similar to Google Sheets/Excel
         const colors = [
-            // Row 1 - Grays
             ['#000000', '#434343', '#666666', '#999999', '#b7b7b7', '#cccccc', '#d9d9d9', '#efefef', '#f3f3f3', '#ffffff'],
-            // Row 2 - Pure colors
             ['#980000', '#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#4a86e8', '#0000ff', '#9900ff', '#ff00ff'],
-            // Row 3 - Light
             ['#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3', '#d9d2e9', '#ead1dc'],
-            // Row 4 - Medium light
             ['#dd7e6b', '#ea9999', '#f9cb9c', '#ffe599', '#b6d7a8', '#a2c4c9', '#a4c2f4', '#9fc5e8', '#b4a7d6', '#d5a6bd'],
-            // Row 5 - Medium
             ['#cc4125', '#e06666', '#f6b26b', '#ffd966', '#93c47d', '#76a5af', '#6d9eeb', '#6fa8dc', '#8e7cc3', '#c27ba0'],
-            // Row 6 - Medium dark
             ['#a61c00', '#cc0000', '#e69138', '#f1c232', '#6aa84f', '#45818e', '#3c78d8', '#3d85c6', '#674ea7', '#a64d79'],
-            // Row 7 - Dark
             ['#85200c', '#990000', '#b45f06', '#bf9000', '#38761d', '#134f5c', '#1155cc', '#0b5394', '#351c75', '#741b47'],
-            // Row 8 - Very dark
             ['#5b0f00', '#660000', '#783f04', '#7f6000', '#274e13', '#0c343d', '#1c4587', '#073763', '#20124d', '#4c1130']
         ];
 
         colors.forEach(row => {
             row.forEach(color => {
-                const swatch = document.createElement('div');
-                swatch.className = 'color-swatch';
-                swatch.style.backgroundColor = color;
-                swatch.title = color;
-                swatch.addEventListener('click', () => {
-                    this.applyBackgroundColor(color);
-                    this.hideColorPalette();
-                });
+                const swatch = this._createColorSwatch(color, applyColorFn, hidePaletteFn);
                 grid.appendChild(swatch);
             });
         });
         
         container.appendChild(grid);
         
-        // Add colors in use section
-        const colorsInUse = this.getBackgroundColorsInUse();
+        // Colors in use section
+        const colorsInUse = getColorsInUseFn();
         if (colorsInUse.length > 0) {
-            const inUseTitle = document.createElement('div');
-            inUseTitle.textContent = 'Colors in use';
-            inUseTitle.style.fontSize = 'var(--font-size-xs)';
-            inUseTitle.style.color = 'var(--color-text-secondary)';
-            inUseTitle.style.marginTop = 'var(--space-12)';
-            inUseTitle.style.marginBottom = 'var(--space-4)';
-            inUseTitle.style.fontWeight = 'var(--font-weight-medium)';
-            container.appendChild(inUseTitle);
-            
-            const inUseGrid = document.createElement('div');
-            inUseGrid.style.display = 'grid';
-            inUseGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
-            inUseGrid.style.gap = 'var(--space-4)';
-            
-            colorsInUse.forEach(color => {
-                const swatch = document.createElement('div');
-                swatch.className = 'color-swatch';
-                swatch.style.backgroundColor = color;
-                swatch.title = color;
-                swatch.addEventListener('click', () => {
-                    this.applyBackgroundColor(color);
-                    this.hideColorPalette();
-                });
-                inUseGrid.appendChild(swatch);
-            });
-            
-            container.appendChild(inUseGrid);
+            this._appendColorSection(container, 'Colors in use', colorsInUse, applyColorFn, hidePaletteFn);
         }
         
-        // Add custom colors section if there are any
-        if (this.customBackgroundColors.length > 0) {
-            const customTitle = document.createElement('div');
-            customTitle.textContent = 'Custom colors';
-            customTitle.style.fontSize = 'var(--font-size-xs)';
-            customTitle.style.color = 'var(--color-text-secondary)';
-            customTitle.style.marginTop = 'var(--space-12)';
-            customTitle.style.marginBottom = 'var(--space-4)';
-            customTitle.style.fontWeight = 'var(--font-weight-medium)';
-            container.appendChild(customTitle);
-            
-            const customGrid = document.createElement('div');
-            customGrid.style.display = 'grid';
-            customGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
-            customGrid.style.gap = 'var(--space-4)';
-            
-            this.customBackgroundColors.forEach(color => {
-                const swatch = document.createElement('div');
-                swatch.className = 'color-swatch';
-                swatch.style.backgroundColor = color;
-                swatch.title = color;
-                swatch.addEventListener('click', () => {
-                    this.applyBackgroundColor(color);
-                    this.hideColorPalette();
-                });
-                customGrid.appendChild(swatch);
-            });
-            
-            container.appendChild(customGrid);
+        // Custom colors section
+        if (customColorsArray.length > 0) {
+            this._appendColorSection(container, 'Custom colors', customColorsArray, applyColorFn, hidePaletteFn);
         }
     }
-                    
-    setupFontColorPalette() {
-        const container = document.getElementById('fontColorPaletteGrid');
-        container.style.display = 'block'; // Override grid display
-        
-        // Clear existing content
-        container.innerHTML = '';
-        
-        // Create "Automatic" button row
-        const autoRow = document.createElement('div');
-        autoRow.style.marginBottom = 'var(--space-8)';
-        autoRow.style.paddingBottom = 'var(--space-8)';
-        autoRow.style.borderBottom = '1px solid var(--color-border)';
-        
-        const autoBtn = document.createElement('button');
-        autoBtn.className = 'btn btn--sm';
-        autoBtn.style.width = '100%';
-        autoBtn.style.justifyContent = 'flex-start';
-        autoBtn.style.padding = 'var(--space-6) var(--space-8)';
-        autoBtn.innerHTML = '<span class="color-swatch color-swatch-auto" style="margin-right: var(--space-8);">A</span> Automatic';
-        autoBtn.addEventListener('click', () => {
-            this.applyFontColor('');
-            this.hideFontColorPalette();
-        });
-        autoRow.appendChild(autoBtn);
-        container.appendChild(autoRow);
-        
-        // Create custom color picker section
-        const customSection = document.createElement('div');
-        customSection.style.marginBottom = 'var(--space-8)';
-        customSection.style.paddingBottom = 'var(--space-8)';
-        customSection.style.borderBottom = '1px solid var(--color-border)';
-        customSection.style.display = 'flex';
-        customSection.style.gap = 'var(--space-8)';
-        customSection.style.alignItems = 'center';
-        
-        const colorInput = document.createElement('input');
-        colorInput.type = 'color';
-        colorInput.style.width = '40px';
-        colorInput.style.height = '32px';
-        colorInput.style.border = '1px solid var(--color-border)';
-        colorInput.style.borderRadius = 'var(--radius-sm)';
-        colorInput.style.cursor = 'pointer';
-        
-        const hexInputWrapper = document.createElement('div');
-        hexInputWrapper.style.flex = '1';
-        hexInputWrapper.style.position = 'relative';
-        hexInputWrapper.style.display = 'flex';
-        hexInputWrapper.style.alignItems = 'center';
-        
-        const hexPrefix = document.createElement('span');
-        hexPrefix.textContent = '#';
-        hexPrefix.style.position = 'absolute';
-        hexPrefix.style.left = 'var(--space-8)';
-        hexPrefix.style.color = 'var(--color-text-secondary)';
-        hexPrefix.style.fontSize = 'var(--font-size-sm)';
-        hexPrefix.style.fontFamily = 'var(--font-family-mono)';
-        hexPrefix.style.pointerEvents = 'none';
-        
-        const hexInput = document.createElement('input');
-        hexInput.type = 'text';
-        hexInput.className = 'form-control';
-        hexInput.placeholder = '000000';
-        hexInput.style.paddingLeft = 'calc(var(--space-8) + 12px)';
-        hexInput.style.paddingRight = 'var(--space-8)';
-        hexInput.style.fontSize = 'var(--font-size-sm)';
-        hexInput.style.fontFamily = 'var(--font-family-mono)';
-        hexInput.maxLength = 6;
-        
-        const addBtn = document.createElement('button');
-        addBtn.className = 'btn btn--sm';
-        addBtn.textContent = '+';
-        addBtn.style.minWidth = '32px';
-        addBtn.title = 'Add custom color';
-        
-        // Sync color picker and hex input
-        colorInput.addEventListener('input', (e) => {
-            hexInput.value = e.target.value.substring(1); // Remove # from color input
-        });
 
-        hexInput.addEventListener('input', (e) => {
-            let value = e.target.value.trim().toUpperCase();
-            // Remove any # symbols that might be pasted
-            value = value.replace(/#/g, '');
-            // Limit to 6 characters
-            value = value.substring(0, 6);
-            // Only allow hex characters
-            value = value.replace(/[^0-9A-F]/g, '');
-            
-            e.target.value = value;
-            
-            if (value.length === 6) {
-                colorInput.value = '#' + value;
-            }
+    _createColorSwatch(color, applyColorFn, hidePaletteFn) {
+        const swatch = document.createElement('div');
+        swatch.className = 'color-swatch';
+        swatch.style.backgroundColor = color;
+        swatch.title = color;
+        swatch.addEventListener('click', () => {
+            applyColorFn(color);
+            hidePaletteFn();
         });
+        return swatch;
+    }
 
-        hexInput.addEventListener('paste', (e) => {
-            e.preventDefault();
-            let pastedText = (e.clipboardData || window.clipboardData).getData('text');
-            // Remove # if present
-            pastedText = pastedText.replace(/#/g, '');
-            // Only keep hex characters
-            pastedText = pastedText.replace(/[^0-9A-Fa-f]/g, '');
-            // Limit to 6 characters
-            pastedText = pastedText.substring(0, 6).toUpperCase();
-            
-            hexInput.value = pastedText;
-            
-            if (pastedText.length === 6) {
-                colorInput.value = '#' + pastedText;
-            }
-        });
-
-        // Add custom color
-        addBtn.addEventListener('click', () => {
-            let color = colorInput.value;
-            if (color && !this.customFontColors.includes(color)) {
-                this.customFontColors.push(color);
-                this.refreshFontColorPalette();
-            }
-        });
-
-        // Apply color on Enter in hex input
-        hexInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                let value = hexInput.value.trim().toUpperCase();
-                // Remove any # symbols
-                value = value.replace(/#/g, '');
-                if (/^[0-9A-F]{6}$/.test(value)) {
-                    const fullColor = '#' + value;
-                    if (!this.customFontColors.includes(fullColor)) {
-                        this.customFontColors.push(fullColor);
-                    }
-                    this.applyFontColor(fullColor);
-                    this.hideFontColorPalette();
-                }
-            }
-        });
-        
-        hexInputWrapper.appendChild(hexPrefix);
-        hexInputWrapper.appendChild(hexInput);
-        customSection.appendChild(colorInput);
-        customSection.appendChild(hexInputWrapper);
-        customSection.appendChild(addBtn);
-        container.appendChild(customSection);
-        
-        // Create standard colors grid
-        const standardTitle = document.createElement('div');
-        standardTitle.textContent = 'Standard colors';
-        standardTitle.style.fontSize = 'var(--font-size-xs)';
-        standardTitle.style.color = 'var(--color-text-secondary)';
-        standardTitle.style.marginBottom = 'var(--space-4)';
-        standardTitle.style.fontWeight = 'var(--font-weight-medium)';
-        container.appendChild(standardTitle);
+    _appendColorSection(container, title, colors, applyColorFn, hidePaletteFn) {
+        const sectionTitle = document.createElement('div');
+        sectionTitle.textContent = title;
+        sectionTitle.style.fontSize = 'var(--font-size-xs)';
+        sectionTitle.style.color = 'var(--color-text-secondary)';
+        sectionTitle.style.marginTop = 'var(--space-12)';
+        sectionTitle.style.marginBottom = 'var(--space-4)';
+        sectionTitle.style.fontWeight = 'var(--font-weight-medium)';
+        container.appendChild(sectionTitle);
         
         const grid = document.createElement('div');
         grid.style.display = 'grid';
         grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
         grid.style.gap = 'var(--space-4)';
         
-        // Extended color palette matching background colors
-        const colors = [
-            // Row 1 - Grays
-            ['#000000', '#434343', '#666666', '#999999', '#b7b7b7', '#cccccc', '#d9d9d9', '#efefef', '#f3f3f3', '#ffffff'],
-            // Row 2 - Pure colors
-            ['#980000', '#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#4a86e8', '#0000ff', '#9900ff', '#ff00ff'],
-            // Row 3 - Light
-            ['#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3', '#d9d2e9', '#ead1dc'],
-            // Row 4 - Medium light
-            ['#dd7e6b', '#ea9999', '#f9cb9c', '#ffe599', '#b6d7a8', '#a2c4c9', '#a4c2f4', '#9fc5e8', '#b4a7d6', '#d5a6bd'],
-            // Row 5 - Medium
-            ['#cc4125', '#e06666', '#f6b26b', '#ffd966', '#93c47d', '#76a5af', '#6d9eeb', '#6fa8dc', '#8e7cc3', '#c27ba0'],
-            // Row 6 - Medium dark
-            ['#a61c00', '#cc0000', '#e69138', '#f1c232', '#6aa84f', '#45818e', '#3c78d8', '#3d85c6', '#674ea7', '#a64d79'],
-            // Row 7 - Dark
-            ['#85200c', '#990000', '#b45f06', '#bf9000', '#38761d', '#134f5c', '#1155cc', '#0b5394', '#351c75', '#741b47'],
-            // Row 8 - Very dark
-            ['#5b0f00', '#660000', '#783f04', '#7f6000', '#274e13', '#0c343d', '#1c4587', '#073763', '#20124d', '#4c1130']
-        ];
-
-        colors.forEach(row => {
-            row.forEach(color => {
-                const swatch = document.createElement('div');
-                swatch.className = 'color-swatch';
-                swatch.style.backgroundColor = color;
-                swatch.title = color;
-                swatch.addEventListener('click', () => {
-                    this.applyFontColor(color);
-                    this.hideFontColorPalette();
-                });
-                grid.appendChild(swatch);
-            });
+        colors.forEach(color => {
+            const swatch = this._createColorSwatch(color, applyColorFn, hidePaletteFn);
+            grid.appendChild(swatch);
         });
         
         container.appendChild(grid);
-        
-        // Add colors in use section
-        const colorsInUse = this.getFontColorsInUse();
-        if (colorsInUse.length > 0) {
-            const inUseTitle = document.createElement('div');
-            inUseTitle.textContent = 'Colors in use';
-            inUseTitle.style.fontSize = 'var(--font-size-xs)';
-            inUseTitle.style.color = 'var(--color-text-secondary)';
-            inUseTitle.style.marginTop = 'var(--space-12)';
-            inUseTitle.style.marginBottom = 'var(--space-4)';
-            inUseTitle.style.fontWeight = 'var(--font-weight-medium)';
-            container.appendChild(inUseTitle);
-            
-            const inUseGrid = document.createElement('div');
-            inUseGrid.style.display = 'grid';
-            inUseGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
-            inUseGrid.style.gap = 'var(--space-4)';
-            
-            colorsInUse.forEach(color => {
-                const swatch = document.createElement('div');
-                swatch.className = 'color-swatch';
-                swatch.style.backgroundColor = color;
-                swatch.title = color;
-                swatch.addEventListener('click', () => {
-                    this.applyFontColor(color);
-                    this.hideFontColorPalette();
-                });
-                inUseGrid.appendChild(swatch);
-            });
-            
-            container.appendChild(inUseGrid);
-        }
-        
-        // Add custom colors section if there are any
-        if (this.customFontColors.length > 0) {
-            const customTitle = document.createElement('div');
-            customTitle.textContent = 'Custom colors';
-            customTitle.style.fontSize = 'var(--font-size-xs)';
-            customTitle.style.color = 'var(--color-text-secondary)';
-            customTitle.style.marginTop = 'var(--space-12)';
-            customTitle.style.marginBottom = 'var(--space-4)';
-            customTitle.style.fontWeight = 'var(--font-weight-medium)';
-            container.appendChild(customTitle);
-            
-            const customGrid = document.createElement('div');
-            customGrid.style.display = 'grid';
-            customGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
-            customGrid.style.gap = 'var(--space-4)';
-            
-            this.customFontColors.forEach(color => {
-                const swatch = document.createElement('div');
-                swatch.className = 'color-swatch';
-                swatch.style.backgroundColor = color;
-                swatch.title = color;
-                swatch.addEventListener('click', () => {
-                    this.applyFontColor(color);
-                    this.hideFontColorPalette();
-                });
-                customGrid.appendChild(swatch);
-            });
-            
-            container.appendChild(customGrid);
-        }
     }
 
     getBackgroundColorsInUse() {
