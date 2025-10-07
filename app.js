@@ -1843,63 +1843,141 @@ class SpreadsheetApp {
     hideFontColorPalette() { this._hidePalette(this.fontColorPalette); }
 
     setupColorPalette() {
-        const grid = document.getElementById('colorPaletteGrid');
+        const container = document.getElementById('colorPaletteGrid');
+        container.style.display = 'block'; // Override grid display
         
-        const clearSwatch = document.createElement('div');
-        clearSwatch.className = 'color-swatch clear';
-        clearSwatch.title = 'No fill';
-        clearSwatch.addEventListener('click', () => {
+        // Clear existing content
+        container.innerHTML = '';
+        
+        // Create "No fill" button row
+        const noFillRow = document.createElement('div');
+        noFillRow.style.marginBottom = 'var(--space-8)';
+        noFillRow.style.paddingBottom = 'var(--space-8)';
+        noFillRow.style.borderBottom = '1px solid var(--color-border)';
+        
+        const noFillBtn = document.createElement('button');
+        noFillBtn.className = 'btn btn--sm';
+        noFillBtn.style.width = '100%';
+        noFillBtn.style.justifyContent = 'flex-start';
+        noFillBtn.style.padding = 'var(--space-6) var(--space-8)';
+        noFillBtn.innerHTML = '<span class="color-swatch clear" style="margin-right: var(--space-8);"></span> No fill';
+        noFillBtn.addEventListener('click', () => {
             this.applyBackgroundColor('');
             this.hideColorPalette();
         });
-        grid.appendChild(clearSwatch);
-
-        this.config.colors.forEach(color => {
-            const swatch = document.createElement('div');
-            swatch.className = 'color-swatch';
-            swatch.style.backgroundColor = color;
-            swatch.title = color;
-            swatch.addEventListener('click', () => {
-                this.applyBackgroundColor(color);
-                this.hideColorPalette();
-            });
-            grid.appendChild(swatch);
-        });
-    }
-    
-    setupFontColorPalette() {
-        const grid = document.getElementById('fontColorPaletteGrid');
+        noFillRow.appendChild(noFillBtn);
+        container.appendChild(noFillRow);
         
-        // Add default/black color swatch
-        const defaultSwatch = document.createElement('div');
-        defaultSwatch.className = 'color-swatch';
-        defaultSwatch.style.backgroundColor = '#000000';
-        defaultSwatch.title = 'Default (Black)';
-        defaultSwatch.addEventListener('click', () => {
+        // Create color grid
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
+        grid.style.gap = 'var(--space-4)';
+        
+        // Extended color palette similar to Google Sheets/Excel
+        const colors = [
+            // Row 1 - Grays
+            ['#000000', '#434343', '#666666', '#999999', '#b7b7b7', '#cccccc', '#d9d9d9', '#efefef', '#f3f3f3', '#ffffff'],
+            // Row 2 - Pure colors
+            ['#980000', '#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#4a86e8', '#0000ff', '#9900ff', '#ff00ff'],
+            // Row 3 - Light
+            ['#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3', '#d9d2e9', '#ead1dc'],
+            // Row 4 - Medium light
+            ['#dd7e6b', '#ea9999', '#f9cb9c', '#ffe599', '#b6d7a8', '#a2c4c9', '#a4c2f4', '#9fc5e8', '#b4a7d6', '#d5a6bd'],
+            // Row 5 - Medium
+            ['#cc4125', '#e06666', '#f6b26b', '#ffd966', '#93c47d', '#76a5af', '#6d9eeb', '#6fa8dc', '#8e7cc3', '#c27ba0'],
+            // Row 6 - Medium dark
+            ['#a61c00', '#cc0000', '#e69138', '#f1c232', '#6aa84f', '#45818e', '#3c78d8', '#3d85c6', '#674ea7', '#a64d79'],
+            // Row 7 - Dark
+            ['#85200c', '#990000', '#b45f06', '#bf9000', '#38761d', '#134f5c', '#1155cc', '#0b5394', '#351c75', '#741b47'],
+            // Row 8 - Very dark
+            ['#5b0f00', '#660000', '#783f04', '#7f6000', '#274e13', '#0c343d', '#1c4587', '#073763', '#20124d', '#4c1130']
+        ];
+
+        colors.forEach(row => {
+            row.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                swatch.addEventListener('click', () => {
+                    this.applyBackgroundColor(color);
+                    this.hideColorPalette();
+                });
+                grid.appendChild(swatch);
+            });
+        });
+        
+        container.appendChild(grid);
+    }
+            
+    setupFontColorPalette() {
+        const container = document.getElementById('fontColorPaletteGrid');
+        container.style.display = 'block'; // Override grid display
+        
+        // Clear existing content
+        container.innerHTML = '';
+        
+        // Create "Automatic" button row
+        const autoRow = document.createElement('div');
+        autoRow.style.marginBottom = 'var(--space-8)';
+        autoRow.style.paddingBottom = 'var(--space-8)';
+        autoRow.style.borderBottom = '1px solid var(--color-border)';
+        
+        const autoBtn = document.createElement('button');
+        autoBtn.className = 'btn btn--sm';
+        autoBtn.style.width = '100%';
+        autoBtn.style.justifyContent = 'flex-start';
+        autoBtn.style.padding = 'var(--space-6) var(--space-8)';
+        autoBtn.innerHTML = '<span class="color-swatch color-swatch-auto" style="margin-right: var(--space-8);">A</span> Automatic';
+        autoBtn.addEventListener('click', () => {
             this.applyFontColor('');
             this.hideFontColorPalette();
         });
-        grid.appendChild(defaultSwatch);
-
-        // Add color swatches
-        const fontColors = [
-            '#ff0000', '#00ff00', '#0000ff', '#ffff00', 
-            '#ff00ff', '#00ffff', '#ffffff', '#808080',
-            '#800000', '#008000', '#000080', '#808000',
-            '#800080', '#008080', '#c0c0c0', '#000000'
+        autoRow.appendChild(autoBtn);
+        container.appendChild(autoRow);
+        
+        // Create color grid
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
+        grid.style.gap = 'var(--space-4)';
+        
+        // Extended color palette matching background colors
+        const colors = [
+            // Row 1 - Grays
+            ['#000000', '#434343', '#666666', '#999999', '#b7b7b7', '#cccccc', '#d9d9d9', '#efefef', '#f3f3f3', '#ffffff'],
+            // Row 2 - Pure colors
+            ['#980000', '#ff0000', '#ff9900', '#ffff00', '#00ff00', '#00ffff', '#4a86e8', '#0000ff', '#9900ff', '#ff00ff'],
+            // Row 3 - Light
+            ['#e6b8af', '#f4cccc', '#fce5cd', '#fff2cc', '#d9ead3', '#d0e0e3', '#c9daf8', '#cfe2f3', '#d9d2e9', '#ead1dc'],
+            // Row 4 - Medium light
+            ['#dd7e6b', '#ea9999', '#f9cb9c', '#ffe599', '#b6d7a8', '#a2c4c9', '#a4c2f4', '#9fc5e8', '#b4a7d6', '#d5a6bd'],
+            // Row 5 - Medium
+            ['#cc4125', '#e06666', '#f6b26b', '#ffd966', '#93c47d', '#76a5af', '#6d9eeb', '#6fa8dc', '#8e7cc3', '#c27ba0'],
+            // Row 6 - Medium dark
+            ['#a61c00', '#cc0000', '#e69138', '#f1c232', '#6aa84f', '#45818e', '#3c78d8', '#3d85c6', '#674ea7', '#a64d79'],
+            // Row 7 - Dark
+            ['#85200c', '#990000', '#b45f06', '#bf9000', '#38761d', '#134f5c', '#1155cc', '#0b5394', '#351c75', '#741b47'],
+            // Row 8 - Very dark
+            ['#5b0f00', '#660000', '#783f04', '#7f6000', '#274e13', '#0c343d', '#1c4587', '#073763', '#20124d', '#4c1130']
         ];
 
-        fontColors.forEach(color => {
-            const swatch = document.createElement('div');
-            swatch.className = 'color-swatch';
-            swatch.style.backgroundColor = color;
-            swatch.title = color;
-            swatch.addEventListener('click', () => {
-                this.applyFontColor(color);
-                this.hideFontColorPalette();
+        colors.forEach(row => {
+            row.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                swatch.addEventListener('click', () => {
+                    this.applyFontColor(color);
+                    this.hideFontColorPalette();
+                });
+                grid.appendChild(swatch);
             });
-            grid.appendChild(swatch);
         });
+        
+        container.appendChild(grid);
     }
 
     _applyColor(prop, styleProp, color, updateFn) {
