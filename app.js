@@ -38,6 +38,10 @@ class SpreadsheetApp {
         this.undoStack = [];
         this.redoStack = [];
         this.maxUndoSteps = 50;
+        
+        // Custom colors
+        this.customBackgroundColors = [];
+        this.customFontColors = [];
 
         // Grid data
         this.cellData = new Map();
@@ -1868,7 +1872,134 @@ class SpreadsheetApp {
         noFillRow.appendChild(noFillBtn);
         container.appendChild(noFillRow);
         
-        // Create color grid
+        // Create custom color picker section
+        const customSection = document.createElement('div');
+        customSection.style.marginBottom = 'var(--space-8)';
+        customSection.style.paddingBottom = 'var(--space-8)';
+        customSection.style.borderBottom = '1px solid var(--color-border)';
+        customSection.style.display = 'flex';
+        customSection.style.gap = 'var(--space-8)';
+        customSection.style.alignItems = 'center';
+        
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.style.width = '40px';
+        colorInput.style.height = '32px';
+        colorInput.style.border = '1px solid var(--color-border)';
+        colorInput.style.borderRadius = 'var(--radius-sm)';
+        colorInput.style.cursor = 'pointer';
+        
+        const hexInputWrapper = document.createElement('div');
+        hexInputWrapper.style.flex = '1';
+        hexInputWrapper.style.position = 'relative';
+        hexInputWrapper.style.display = 'flex';
+        hexInputWrapper.style.alignItems = 'center';
+        
+        const hexPrefix = document.createElement('span');
+        hexPrefix.textContent = '#';
+        hexPrefix.style.position = 'absolute';
+        hexPrefix.style.left = 'var(--space-8)';
+        hexPrefix.style.color = 'var(--color-text-secondary)';
+        hexPrefix.style.fontSize = 'var(--font-size-sm)';
+        hexPrefix.style.fontFamily = 'var(--font-family-mono)';
+        hexPrefix.style.pointerEvents = 'none';
+        
+        const hexInput = document.createElement('input');
+        hexInput.type = 'text';
+        hexInput.className = 'form-control';
+        hexInput.placeholder = '000000';
+        hexInput.style.paddingLeft = 'calc(var(--space-8) + 12px)';
+        hexInput.style.paddingRight = 'var(--space-8)';
+        hexInput.style.fontSize = 'var(--font-size-sm)';
+        hexInput.style.fontFamily = 'var(--font-family-mono)';
+        hexInput.maxLength = 6;
+        
+        const addBtn = document.createElement('button');
+        addBtn.className = 'btn btn--sm';
+        addBtn.textContent = '+';
+        addBtn.style.minWidth = '32px';
+        addBtn.title = 'Add custom color';
+        
+        // Sync color picker and hex input
+        colorInput.addEventListener('input', (e) => {
+            hexInput.value = e.target.value.substring(1); // Remove # from color input
+        });
+
+        hexInput.addEventListener('input', (e) => {
+            let value = e.target.value.trim().toUpperCase();
+            // Remove any # symbols that might be pasted
+            value = value.replace(/#/g, '');
+            // Limit to 6 characters
+            value = value.substring(0, 6);
+            // Only allow hex characters
+            value = value.replace(/[^0-9A-F]/g, '');
+            
+            e.target.value = value;
+            
+            if (value.length === 6) {
+                colorInput.value = '#' + value;
+            }
+        });
+
+        hexInput.addEventListener('paste', (e) => {
+            e.preventDefault();
+            let pastedText = (e.clipboardData || window.clipboardData).getData('text');
+            // Remove # if present
+            pastedText = pastedText.replace(/#/g, '');
+            // Only keep hex characters
+            pastedText = pastedText.replace(/[^0-9A-Fa-f]/g, '');
+            // Limit to 6 characters
+            pastedText = pastedText.substring(0, 6).toUpperCase();
+            
+            hexInput.value = pastedText;
+            
+            if (pastedText.length === 6) {
+                colorInput.value = '#' + pastedText;
+            }
+        });
+
+        // Add custom color
+        addBtn.addEventListener('click', () => {
+            let color = colorInput.value;
+            if (color && !this.customBackgroundColors.includes(color)) {
+                this.customBackgroundColors.push(color);
+                this.refreshColorPalette();
+            }
+        });
+
+        // Apply color on Enter in hex input
+        hexInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                let value = hexInput.value.trim().toUpperCase();
+                // Remove any # symbols
+                value = value.replace(/#/g, '');
+                if (/^[0-9A-F]{6}$/.test(value)) {
+                    const fullColor = '#' + value;
+                    if (!this.customBackgroundColors.includes(fullColor)) {
+                        this.customBackgroundColors.push(fullColor);
+                    }
+                    this.applyBackgroundColor(fullColor);
+                    this.hideColorPalette();
+                }
+            }
+        });
+        
+        hexInputWrapper.appendChild(hexPrefix);
+        hexInputWrapper.appendChild(hexInput);
+        customSection.appendChild(colorInput);
+        customSection.appendChild(hexInputWrapper);
+        customSection.appendChild(addBtn);
+        container.appendChild(customSection);
+        
+        // Create standard colors grid
+        const standardTitle = document.createElement('div');
+        standardTitle.textContent = 'Standard colors';
+        standardTitle.style.fontSize = 'var(--font-size-xs)';
+        standardTitle.style.color = 'var(--color-text-secondary)';
+        standardTitle.style.marginBottom = 'var(--space-4)';
+        standardTitle.style.fontWeight = 'var(--font-weight-medium)';
+        container.appendChild(standardTitle);
+        
         const grid = document.createElement('div');
         grid.style.display = 'grid';
         grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
@@ -1909,8 +2040,39 @@ class SpreadsheetApp {
         });
         
         container.appendChild(grid);
-    }
+        
+        // Add custom colors section if there are any
+        if (this.customBackgroundColors.length > 0) {
+            const customTitle = document.createElement('div');
+            customTitle.textContent = 'Custom colors';
+            customTitle.style.fontSize = 'var(--font-size-xs)';
+            customTitle.style.color = 'var(--color-text-secondary)';
+            customTitle.style.marginTop = 'var(--space-12)';
+            customTitle.style.marginBottom = 'var(--space-4)';
+            customTitle.style.fontWeight = 'var(--font-weight-medium)';
+            container.appendChild(customTitle);
             
+            const customGrid = document.createElement('div');
+            customGrid.style.display = 'grid';
+            customGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
+            customGrid.style.gap = 'var(--space-4)';
+            
+            this.customBackgroundColors.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                swatch.addEventListener('click', () => {
+                    this.applyBackgroundColor(color);
+                    this.hideColorPalette();
+                });
+                customGrid.appendChild(swatch);
+            });
+            
+            container.appendChild(customGrid);
+        }
+    }
+                
     setupFontColorPalette() {
         const container = document.getElementById('fontColorPaletteGrid');
         container.style.display = 'block'; // Override grid display
@@ -1937,7 +2099,134 @@ class SpreadsheetApp {
         autoRow.appendChild(autoBtn);
         container.appendChild(autoRow);
         
-        // Create color grid
+        // Create custom color picker section
+        const customSection = document.createElement('div');
+        customSection.style.marginBottom = 'var(--space-8)';
+        customSection.style.paddingBottom = 'var(--space-8)';
+        customSection.style.borderBottom = '1px solid var(--color-border)';
+        customSection.style.display = 'flex';
+        customSection.style.gap = 'var(--space-8)';
+        customSection.style.alignItems = 'center';
+        
+        const colorInput = document.createElement('input');
+        colorInput.type = 'color';
+        colorInput.style.width = '40px';
+        colorInput.style.height = '32px';
+        colorInput.style.border = '1px solid var(--color-border)';
+        colorInput.style.borderRadius = 'var(--radius-sm)';
+        colorInput.style.cursor = 'pointer';
+        
+        const hexInputWrapper = document.createElement('div');
+        hexInputWrapper.style.flex = '1';
+        hexInputWrapper.style.position = 'relative';
+        hexInputWrapper.style.display = 'flex';
+        hexInputWrapper.style.alignItems = 'center';
+        
+        const hexPrefix = document.createElement('span');
+        hexPrefix.textContent = '#';
+        hexPrefix.style.position = 'absolute';
+        hexPrefix.style.left = 'var(--space-8)';
+        hexPrefix.style.color = 'var(--color-text-secondary)';
+        hexPrefix.style.fontSize = 'var(--font-size-sm)';
+        hexPrefix.style.fontFamily = 'var(--font-family-mono)';
+        hexPrefix.style.pointerEvents = 'none';
+        
+        const hexInput = document.createElement('input');
+        hexInput.type = 'text';
+        hexInput.className = 'form-control';
+        hexInput.placeholder = '000000';
+        hexInput.style.paddingLeft = 'calc(var(--space-8) + 12px)';
+        hexInput.style.paddingRight = 'var(--space-8)';
+        hexInput.style.fontSize = 'var(--font-size-sm)';
+        hexInput.style.fontFamily = 'var(--font-family-mono)';
+        hexInput.maxLength = 6;
+        
+        const addBtn = document.createElement('button');
+        addBtn.className = 'btn btn--sm';
+        addBtn.textContent = '+';
+        addBtn.style.minWidth = '32px';
+        addBtn.title = 'Add custom color';
+        
+        // Sync color picker and hex input
+        colorInput.addEventListener('input', (e) => {
+            hexInput.value = e.target.value.substring(1); // Remove # from color input
+        });
+
+        hexInput.addEventListener('input', (e) => {
+            let value = e.target.value.trim().toUpperCase();
+            // Remove any # symbols that might be pasted
+            value = value.replace(/#/g, '');
+            // Limit to 6 characters
+            value = value.substring(0, 6);
+            // Only allow hex characters
+            value = value.replace(/[^0-9A-F]/g, '');
+            
+            e.target.value = value;
+            
+            if (value.length === 6) {
+                colorInput.value = '#' + value;
+            }
+        });
+
+        hexInput.addEventListener('paste', (e) => {
+            e.preventDefault();
+            let pastedText = (e.clipboardData || window.clipboardData).getData('text');
+            // Remove # if present
+            pastedText = pastedText.replace(/#/g, '');
+            // Only keep hex characters
+            pastedText = pastedText.replace(/[^0-9A-Fa-f]/g, '');
+            // Limit to 6 characters
+            pastedText = pastedText.substring(0, 6).toUpperCase();
+            
+            hexInput.value = pastedText;
+            
+            if (pastedText.length === 6) {
+                colorInput.value = '#' + pastedText;
+            }
+        });
+
+        // Add custom color
+        addBtn.addEventListener('click', () => {
+            let color = colorInput.value;
+            if (color && !this.customFontColors.includes(color)) {
+                this.customFontColors.push(color);
+                this.refreshFontColorPalette();
+            }
+        });
+
+        // Apply color on Enter in hex input
+        hexInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                let value = hexInput.value.trim().toUpperCase();
+                // Remove any # symbols
+                value = value.replace(/#/g, '');
+                if (/^[0-9A-F]{6}$/.test(value)) {
+                    const fullColor = '#' + value;
+                    if (!this.customFontColors.includes(fullColor)) {
+                        this.customFontColors.push(fullColor);
+                    }
+                    this.applyFontColor(fullColor);
+                    this.hideFontColorPalette();
+                }
+            }
+        });
+        
+        hexInputWrapper.appendChild(hexPrefix);
+        hexInputWrapper.appendChild(hexInput);
+        customSection.appendChild(colorInput);
+        customSection.appendChild(hexInputWrapper);
+        customSection.appendChild(addBtn);
+        container.appendChild(customSection);
+        
+        // Create standard colors grid
+        const standardTitle = document.createElement('div');
+        standardTitle.textContent = 'Standard colors';
+        standardTitle.style.fontSize = 'var(--font-size-xs)';
+        standardTitle.style.color = 'var(--color-text-secondary)';
+        standardTitle.style.marginBottom = 'var(--space-4)';
+        standardTitle.style.fontWeight = 'var(--font-weight-medium)';
+        container.appendChild(standardTitle);
+        
         const grid = document.createElement('div');
         grid.style.display = 'grid';
         grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
@@ -1978,6 +2267,45 @@ class SpreadsheetApp {
         });
         
         container.appendChild(grid);
+        
+        // Add custom colors section if there are any
+        if (this.customFontColors.length > 0) {
+            const customTitle = document.createElement('div');
+            customTitle.textContent = 'Custom colors';
+            customTitle.style.fontSize = 'var(--font-size-xs)';
+            customTitle.style.color = 'var(--color-text-secondary)';
+            customTitle.style.marginTop = 'var(--space-12)';
+            customTitle.style.marginBottom = 'var(--space-4)';
+            customTitle.style.fontWeight = 'var(--font-weight-medium)';
+            container.appendChild(customTitle);
+            
+            const customGrid = document.createElement('div');
+            customGrid.style.display = 'grid';
+            customGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
+            customGrid.style.gap = 'var(--space-4)';
+            
+            this.customFontColors.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                swatch.addEventListener('click', () => {
+                    this.applyFontColor(color);
+                    this.hideFontColorPalette();
+                });
+                customGrid.appendChild(swatch);
+            });
+            
+            container.appendChild(customGrid);
+        }
+    }
+    
+    refreshColorPalette() {
+        this.setupColorPalette();
+    }
+
+    refreshFontColorPalette() {
+        this.setupFontColorPalette();
     }
 
     _applyColor(prop, styleProp, color, updateFn) {
