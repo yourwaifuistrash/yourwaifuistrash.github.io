@@ -131,6 +131,10 @@ class SpreadsheetApp {
         this.cellData = new Map(this.undoStack.pop().cellData);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
+        
+        // Refresh both color palettes to update "colors in use"
+        this.refreshColorPalette();
+        this.refreshFontColorPalette();
     }
 
     redo() {
@@ -139,6 +143,10 @@ class SpreadsheetApp {
         this.cellData = new Map(this.redoStack.pop().cellData);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
+        
+        // Refresh both color palettes to update "colors in use"
+        this.refreshColorPalette();
+        this.refreshFontColorPalette();
     }
 
     updateUndoRedoButtons() {
@@ -1605,6 +1613,8 @@ class SpreadsheetApp {
         });
 
         this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
+        this.refreshColorPalette();
+        this.refreshFontColorPalette();
     }
     
     openLink() {
@@ -1766,10 +1776,15 @@ class SpreadsheetApp {
             cell.style.color = '';
             cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
             cell.classList.remove('align-left', 'align-center', 'align-right',
-                      'align-top', 'align-middle', 'align-bottom');
+                    'align-top', 'align-middle', 'align-bottom');
         });
 
         this.updateUI();
+        
+        // Refresh both color palettes to update "colors in use"
+        this.refreshColorPalette();
+        this.refreshFontColorPalette();
+        
         this.log(`Cleared formatting from ${this.selectedCellCoords.size} cells`);
     }
 
@@ -2041,6 +2056,38 @@ class SpreadsheetApp {
         
         container.appendChild(grid);
         
+        // Add colors in use section
+        const colorsInUse = this.getBackgroundColorsInUse();
+        if (colorsInUse.length > 0) {
+            const inUseTitle = document.createElement('div');
+            inUseTitle.textContent = 'Colors in use';
+            inUseTitle.style.fontSize = 'var(--font-size-xs)';
+            inUseTitle.style.color = 'var(--color-text-secondary)';
+            inUseTitle.style.marginTop = 'var(--space-12)';
+            inUseTitle.style.marginBottom = 'var(--space-4)';
+            inUseTitle.style.fontWeight = 'var(--font-weight-medium)';
+            container.appendChild(inUseTitle);
+            
+            const inUseGrid = document.createElement('div');
+            inUseGrid.style.display = 'grid';
+            inUseGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
+            inUseGrid.style.gap = 'var(--space-4)';
+            
+            colorsInUse.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                swatch.addEventListener('click', () => {
+                    this.applyBackgroundColor(color);
+                    this.hideColorPalette();
+                });
+                inUseGrid.appendChild(swatch);
+            });
+            
+            container.appendChild(inUseGrid);
+        }
+        
         // Add custom colors section if there are any
         if (this.customBackgroundColors.length > 0) {
             const customTitle = document.createElement('div');
@@ -2072,7 +2119,7 @@ class SpreadsheetApp {
             container.appendChild(customGrid);
         }
     }
-                
+                    
     setupFontColorPalette() {
         const container = document.getElementById('fontColorPaletteGrid');
         container.style.display = 'block'; // Override grid display
@@ -2268,6 +2315,38 @@ class SpreadsheetApp {
         
         container.appendChild(grid);
         
+        // Add colors in use section
+        const colorsInUse = this.getFontColorsInUse();
+        if (colorsInUse.length > 0) {
+            const inUseTitle = document.createElement('div');
+            inUseTitle.textContent = 'Colors in use';
+            inUseTitle.style.fontSize = 'var(--font-size-xs)';
+            inUseTitle.style.color = 'var(--color-text-secondary)';
+            inUseTitle.style.marginTop = 'var(--space-12)';
+            inUseTitle.style.marginBottom = 'var(--space-4)';
+            inUseTitle.style.fontWeight = 'var(--font-weight-medium)';
+            container.appendChild(inUseTitle);
+            
+            const inUseGrid = document.createElement('div');
+            inUseGrid.style.display = 'grid';
+            inUseGrid.style.gridTemplateColumns = 'repeat(10, 1fr)';
+            inUseGrid.style.gap = 'var(--space-4)';
+            
+            colorsInUse.forEach(color => {
+                const swatch = document.createElement('div');
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.title = color;
+                swatch.addEventListener('click', () => {
+                    this.applyFontColor(color);
+                    this.hideFontColorPalette();
+                });
+                inUseGrid.appendChild(swatch);
+            });
+            
+            container.appendChild(inUseGrid);
+        }
+        
         // Add custom colors section if there are any
         if (this.customFontColors.length > 0) {
             const customTitle = document.createElement('div');
@@ -2299,6 +2378,34 @@ class SpreadsheetApp {
             container.appendChild(customGrid);
         }
     }
+
+    getBackgroundColorsInUse() {
+        const colors = new Set();
+        
+        // Scan all cell data for background colors
+        this.cellData.forEach((data) => {
+            if (data.backgroundColor) {
+                colors.add(data.backgroundColor.toUpperCase());
+            }
+        });
+        
+        // Convert to array and sort
+        return Array.from(colors).sort();
+    }
+
+    getFontColorsInUse() {
+        const colors = new Set();
+        
+        // Scan all cell data for font colors
+        this.cellData.forEach((data) => {
+            if (data.fontColor) {
+                colors.add(data.fontColor.toUpperCase());
+            }
+        });
+        
+        // Convert to array and sort
+        return Array.from(colors).sort();
+    }
     
     refreshColorPalette() {
         this.setupColorPalette();
@@ -2322,8 +2429,14 @@ class SpreadsheetApp {
         updateFn.call(this);
     }
 
-    applyBackgroundColor(c) { this._applyColor('backgroundColor', 'backgroundColor', c, this.updateBackgroundColorButton); }
-    applyFontColor(c) { this._applyColor('fontColor', 'color', c, this.updateFontColorButton); }
+    applyBackgroundColor(c) { 
+        this._applyColor('backgroundColor', 'backgroundColor', c, this.updateBackgroundColorButton); 
+        this.refreshColorPalette();
+    }
+    applyFontColor(c) { 
+        this._applyColor('fontColor', 'color', c, this.updateFontColorButton); 
+        this.refreshFontColorPalette();
+    }
     
     _getCommonCellProperty(property) {
         if (this.selectedCellCoords.size === 0) return { hasValue: false, value: null, allSame: false };
