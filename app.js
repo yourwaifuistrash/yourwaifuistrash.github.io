@@ -71,6 +71,12 @@ class SpreadsheetApp {
             sourceCells: null // Store original cell coordinates for cut
         };
 
+        // Format painter
+        this.formatPainter = {
+            active: false,
+            format: null
+        };
+
         this.init();
     }
 
@@ -417,7 +423,8 @@ class SpreadsheetApp {
             ['#contextColorPicker', 'input', e => this.applyBackgroundColor(e.target.value)],
             ['#linkSaveBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.saveLinkEdit(); }],
             ['#linkCancelBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.hideLinkEditor(); }],
-            ['.corner-cell', 'click', e => this.handleCornerCellClick(e)]
+            ['.corner-cell', 'click', e => this.handleCornerCellClick(e)],
+            ['#formatPainterBtn', 'click', () => this.activateFormatPainter()]
         ];
         console.log('Save button:', document.getElementById('linkSaveBtn'));
         console.log('Cancel button:', document.getElementById('linkCancelBtn'));
@@ -439,6 +446,138 @@ class SpreadsheetApp {
         [['top','Top'], ['middle','Middle'], ['bottom','Bottom']].forEach(([a, n]) => 
             document.getElementById(`align${n}Btn`)?.addEventListener('click', () => this.setVerticalAlign(a))
         );
+    }
+    
+    activateFormatPainter() {
+        if (!this.primaryCell) {
+            this.log('No cell selected for format painter');
+            return;
+        }
+        
+        // Get format from primary cell
+        const cellKey = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(cellKey);
+        
+        if (!cellData) {
+            this.log('No format to copy');
+            return;
+        }
+        
+        // Extract only formatting properties (not value or links)
+        this.formatPainter.format = {
+            backgroundColor: cellData.backgroundColor,
+            fontColor: cellData.fontColor,
+            fontSize: cellData.fontSize,
+            bold: cellData.bold,
+            italic: cellData.italic,
+            underline: cellData.underline,
+            strikethrough: cellData.strikethrough,
+            textAlign: cellData.textAlign,
+            verticalAlign: cellData.verticalAlign
+        };
+        
+        // Remove undefined properties
+        Object.keys(this.formatPainter.format).forEach(key => {
+            if (this.formatPainter.format[key] === undefined) {
+                delete this.formatPainter.format[key];
+            }
+        });
+        
+        this.formatPainter.active = true;
+        
+        // Update button appearance
+        const btn = document.getElementById('formatPainterBtn');
+        btn.classList.add('active');
+        
+        // Change cursor
+        document.body.style.cursor = 'crosshair';
+        
+        this.log('Format painter activated');
+    }
+
+    deactivateFormatPainter() {
+        this.formatPainter.active = false;
+        this.formatPainter.format = null;
+        
+        // Update button appearance
+        const btn = document.getElementById('formatPainterBtn');
+        btn.classList.remove('active');
+        
+        // Reset cursor
+        document.body.style.cursor = '';
+        
+        this.log('Format painter deactivated');
+    }
+
+    applyPaintedFormat(cell) {
+        if (!this.formatPainter.active || !this.formatPainter.format) {
+            return;
+        }
+        
+        const cellKey = this.getCoord(cell);
+        
+        // Save state
+        this.saveState('Apply painted format');
+        
+        // Get or create cell data
+        if (!this.cellData.has(cellKey)) {
+            this.cellData.set(cellKey, {});
+        }
+        
+        const cellData = this.cellData.get(cellKey);
+        
+        // Apply format properties
+        Object.keys(this.formatPainter.format).forEach(key => {
+            cellData[key] = this.formatPainter.format[key];
+        });
+        
+        // Update cell display
+        this.updateCellDisplay(cell, cellData);
+        
+        this.log(`Applied format to cell ${cell.dataset.address}`);
+    }
+
+    applyPaintedFormatToSelection() {
+        if (!this.formatPainter.active || !this.formatPainter.format) {
+            return;
+        }
+        
+        if (this.selectedCellCoords.size === 0) {
+            return;
+        }
+        
+        // Save state
+        this.saveState(`Apply painted format to ${this.selectedCellCoords.size} cells`);
+        
+        // Apply to all selected cells
+        this.selectedCellCoords.forEach(coordKey => {
+            if (!this.cellData.has(coordKey)) {
+                this.cellData.set(coordKey, {});
+            }
+            
+            const cellData = this.cellData.get(coordKey);
+            
+            // Apply format properties
+            Object.keys(this.formatPainter.format).forEach(key => {
+                cellData[key] = this.formatPainter.format[key];
+            });
+        });
+        
+        // Update visible cells
+        this.selectedCells.forEach(cell => {
+            const cellKey = this.getCoord(cell);
+            const cellData = this.cellData.get(cellKey);
+            this.updateCellDisplay(cell, cellData);
+        });
+        
+        // Refresh color palettes
+        this.refreshColorPalette();
+        this.refreshFontColorPalette();
+        
+        // Deactivate after single use
+        this.deactivateFormatPainter();
+        
+        this.log(`Applied format to ${this.selectedCellCoords.size} cells`);
     }
     
     applyFormatting(type, value) {
@@ -825,6 +964,31 @@ class SpreadsheetApp {
         const cell = event.target.closest('.cell');
         if (!cell || event.target.classList.contains('cell-editor')) return;
 
+        // Handle format painter - start selection mode
+        if (this.formatPainter.active) {
+            event.preventDefault();
+            this.dragStartCell = cell;
+            this.isDragging = true;
+            this.isCtrlDragging = event.ctrlKey || event.metaKey;
+
+            if (this.isCtrlDragging) {
+                // Ctrl+click: add to selection without clearing
+                this.ctrlDragAction = this.selectedCells.has(cell) ? 'deselect' : 'select';
+                this.ctrlDragProcessedCells.clear();
+                this.processCtrlDragCell(cell);
+            } else if (event.shiftKey && this.primaryCell) {
+                // Shift+click: range selection
+                this.clearAllSelections();
+                const rangeCells = this.getCellsInRect(this.primaryCell, cell);
+                this.selectCells(rangeCells, true);
+            } else {
+                // Normal click: start new selection
+                this.clearAllSelections();
+                this.selectCells([cell], true);
+            }
+            return;
+        }
+
         if (event.button === 2) return;
 
         this.dragStartCell = cell;
@@ -892,6 +1056,17 @@ class SpreadsheetApp {
                 this.justResized = false;
             }, 10);
             
+            return;
+        }
+        
+        // Handle format painter application on mouse up
+        if (this.formatPainter.active && this.isDragging) {
+            this.applyPaintedFormatToSelection();
+            this.isDragging = false;
+            this.dragStartCell = null;
+            this.isCtrlDragging = false;
+            this.ctrlDragAction = null;
+            this.ctrlDragProcessedCells.clear();
             return;
         }
         
@@ -1229,6 +1404,13 @@ class SpreadsheetApp {
         const isInInput = event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA';
         
         if (this.currentEditingCell) return;
+
+        // Handle Escape to cancel format painter
+        if (event.key === 'Escape' && this.formatPainter.active) {
+            event.preventDefault();
+            this.deactivateFormatPainter();
+            return;
+        }
 
         // Handle Ctrl+Z for undo
         if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey && !isInInput) {
