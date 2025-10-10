@@ -74,7 +74,9 @@ class SpreadsheetApp {
         // Format painter
         this.formatPainter = {
             active: false,
-            format: null
+            formats: null,
+            patternWidth: null,
+            patternHeight: null
         };
 
         this.init();
@@ -449,39 +451,65 @@ class SpreadsheetApp {
     }
     
     activateFormatPainter() {
-        if (!this.primaryCell) {
+        if (!this.primaryCell || this.selectedCellCoords.size === 0) {
             this.log('No cell selected for format painter');
             return;
         }
         
-        // Get format from primary cell
-        const cellKey = this.getCoord(this.primaryCell);
-        const cellData = this.cellData.get(cellKey);
+        // Get all selected cell coordinates and their formats
+        const coords = Array.from(this.selectedCellCoords).map(coord => 
+            this.getCoordPos(coord)
+        );
         
-        if (!cellData) {
-            this.log('No format to copy');
-            return;
-        }
+        // Sort to get the bounding box
+        coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
         
-        // Extract only formatting properties (not value or links)
-        this.formatPainter.format = {
-            backgroundColor: cellData.backgroundColor,
-            fontColor: cellData.fontColor,
-            fontSize: cellData.fontSize,
-            bold: cellData.bold,
-            italic: cellData.italic,
-            underline: cellData.underline,
-            strikethrough: cellData.strikethrough,
-            textAlign: cellData.textAlign,
-            verticalAlign: cellData.verticalAlign
-        };
+        const minRow = Math.min(...coords.map(c => c.row));
+        const maxRow = Math.max(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+        const maxCol = Math.max(...coords.map(c => c.col));
         
-        // Remove undefined properties
-        Object.keys(this.formatPainter.format).forEach(key => {
-            if (this.formatPainter.format[key] === undefined) {
-                delete this.formatPainter.format[key];
+        // Store the pattern dimensions and formats
+        this.formatPainter.patternWidth = maxCol - minCol + 1;
+        this.formatPainter.patternHeight = maxRow - minRow + 1;
+        this.formatPainter.formats = new Map();
+        
+        // Extract formatting from each cell in the selection
+        for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+                const coordKey = `${row},${col}`;
+                const cellData = this.cellData.get(coordKey);
+                
+                // Store relative position and format
+                const relativeKey = `${row - minRow},${col - minCol}`;
+                
+                if (cellData) {
+                    const format = {
+                        backgroundColor: cellData.backgroundColor,
+                        fontColor: cellData.fontColor,
+                        fontSize: cellData.fontSize,
+                        bold: cellData.bold,
+                        italic: cellData.italic,
+                        underline: cellData.underline,
+                        strikethrough: cellData.strikethrough,
+                        textAlign: cellData.textAlign,
+                        verticalAlign: cellData.verticalAlign
+                    };
+                    
+                    // Remove undefined properties
+                    Object.keys(format).forEach(key => {
+                        if (format[key] === undefined) {
+                            delete format[key];
+                        }
+                    });
+                    
+                    this.formatPainter.formats.set(relativeKey, format);
+                } else {
+                    // Store empty format for cells without formatting
+                    this.formatPainter.formats.set(relativeKey, {});
+                }
             }
-        });
+        }
         
         this.formatPainter.active = true;
         
@@ -492,12 +520,14 @@ class SpreadsheetApp {
         // Change cursor
         document.body.style.cursor = 'crosshair';
         
-        this.log('Format painter activated');
+        this.log(`Format painter activated with ${this.formatPainter.patternWidth}x${this.formatPainter.patternHeight} pattern`);
     }
 
     deactivateFormatPainter() {
         this.formatPainter.active = false;
-        this.formatPainter.format = null;
+        this.formatPainter.formats = null;
+        this.formatPainter.patternWidth = null;
+        this.formatPainter.patternHeight = null;
         
         // Update button appearance
         const btn = document.getElementById('formatPainterBtn');
@@ -538,7 +568,7 @@ class SpreadsheetApp {
     }
 
     applyPaintedFormatToSelection() {
-        if (!this.formatPainter.active || !this.formatPainter.format) {
+        if (!this.formatPainter.active || !this.formatPainter.formats) {
             return;
         }
         
@@ -549,19 +579,43 @@ class SpreadsheetApp {
         // Save state
         this.saveState(`Apply painted format to ${this.selectedCellCoords.size} cells`);
         
-        // Apply to all selected cells
-        this.selectedCellCoords.forEach(coordKey => {
-            if (!this.cellData.has(coordKey)) {
-                this.cellData.set(coordKey, {});
+        // Get the bounding box of the target selection
+        const coords = Array.from(this.selectedCellCoords).map(coord => 
+            this.getCoordPos(coord)
+        );
+        
+        const minRow = Math.min(...coords.map(c => c.row));
+        const maxRow = Math.max(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+        const maxCol = Math.max(...coords.map(c => c.col));
+        
+        // Apply format pattern to each cell in the target area
+        for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+                const coordKey = `${row},${col}`;
+                
+                // Calculate which cell in the pattern to use (tiling/repeating)
+                const patternRow = (row - minRow) % this.formatPainter.patternHeight;
+                const patternCol = (col - minCol) % this.formatPainter.patternWidth;
+                const patternKey = `${patternRow},${patternCol}`;
+                
+                const format = this.formatPainter.formats.get(patternKey);
+                
+                if (format) {
+                    // Get or create cell data
+                    if (!this.cellData.has(coordKey)) {
+                        this.cellData.set(coordKey, {});
+                    }
+                    
+                    const cellData = this.cellData.get(coordKey);
+                    
+                    // Apply format properties
+                    Object.keys(format).forEach(key => {
+                        cellData[key] = format[key];
+                    });
+                }
             }
-            
-            const cellData = this.cellData.get(coordKey);
-            
-            // Apply format properties
-            Object.keys(this.formatPainter.format).forEach(key => {
-                cellData[key] = this.formatPainter.format[key];
-            });
-        });
+        }
         
         // Update visible cells
         this.selectedCells.forEach(cell => {
@@ -577,7 +631,7 @@ class SpreadsheetApp {
         // Deactivate after single use
         this.deactivateFormatPainter();
         
-        this.log(`Applied format to ${this.selectedCellCoords.size} cells`);
+        this.log(`Applied ${this.formatPainter.patternWidth}x${this.formatPainter.patternHeight} pattern to ${this.selectedCellCoords.size} cells`);
     }
     
     applyFormatting(type, value) {
