@@ -456,60 +456,63 @@ class SpreadsheetApp {
             return;
         }
         
-        // Get all selected cell coordinates and their formats
+        // Get all selected cell coordinates
         const coords = Array.from(this.selectedCellCoords).map(coord => 
             this.getCoordPos(coord)
         );
         
-        // Sort to get the bounding box
+        // Sort by row, then by column
         coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
         
-        const minRow = Math.min(...coords.map(c => c.row));
-        const maxRow = Math.max(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-        const maxCol = Math.max(...coords.map(c => c.col));
+        // Get unique rows and columns
+        const uniqueRows = [...new Set(coords.map(c => c.row))].sort((a, b) => a - b);
+        const uniqueCols = [...new Set(coords.map(c => c.col))].sort((a, b) => a - b);
         
-        // Store the pattern dimensions and formats
-        this.formatPainter.patternWidth = maxCol - minCol + 1;
-        this.formatPainter.patternHeight = maxRow - minRow + 1;
+        // Create a mapping from actual row/col to pattern row/col
+        const rowMap = new Map(uniqueRows.map((r, i) => [r, i]));
+        const colMap = new Map(uniqueCols.map((c, i) => [c, i]));
+        
+        // Store the pattern dimensions (based on unique rows/cols, not bounding box)
+        this.formatPainter.patternWidth = uniqueCols.length;
+        this.formatPainter.patternHeight = uniqueRows.length;
         this.formatPainter.formats = new Map();
         
-        // Extract formatting from each cell in the selection
-        for (let row = minRow; row <= maxRow; row++) {
-            for (let col = minCol; col <= maxCol; col++) {
-                const coordKey = `${row},${col}`;
-                const cellData = this.cellData.get(coordKey);
+        // Extract formatting from each selected cell
+        coords.forEach(({ row, col }) => {
+            const coordKey = `${row},${col}`;
+            const cellData = this.cellData.get(coordKey);
+            
+            // Map to pattern position (cramped together, no gaps)
+            const patternRow = rowMap.get(row);
+            const patternCol = colMap.get(col);
+            const relativeKey = `${patternRow},${patternCol}`;
+            
+            if (cellData) {
+                const format = {
+                    backgroundColor: cellData.backgroundColor,
+                    fontColor: cellData.fontColor,
+                    fontSize: cellData.fontSize,
+                    bold: cellData.bold,
+                    italic: cellData.italic,
+                    underline: cellData.underline,
+                    strikethrough: cellData.strikethrough,
+                    textAlign: cellData.textAlign,
+                    verticalAlign: cellData.verticalAlign
+                };
                 
-                // Store relative position and format
-                const relativeKey = `${row - minRow},${col - minCol}`;
+                // Remove undefined properties
+                Object.keys(format).forEach(key => {
+                    if (format[key] === undefined) {
+                        delete format[key];
+                    }
+                });
                 
-                if (cellData) {
-                    const format = {
-                        backgroundColor: cellData.backgroundColor,
-                        fontColor: cellData.fontColor,
-                        fontSize: cellData.fontSize,
-                        bold: cellData.bold,
-                        italic: cellData.italic,
-                        underline: cellData.underline,
-                        strikethrough: cellData.strikethrough,
-                        textAlign: cellData.textAlign,
-                        verticalAlign: cellData.verticalAlign
-                    };
-                    
-                    // Remove undefined properties
-                    Object.keys(format).forEach(key => {
-                        if (format[key] === undefined) {
-                            delete format[key];
-                        }
-                    });
-                    
-                    this.formatPainter.formats.set(relativeKey, format);
-                } else {
-                    // Store empty format for cells without formatting
-                    this.formatPainter.formats.set(relativeKey, {});
-                }
+                this.formatPainter.formats.set(relativeKey, format);
+            } else {
+                // Store empty format for cells without formatting
+                this.formatPainter.formats.set(relativeKey, {});
             }
-        }
+        });
         
         this.formatPainter.active = true;
         
@@ -520,7 +523,7 @@ class SpreadsheetApp {
         // Change cursor
         document.body.style.cursor = 'crosshair';
         
-        this.log(`Format painter activated with ${this.formatPainter.patternWidth}x${this.formatPainter.patternHeight} pattern`);
+        this.log(`Format painter activated with ${this.formatPainter.patternWidth}x${this.formatPainter.patternHeight} pattern (cramped from ${coords.length} cells)`);
     }
 
     deactivateFormatPainter() {
@@ -1115,6 +1118,8 @@ class SpreadsheetApp {
         
         // Handle format painter application on mouse up
         if (this.formatPainter.active && this.isDragging) {
+            // Extend selection if needed to match pattern dimensions
+            this.extendSelectionForFormatPainter();
             this.applyPaintedFormatToSelection();
             this.isDragging = false;
             this.dragStartCell = null;
@@ -1133,6 +1138,73 @@ class SpreadsheetApp {
         // Update UI elements after any selection change
         if (this.selectedCells.size > 0) {
             this.updateUI();
+        }
+    }
+
+    extendSelectionForFormatPainter() {
+        if (!this.formatPainter.active || !this.formatPainter.patternWidth || !this.formatPainter.patternHeight) {
+            return;
+        }
+        
+        if (this.selectedCellCoords.size === 0) {
+            return;
+        }
+        
+        // Get all selected cell coordinates
+        const coords = Array.from(this.selectedCellCoords).map(coord => 
+            this.getCoordPos(coord)
+        );
+        
+        // Get the bounding box of current selection
+        const minRow = Math.min(...coords.map(c => c.row));
+        const maxRow = Math.max(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+        const maxCol = Math.max(...coords.map(c => c.col));
+        
+        const currentWidth = maxCol - minCol + 1;
+        const currentHeight = maxRow - minRow + 1;
+        
+        // Calculate how many complete pattern tiles we need
+        const tilesWide = Math.max(1, Math.ceil(currentWidth / this.formatPainter.patternWidth));
+        const tilesHigh = Math.max(1, Math.ceil(currentHeight / this.formatPainter.patternHeight));
+        
+        // Calculate the extended dimensions (complete pattern tiles)
+        const extendedWidth = tilesWide * this.formatPainter.patternWidth;
+        const extendedHeight = tilesHigh * this.formatPainter.patternHeight;
+        
+        // Only rebuild selection if dimensions changed
+        if (extendedWidth !== currentWidth || extendedHeight !== currentHeight) {
+            const newMaxCol = Math.min(this.config.maxCols - 1, minCol + extendedWidth - 1);
+            const newMaxRow = Math.min(this.config.maxRows - 1, minRow + extendedHeight - 1);
+            
+            // Clear and rebuild selection with extended range
+            this.selectedCells.forEach(cell => {
+                cell.classList.remove('selected', 'primary-selected');
+            });
+            this.selectedCells.clear();
+            this.selectedCellCoords.clear();
+            
+            // Add all cells in the extended range (contiguous rectangle)
+            for (let row = minRow; row <= newMaxRow; row++) {
+                for (let col = minCol; col <= newMaxCol; col++) {
+                    const coordKey = `${row},${col}`;
+                    this.selectedCellCoords.add(coordKey);
+                    
+                    const cell = this.getCellAt(row, col);
+                    if (cell) {
+                        cell.classList.add('selected');
+                        this.selectedCells.add(cell);
+                        
+                        if (row === minRow && col === minCol) {
+                            cell.classList.add('primary-selected');
+                            this.primaryCell = cell;
+                            this.primaryCellCoord = coordKey;
+                        }
+                    }
+                }
+            }
+            
+            this.log(`Extended selection to ${extendedWidth}x${extendedHeight} (${tilesWide}x${tilesHigh} tiles) to match pattern dimensions`);
         }
     }
 
