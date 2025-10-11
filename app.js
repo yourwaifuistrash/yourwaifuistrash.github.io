@@ -1550,6 +1550,21 @@ class SpreadsheetApp {
             // Recalculate all cells that might depend on this cell
             this.recalculateAllFormulas();
         }
+        
+        // Refresh the cell display to apply overflow logic
+        const cellData = this.cellData.get(cellKey) || {};
+        this.updateCellDisplay(this.currentEditingCell, cellData);
+        
+        // IMPORTANT: Refresh cells to the left that might have overflowing text
+        // that was hidden while we were editing this cell
+        for (let c = col - 1; c >= Math.max(0, col - 10); c--) {
+            const leftCellCoord = `${row},${c}`;
+            const leftCell = this.getCellAt(row, c);
+            if (leftCell) {
+                const leftCellData = this.cellData.get(leftCellCoord) || {};
+                this.updateCellDisplay(leftCell, leftCellData);
+            }
+        }
 
         this.currentEditingCell = null;
     }
