@@ -2743,8 +2743,8 @@ class SpreadsheetApp {
             }
         };
         
-        // Initial preview and colors
-        updatePreview();
+        // Initial preview and colors - show clear state by default
+        applyPreviewBorder('clear');
         updateColorsInUse();
         
         // Sync color picker and hex input
@@ -2785,8 +2785,8 @@ class SpreadsheetApp {
             });
             
             option.addEventListener('mouseleave', () => {
-                // Reset to full border on mouse leave
-                updatePreview();
+                // Reset to clear state on mouse leave
+                applyPreviewBorder('clear');
             });
         });
         
