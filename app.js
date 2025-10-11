@@ -1586,14 +1586,16 @@ class SpreadsheetApp {
         const cellData = this.cellData.get(cellKey) || {};
         this.updateCellDisplay(this.currentEditingCell, cellData);
         
-        // IMPORTANT: Refresh cells to the left that might have overflowing text
-        // that was hidden while we were editing this cell
-        for (let c = col - 1; c >= Math.max(0, col - 10); c--) {
-            const leftCellCoord = `${row},${c}`;
-            const leftCell = this.getCellAt(row, c);
-            if (leftCell) {
-                const leftCellData = this.cellData.get(leftCellCoord) || {};
-                this.updateCellDisplay(leftCell, leftCellData);
+        // IMPORTANT: Refresh cells in BOTH directions that might have overflowing text
+        // affected by this cell's new content
+        for (let c = Math.max(0, col - 20); c <= Math.min(this.config.maxCols - 1, col + 20); c++) {
+            if (c !== col) {
+                const adjCellCoord = `${row},${c}`;
+                const adjCell = this.getCellAt(row, c);
+                if (adjCell) {
+                    const adjCellData = this.cellData.get(adjCellCoord) || {};
+                    this.updateCellDisplay(adjCell, adjCellData);
+                }
             }
         }
 
@@ -2227,149 +2229,190 @@ class SpreadsheetApp {
         cell.style.borderLeft = leftBorder;
     }
     
-    handleCellOverflow(cell, displayText, cellData) {
-        const { row, col } = this.getCellPos(cell);
-        
-        // Remove any existing overflow styling and wrapper
-        cell.style.overflow = '';
-        cell.style.textOverflow = '';
-        cell.style.whiteSpace = '';
-        cell.style.zIndex = '';
-        cell.style.pointerEvents = '';
-        
-        // Remove any existing text wrapper
-        const existingWrapper = cell.querySelector('.cell-text-wrapper');
-        if (existingWrapper) {
-            cell.textContent = existingWrapper.textContent;
-        }
-        
-        // If cell has no content, use default overflow behavior
-        if (!displayText || displayText.trim() === '') {
-            cell.style.overflow = 'hidden';
-            cell.style.textOverflow = 'ellipsis';
-            cell.style.whiteSpace = 'nowrap';
-            return;
-        }
-        
-        // Check if text fits within the cell
-        const cellWidth = this.getColumnWidth(col);
-        const textWidth = this.measureTextWidth(displayText, cell);
-        const padding = 16;
-        
-        if (textWidth <= cellWidth - padding) {
-            // Text fits, no overflow needed
-            cell.style.overflow = 'hidden';
-            cell.style.textOverflow = 'ellipsis';
-            cell.style.whiteSpace = 'nowrap';
-            return;
-        }
-        
-        // Text doesn't fit - determine where it can actually overflow based on alignment
-        const textAlign = cellData.textAlign || 'left';
-        let leftOverflowStart = col;
-        let rightOverflowEnd = col;
-        
-        // Calculate how much space text needs
-        const extraSpaceNeeded = textWidth - (cellWidth - padding);
-        
-        // For center-aligned text, it can overflow in both directions
-        if (textAlign === 'center') {
-            const halfSpace = extraSpaceNeeded / 2;
+handleCellOverflow(cell, displayText, cellData) {
+    const { row, col } = this.getCellPos(cell);
+    
+    // Remove any existing overflow styling and wrapper
+    cell.style.overflow = '';
+    cell.style.textOverflow = '';
+    cell.style.whiteSpace = '';
+    cell.style.zIndex = '';
+    cell.style.pointerEvents = '';
+    
+    // Remove any existing text wrapper
+    const existingWrapper = cell.querySelector('.cell-text-wrapper');
+    if (existingWrapper) {
+        cell.textContent = existingWrapper.textContent;
+    }
+    
+    // If cell has no content, use default overflow behavior
+    if (!displayText || displayText.trim() === '') {
+        cell.style.overflow = 'hidden';
+        cell.style.textOverflow = 'ellipsis';
+        cell.style.whiteSpace = 'nowrap';
+        return;
+    }
+    
+    // Check if text fits within the cell
+    const cellWidth = this.getColumnWidth(col);
+    const textWidth = this.measureTextWidth(displayText, cell);
+    const padding = 16;
+    
+    if (textWidth <= cellWidth - padding) {
+        // Text fits, no overflow needed
+        cell.style.overflow = 'hidden';
+        cell.style.textOverflow = 'ellipsis';
+        cell.style.whiteSpace = 'nowrap';
+        return;
+    }
+    
+    // Text doesn't fit - determine where it can actually overflow based on alignment
+    const textAlign = cellData.textAlign || 'left';
+    const verticalAlign = cellData.verticalAlign || 'bottom';
+    let maxOverflowWidth = cellWidth;
+    let leftOffset = 0; // For center and right alignment
+    
+    // For left-aligned (default), overflow to the right
+    if (textAlign === 'left' || !textAlign) {
+        // Check how far we can overflow to the right
+        for (let c = col + 1; c < this.config.maxCols; c++) {
+            const adjacentCoord = `${row},${c}`;
+            const adjacentData = this.cellData.get(adjacentCoord);
             
-            // Check left direction
-            let leftSpace = 0;
-            for (let c = col - 1; c >= 0; c--) {
-                const adjacentCoord = `${row},${c}`;
-                const adjacentData = this.cellData.get(adjacentCoord);
-                
-                if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
-                    break; // Hit content, can't overflow further
-                }
-                
-                leftOverflowStart = c;
-                leftSpace += this.getColumnWidth(c);
-                
-                if (leftSpace >= halfSpace) break;
+            // If we hit a cell with content, stop here
+            if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
+                break;
             }
             
-            // Check right direction
-            let rightSpace = 0;
-            for (let c = col + 1; c < this.config.maxCols; c++) {
-                const adjacentCoord = `${row},${c}`;
-                const adjacentData = this.cellData.get(adjacentCoord);
-                
-                if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
-                    break; // Hit content, can't overflow further
-                }
-                
-                rightOverflowEnd = c;
-                rightSpace += this.getColumnWidth(c);
-                
-                if (rightSpace >= halfSpace) break;
-            }
-        }
-        // For right-aligned text, it can overflow to the left
-        else if (textAlign === 'right') {
-            let leftSpace = 0;
-            for (let c = col - 1; c >= 0; c--) {
-                const adjacentCoord = `${row},${c}`;
-                const adjacentData = this.cellData.get(adjacentCoord);
-                
-                if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
-                    break; // Hit content, can't overflow further
-                }
-                
-                leftOverflowStart = c;
-                leftSpace += this.getColumnWidth(c);
-                
-                if (leftSpace >= extraSpaceNeeded) break;
-            }
-        }
-        // For left-aligned (default), overflow to the right
-        else {
-            let rightSpace = 0;
-            for (let c = col + 1; c < this.config.maxCols; c++) {
-                const adjacentCoord = `${row},${c}`;
-                const adjacentData = this.cellData.get(adjacentCoord);
-                
-                if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
-                    break; // Hit content, can't overflow further
-                }
-                
-                rightOverflowEnd = c;
-                rightSpace += this.getColumnWidth(c);
-                
-                if (rightSpace >= extraSpaceNeeded) break;
-            }
-        }
-        
-        // Calculate total available width across overflow range
-        let totalAvailableWidth = 0;
-        for (let c = leftOverflowStart; c <= rightOverflowEnd; c++) {
-            totalAvailableWidth += this.getColumnWidth(c);
-        }
-        
-        // Check if we have enough space with the overflow
-        if (textWidth <= totalAvailableWidth - padding && (leftOverflowStart < col || rightOverflowEnd > col)) {
-            // Allow overflow - use higher z-index to appear above selected cells
-            cell.style.overflow = 'visible';
-            cell.style.whiteSpace = 'nowrap';
-            cell.style.zIndex = '5';
+            // Add this column's width to available space
+            maxOverflowWidth += this.getColumnWidth(c);
             
-            // Wrap text content in a span with pointer-events: none
-            const textWrapper = document.createElement('span');
-            textWrapper.className = 'cell-text-wrapper';
-            textWrapper.style.pointerEvents = 'none';
-            textWrapper.textContent = cell.textContent;
-            cell.textContent = '';
-            cell.appendChild(textWrapper);
-        } else {
-            // Can't overflow enough - truncate with ellipsis
-            cell.style.overflow = 'hidden';
-            cell.style.textOverflow = 'ellipsis';
-            cell.style.whiteSpace = 'nowrap';
+            // If we've accumulated enough space for the text, stop looking
+            if (maxOverflowWidth >= textWidth + padding) {
+                break;
+            }
         }
     }
+    // For center-aligned text, it can overflow in both directions
+    else if (textAlign === 'center') {
+        const extraSpaceNeeded = textWidth - (cellWidth - padding);
+        const halfSpace = extraSpaceNeeded / 2;
+        
+        let leftSpace = 0;
+        let rightSpace = 0;
+        let leftCols = 0;
+        
+        // Check left direction
+        for (let c = col - 1; c >= 0; c--) {
+            const adjacentCoord = `${row},${c}`;
+            const adjacentData = this.cellData.get(adjacentCoord);
+            
+            if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
+                break;
+            }
+            
+            leftSpace += this.getColumnWidth(c);
+            leftCols++;
+            if (leftSpace >= halfSpace) break;
+        }
+        
+        // Check right direction
+        for (let c = col + 1; c < this.config.maxCols; c++) {
+            const adjacentCoord = `${row},${c}`;
+            const adjacentData = this.cellData.get(adjacentCoord);
+            
+            if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
+                break;
+            }
+            
+            rightSpace += this.getColumnWidth(c);
+            if (rightSpace >= halfSpace) break;
+        }
+        
+        // Calculate total width and offset
+        maxOverflowWidth = cellWidth + leftSpace + rightSpace;
+        
+        // Calculate the actual left offset - we need to shift left by the leftSpace amount
+        leftOffset = -leftSpace;
+    }
+    // For right-aligned text, it can overflow to the left
+    else if (textAlign === 'right') {
+        let leftSpace = 0;
+        
+        for (let c = col - 1; c >= 0; c--) {
+            const adjacentCoord = `${row},${c}`;
+            const adjacentData = this.cellData.get(adjacentCoord);
+            
+            if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
+                break;
+            }
+            
+            leftSpace += this.getColumnWidth(c);
+            maxOverflowWidth += this.getColumnWidth(c);
+            
+            if (maxOverflowWidth >= textWidth + padding) {
+                break;
+            }
+        }
+        
+        // For right alignment, we need to shift the wrapper left
+        leftOffset = -leftSpace;
+    }
+    
+    // If we have more space than just the current cell, allow overflow
+    if (maxOverflowWidth > cellWidth) {
+        // Allow overflow - the cell itself must be visible
+        cell.style.overflow = 'visible';
+        cell.style.whiteSpace = 'nowrap';
+        cell.style.zIndex = '5';
+        
+        // Create wrapper positioned absolutely to handle left offset
+        const textWrapper = document.createElement('div');
+        textWrapper.className = 'cell-text-wrapper';
+        textWrapper.style.pointerEvents = 'none';
+        textWrapper.style.position = 'absolute';
+        textWrapper.style.left = (leftOffset) + 'px';
+        textWrapper.style.top = '0';
+        textWrapper.style.width = (maxOverflowWidth) + 'px';
+        textWrapper.style.height = '100%';
+        textWrapper.style.display = 'flex';
+        textWrapper.style.paddingLeft = 'var(--space-8)';
+        textWrapper.style.paddingRight = 'var(--space-8)';
+        
+        // Map vertical alignment
+        const alignItemsMap = {
+            'top': 'flex-start',
+            'middle': 'center',
+            'bottom': 'flex-end'
+        };
+        textWrapper.style.alignItems = alignItemsMap[verticalAlign] || 'flex-end';
+        
+        // Map horizontal alignment
+        const justifyContentMap = {
+            'left': 'flex-start',
+            'center': 'center',
+            'right': 'flex-end'
+        };
+        textWrapper.style.justifyContent = justifyContentMap[textAlign] || 'flex-start';
+        
+        // Create inner span for text with ellipsis
+        const textSpan = document.createElement('span');
+        textSpan.style.overflow = 'hidden';
+        textSpan.style.textOverflow = 'ellipsis';
+        textSpan.style.whiteSpace = 'nowrap';
+        textSpan.style.maxWidth = (maxOverflowWidth - padding) + 'px';
+        textSpan.textContent = cell.textContent;
+        
+        textWrapper.appendChild(textSpan);
+        cell.textContent = '';
+        cell.appendChild(textWrapper);
+    } else {
+        // Can't overflow - truncate with ellipsis
+        cell.style.overflow = 'hidden';
+        cell.style.textOverflow = 'ellipsis';
+        cell.style.whiteSpace = 'nowrap';
+    }
+}
 
     measureTextWidth(text, cell) {
         // Create a temporary span to measure text width
