@@ -61,6 +61,7 @@ class SpreadsheetApp {
         this.colorPalette = document.getElementById('colorPalette');
         this.fontColorPalette = document.getElementById('fontColorPalette');
         this.linkEditor = document.getElementById('linkEditor');
+        this.borderMenu = document.getElementById('borderMenu');
         console.log('Link editor found:', this.linkEditor);
         console.log('Save button found:', document.getElementById('linkSaveBtn'));
         console.log('Cancel button found:', document.getElementById('linkCancelBtn'));
@@ -413,6 +414,7 @@ class SpreadsheetApp {
             [this.rowHeaders, 'mousedown', e => this.handleResizeMouseDown(e)],
             ['#colorBtn', 'click', () => this.showColorPalette()],
             ['#fontColorBtn', 'click', () => this.showFontColorPalette()],
+            ['#borderBtn', 'click', () => this.showBorderMenu()],
             ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e)],
             ['#fontSizeInput', 'keydown', e => {
                 if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e); e.target.blur(); }
@@ -435,6 +437,9 @@ class SpreadsheetApp {
             const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
             if (el) el.addEventListener(evt, fn);
         });
+        
+        // Border menu setup
+        this.setupBorderMenu();
         
         // Pattern-based toolbar buttons
         ['bold', 'italic', 'underline', 'strikethrough'].forEach(f => 
@@ -2050,6 +2055,20 @@ class SpreadsheetApp {
         cell.style.backgroundColor = d.backgroundColor || '';
         cell.style.color = d.fontColor || '';
         cell.style.fontSize = d.fontSize ? d.fontSize + 'px' : '';
+        
+        // Apply borders
+        if (d.borders) {
+            cell.style.borderTop = d.borders.top || '';
+            cell.style.borderRight = d.borders.right || '';
+            cell.style.borderBottom = d.borders.bottom || '';
+            cell.style.borderLeft = d.borders.left || '';
+        } else {
+            // Reset to default borders if no custom borders
+            cell.style.borderTop = '';
+            cell.style.borderRight = '';
+            cell.style.borderBottom = '';
+            cell.style.borderLeft = '';
+        }
     }
     
     isHyperlink(text) {
@@ -2075,6 +2094,7 @@ class SpreadsheetApp {
                 delete data.fontColor;
                 delete data.textAlign;
                 delete data.verticalAlign;
+                delete data.borders;
             }
         });
 
@@ -2082,6 +2102,10 @@ class SpreadsheetApp {
             cell.style.backgroundColor = '';
             cell.style.fontSize = '';
             cell.style.color = '';
+            cell.style.borderTop = '';
+            cell.style.borderRight = '';
+            cell.style.borderBottom = '';
+            cell.style.borderLeft = '';
             cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
             cell.classList.remove('align-left', 'align-center', 'align-right',
                     'align-top', 'align-middle', 'align-bottom');
@@ -2106,6 +2130,9 @@ class SpreadsheetApp {
         }
         if (!event.target.closest('#fontColorPalette') && !event.target.closest('#fontColorBtn')) {
             this.hideFontColorPalette();
+        }
+        if (!event.target.closest('#borderMenu') && !event.target.closest('#borderBtn')) {
+            this.hideBorderMenu();
         }
         // Don't close link editor if clicking inside it OR on its buttons
         if (!event.target.closest('#linkEditor') && 
@@ -2439,6 +2466,28 @@ class SpreadsheetApp {
         return Array.from(colors).sort();
     }
     
+    getBorderColorsInUse() {
+        const colors = new Set();
+        
+        // Scan all cell data for border colors
+        this.cellData.forEach((data) => {
+            if (data.borders) {
+                ['top', 'right', 'bottom', 'left'].forEach(side => {
+                    if (data.borders[side]) {
+                        // Extract color from border string like "2px solid #000000"
+                        const match = data.borders[side].match(/#[0-9A-Fa-f]{6}/);
+                        if (match) {
+                            colors.add(match[0].toUpperCase());
+                        }
+                    }
+                });
+            }
+        });
+        
+        // Convert to array and sort
+        return Array.from(colors).sort();
+    }
+    
     refreshColorPalette() {
         this.setupColorPalette();
     }
@@ -2507,6 +2556,354 @@ class SpreadsheetApp {
             (allSame && value) ? value :
             (allSame && !value) ? 'var(--color-text)' :
             'currentColor';
+    }
+    
+    showBorderMenu() {
+        if (this.selectedCells.size === 0) return;
+        
+        const rect = document.getElementById('borderBtn').getBoundingClientRect();
+        this.borderMenu.classList.remove('hidden');
+        this.borderMenu.style.left = rect.left + 'px';
+        this.borderMenu.style.top = (rect.bottom + 5) + 'px';
+        
+        // Refresh colors in use when opening
+        const updateColorsInUse = () => {
+            const colors = this.getBorderColorsInUse();
+            const container = document.getElementById('borderColorsInUse');
+            const grid = document.getElementById('borderColorsInUseGrid');
+            
+            if (colors.length > 0) {
+                container.style.display = 'block';
+                grid.innerHTML = '';
+                colors.forEach(color => {
+                    const swatch = document.createElement('div');
+                    swatch.style.width = '20px';
+                    swatch.style.height = '20px';
+                    swatch.style.backgroundColor = color;
+                    swatch.style.border = '1px solid var(--color-border)';
+                    swatch.style.borderRadius = 'var(--radius-sm)';
+                    swatch.style.cursor = 'pointer';
+                    swatch.title = color;
+                    swatch.addEventListener('click', () => {
+                        document.getElementById('borderColorPicker').value = color;
+                        document.getElementById('borderColorHex').value = color;
+                        // Update preview
+                        const borderPreviewCell = this.borderMenu.querySelector('.border-preview-cell');
+                        const style = document.getElementById('borderStyleSelect').value;
+                        const width = document.getElementById('borderWidthSelect').value + 'px';
+                        borderPreviewCell.style.border = `${width} ${style} ${color}`;
+                    });
+                    grid.appendChild(swatch);
+                });
+            } else {
+                container.style.display = 'none';
+            }
+        };
+        
+        updateColorsInUse();
+    }
+
+    hideBorderMenu() {
+        this.borderMenu.classList.add('hidden');
+    }
+
+    setupBorderMenu() {
+        const borderOptions = this.borderMenu.querySelectorAll('.border-option');
+        const borderStyleSelect = document.getElementById('borderStyleSelect');
+        const borderWidthSelect = document.getElementById('borderWidthSelect');
+        const borderColorPicker = document.getElementById('borderColorPicker');
+        const borderColorHex = document.getElementById('borderColorHex');
+        const borderPreviewCells = this.borderMenu.querySelectorAll('.border-preview-cell');
+        
+        // Update preview function
+        const updatePreview = () => {
+            const style = borderStyleSelect.value;
+            const width = borderWidthSelect.value + 'px';
+            const color = borderColorPicker.value;
+            borderPreviewCells.forEach(cell => {
+                cell.style.border = `${width} ${style} ${color}`;
+            });
+        };
+        
+        // Apply preview border based on action
+        const applyPreviewBorder = (action) => {
+            const style = borderStyleSelect.value;
+            const width = borderWidthSelect.value + 'px';
+            const color = borderColorPicker.value;
+            const borderValue = `${width} ${style} ${color}`;
+            
+            // Reset all borders first to default grid borders
+            borderPreviewCells.forEach(cell => {
+                cell.style.borderTop = '';
+                cell.style.borderRight = '1px solid var(--color-border)';
+                cell.style.borderBottom = '1px solid var(--color-border)';
+                cell.style.borderLeft = '';
+            });
+            
+            // Define which cells are on which edges (0-8, row-major order)
+            const topRow = [0, 1, 2];
+            const middleRow = [3, 4, 5];
+            const bottomRow = [6, 7, 8];
+            const leftCol = [0, 3, 6];
+            const centerCol = [1, 4, 7];
+            const rightCol = [2, 5, 8];
+            
+            switch (action) {
+                case 'all':
+                    borderPreviewCells.forEach(cell => {
+                        cell.style.border = borderValue;
+                    });
+                    break;
+                case 'outer':
+                    topRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
+                    bottomRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
+                    leftCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
+                    rightCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
+                    break;
+                case 'inner':
+                    // Horizontal inner borders - top row bottom + middle row top AND bottom + bottom row top
+                    topRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
+                    middleRow.forEach(i => {
+                        borderPreviewCells[i].style.borderTop = borderValue;
+                        borderPreviewCells[i].style.borderBottom = borderValue;
+                    });
+                    bottomRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
+                    // Vertical inner borders - left col right + center col left AND right + right col left
+                    leftCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
+                    centerCol.forEach(i => {
+                        borderPreviewCells[i].style.borderLeft = borderValue;
+                        borderPreviewCells[i].style.borderRight = borderValue;
+                    });
+                    rightCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
+                    break;
+                case 'horizontal':
+                    // Top row bottom + middle row both sides + bottom row top
+                    topRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
+                    middleRow.forEach(i => {
+                        borderPreviewCells[i].style.borderTop = borderValue;
+                        borderPreviewCells[i].style.borderBottom = borderValue;
+                    });
+                    bottomRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
+                    break;
+                case 'vertical':
+                    // Left col right + center col both sides + right col left
+                    leftCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
+                    centerCol.forEach(i => {
+                        borderPreviewCells[i].style.borderLeft = borderValue;
+                        borderPreviewCells[i].style.borderRight = borderValue;
+                    });
+                    rightCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
+                    break;
+                case 'left':
+                    leftCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
+                    break;
+                case 'right':
+                    rightCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
+                    break;
+                case 'top':
+                    topRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
+                    break;
+                case 'bottom':
+                    bottomRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
+                    break;
+                case 'clear':
+                    // Show no borders (keep default grid borders)
+                    break;
+            }
+        };
+        
+        // Update colors in use
+        const updateColorsInUse = () => {
+            const colors = this.getBorderColorsInUse();
+            const container = document.getElementById('borderColorsInUse');
+            const grid = document.getElementById('borderColorsInUseGrid');
+            
+            if (colors.length > 0) {
+                container.style.display = 'block';
+                grid.innerHTML = '';
+                colors.forEach(color => {
+                    const swatch = document.createElement('div');
+                    swatch.style.width = '20px';
+                    swatch.style.height = '20px';
+                    swatch.style.backgroundColor = color;
+                    swatch.style.border = '1px solid var(--color-border)';
+                    swatch.style.borderRadius = 'var(--radius-sm)';
+                    swatch.style.cursor = 'pointer';
+                    swatch.title = color;
+                    swatch.addEventListener('click', () => {
+                        borderColorPicker.value = color;
+                        borderColorHex.value = color;
+                        updatePreview();
+                    });
+                    grid.appendChild(swatch);
+                });
+            } else {
+                container.style.display = 'none';
+            }
+        };
+        
+        // Initial preview and colors
+        updatePreview();
+        updateColorsInUse();
+        
+        // Sync color picker and hex input
+        borderColorPicker.addEventListener('input', (e) => {
+            borderColorHex.value = e.target.value;
+            updatePreview();
+        });
+        
+        borderColorHex.addEventListener('input', (e) => {
+            let value = e.target.value.trim();
+            if (value.startsWith('#')) {
+                value = value.substring(1);
+            }
+            value = value.replace(/[^0-9A-Fa-f]/g, '').substring(0, 6);
+            
+            if (value.length === 6) {
+                borderColorPicker.value = '#' + value;
+                borderColorHex.value = '#' + value.toUpperCase();
+                updatePreview();
+            } else if (value.length === 3) {
+                // Support short hex codes
+                const expanded = value.split('').map(c => c + c).join('');
+                borderColorPicker.value = '#' + expanded;
+                borderColorHex.value = '#' + expanded.toUpperCase();
+                updatePreview();
+            }
+        });
+        
+        // Update preview on style/width change
+        borderStyleSelect.addEventListener('change', updatePreview);
+        borderWidthSelect.addEventListener('change', updatePreview);
+        
+        // Handle border option hover
+        borderOptions.forEach(option => {
+            option.addEventListener('mouseenter', () => {
+                const action = option.dataset.action;
+                applyPreviewBorder(action);
+            });
+            
+            option.addEventListener('mouseleave', () => {
+                // Reset to full border on mouse leave
+                updatePreview();
+            });
+        });
+        
+        // Handle border option clicks
+        borderOptions.forEach(option => {
+            option.addEventListener('click', () => {
+                const action = option.dataset.action;
+                const style = borderStyleSelect.value;
+                const width = borderWidthSelect.value + 'px';
+                const color = borderColorPicker.value;
+                
+                this.applyBorder(action, style, width, color);
+                this.hideBorderMenu();
+            });
+        });
+    }
+
+    applyBorder(action, style, width, color) {
+        if (!this.selectedCellCoords.size) return;
+        
+        this.saveState(`Apply ${action} border`);
+        
+        // Get the bounding box of the selection
+        const coords = Array.from(this.selectedCellCoords).map(coord => 
+            this.getCoordPos(coord)
+        );
+        
+        const minRow = Math.min(...coords.map(c => c.row));
+        const maxRow = Math.max(...coords.map(c => c.row));
+        const minCol = Math.min(...coords.map(c => c.col));
+        const maxCol = Math.max(...coords.map(c => c.col));
+        
+        const borderValue = action === 'clear' ? '' : `${width} ${style} ${color}`;
+        
+        this.selectedCellCoords.forEach(coordKey => {
+            const { row, col } = this.getCoordPos(coordKey);
+            const cellData = this.cellData.get(coordKey) || {};
+            
+            if (!cellData.borders) {
+                cellData.borders = {};
+            }
+            
+            switch (action) {
+                case 'all':
+                    cellData.borders.top = borderValue;
+                    cellData.borders.right = borderValue;
+                    cellData.borders.bottom = borderValue;
+                    cellData.borders.left = borderValue;
+                    break;
+                    
+                case 'outer':
+                    if (row === minRow) cellData.borders.top = borderValue;
+                    if (row === maxRow) cellData.borders.bottom = borderValue;
+                    if (col === minCol) cellData.borders.left = borderValue;
+                    if (col === maxCol) cellData.borders.right = borderValue;
+                    break;
+                    
+                case 'inner':
+                    if (row > minRow) cellData.borders.top = borderValue;
+                    if (row < maxRow) cellData.borders.bottom = borderValue;
+                    if (col > minCol) cellData.borders.left = borderValue;
+                    if (col < maxCol) cellData.borders.right = borderValue;
+                    break;
+                    
+                case 'horizontal':
+                    if (row > minRow) cellData.borders.top = borderValue;
+                    if (row < maxRow) cellData.borders.bottom = borderValue;
+                    break;
+                    
+                case 'vertical':
+                    if (col > minCol) cellData.borders.left = borderValue;
+                    if (col < maxCol) cellData.borders.right = borderValue;
+                    break;
+                    
+                case 'left':
+                    // Only apply to leftmost cells
+                    if (col === minCol) {
+                        cellData.borders.left = borderValue;
+                    }
+                    break;
+                    
+                case 'right':
+                    // Only apply to rightmost cells
+                    if (col === maxCol) {
+                        cellData.borders.right = borderValue;
+                    }
+                    break;
+                    
+                case 'top':
+                    // Only apply to topmost cells
+                    if (row === minRow) {
+                        cellData.borders.top = borderValue;
+                    }
+                    break;
+                    
+                case 'bottom':
+                    // Only apply to bottommost cells
+                    if (row === maxRow) {
+                        cellData.borders.bottom = borderValue;
+                    }
+                    break;
+                    
+                case 'clear':
+                    delete cellData.borders;
+                    break;
+            }
+            
+            this.cellData.set(coordKey, cellData);
+        });
+        
+        // Update visible cells
+        this.selectedCells.forEach(cell => {
+            const cellKey = this.getCoord(cell);
+            const cellData = this.cellData.get(cellKey);
+            this.updateCellDisplay(cell, cellData);
+        });
+        
+        this.log(`Applied ${action} border to ${this.selectedCellCoords.size} cells`);
     }
 
     handleFormulaKeyDown(event) {

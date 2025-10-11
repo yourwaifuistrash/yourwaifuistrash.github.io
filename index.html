@@ -51,6 +51,9 @@
                         <span id="bgColorIndicator" style="position: absolute; bottom: -2px; left: 0; right: 0; height: 3px; background: transparent;"></span>
                     </span>
                 </button>
+                <button class="btn btn--sm toolbar-btn" id="borderBtn" title="Borders">
+                    <span>⊞</span>
+                </button>
             </div>
             
             <div class="toolbar-section">
@@ -197,6 +200,127 @@
         <div class="color-palette-content">
             <div class="color-palette-title">Background Colors</div>
             <div class="color-palette-grid" id="colorPaletteGrid"></div>
+        </div>
+    </div>
+
+    <!-- Border Menu -->
+    <div id="borderMenu" class="border-menu hidden">
+        <div class="border-menu-title">Borders</div>
+        
+        <!-- Border Preview -->
+        <div class="border-menu-section">
+            <div class="border-menu-subtitle">Preview</div>
+            <div id="borderPreview" class="border-preview">
+                <div class="border-preview-grid">
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                    <div class="border-preview-cell"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Border Color -->
+        <div class="border-menu-section">
+            <div class="border-menu-subtitle">Border Color</div>
+            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+                <input type="color" id="borderColorPicker" value="#000000" style="width: 40px; height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer;">
+                <input type="text" id="borderColorHex" class="form-control" placeholder="#000000" maxlength="7" style="flex: 1; font-family: var(--font-family-mono); font-size: var(--font-size-sm);">
+            </div>
+            <!-- Colors in use for borders -->
+            <div id="borderColorsInUse" style="display: none; margin-top: 8px;">
+                <div style="font-size: 10px; color: var(--color-text-secondary); margin-bottom: 4px;">Colors in use:</div>
+                <div id="borderColorsInUseGrid" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
+            </div>
+        </div>
+        
+        <div class="border-menu-section">
+            <div class="border-menu-subtitle">Border Styles</div>
+            <div class="border-options-grid">
+                <button class="border-option" data-action="all" title="All borders">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="6" y="6" width="12" height="12"/>
+                        <line x1="6" y1="12" x2="18" y2="12"/>
+                        <line x1="12" y1="6" x2="12" y2="18"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="inner" title="Inner borders">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="6" y1="12" x2="18" y2="12"/>
+                        <line x1="12" y1="6" x2="12" y2="18"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="horizontal" title="Horizontal borders">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="6" y1="9" x2="18" y2="9"/>
+                        <line x1="6" y1="12" x2="18" y2="12"/>
+                        <line x1="6" y1="15" x2="18" y2="15"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="vertical" title="Vertical borders">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="9" y1="6" x2="9" y2="18"/>
+                        <line x1="12" y1="6" x2="12" y2="18"/>
+                        <line x1="15" y1="6" x2="15" y2="18"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="outer" title="Outer borders">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="6" y="6" width="12" height="12"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="left" title="Left border">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="8" y1="6" x2="8" y2="18"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="right" title="Right border">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="16" y1="6" x2="16" y2="18"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="top" title="Top border">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="6" y1="8" x2="18" y2="8"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="bottom" title="Bottom border">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="6" y1="16" x2="18" y2="16"/>
+                    </svg>
+                </button>
+                <button class="border-option" data-action="clear" title="Clear borders">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <div class="border-menu-section">
+            <div class="border-menu-subtitle">Border Style</div>
+            <select id="borderStyleSelect" class="form-control">
+                <option value="solid">Solid</option>
+                <option value="dashed">Dashed</option>
+                <option value="dotted">Dotted</option>
+                <option value="double">Double</option>
+            </select>
+        </div>
+
+        <div class="border-menu-section">
+            <div class="border-menu-subtitle">Border Width</div>
+            <select id="borderWidthSelect" class="form-control">
+                <option value="1">1px</option>
+                <option value="2">2px</option>
+                <option value="3">3px</option>
+                <option value="4">4px</option>
+            </select>
         </div>
     </div>
 
