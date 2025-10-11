@@ -618,7 +618,7 @@ class SpreadsheetApp {
                     
                     const cellData = this.cellData.get(coordKey);
                     
-                    // Apply format properties
+                    // Apply format properties (borders are already stored at full width)
                     Object.keys(format).forEach(key => {
                         cellData[key] = format[key];
                     });
@@ -630,6 +630,32 @@ class SpreadsheetApp {
         this.selectedCells.forEach(cell => {
             const cellKey = this.getCoord(cell);
             const cellData = this.cellData.get(cellKey);
+            this.updateCellDisplay(cell, cellData);
+        });
+        
+        // IMPORTANT: Also update adjacent cells to show overlapping borders
+        const adjacentCellsToUpdate = new Set();
+        
+        this.selectedCells.forEach(cell => {
+            const { row, col } = this.getCellPos(cell);
+            
+            // Check adjacent cells
+            const adjacent = [
+                this.getCellAt(row - 1, col), // above
+                this.getCellAt(row + 1, col), // below
+                this.getCellAt(row, col - 1), // left
+                this.getCellAt(row, col + 1)  // right
+            ];
+            
+            adjacent.forEach(adjCell => {
+                if (adjCell) adjacentCellsToUpdate.add(adjCell);
+            });
+        });
+        
+        // Refresh adjacent cells to update their visual borders
+        adjacentCellsToUpdate.forEach(cell => {
+            const cellKey = this.getCoord(cell);
+            const cellData = this.cellData.get(cellKey) || {};
             this.updateCellDisplay(cell, cellData);
         });
         
@@ -2028,18 +2054,14 @@ class SpreadsheetApp {
         let isLink = false;
         if (d.value) {
             if (d.value.startsWith("'")) {
-                // Escaped text - show without the leading apostrophe
                 displayText = d.value.substring(1);
             } else if (d.value.startsWith('=')) {
-                // Formula - evaluate and show result
                 displayText = this.parseFormula(d.value, row, col);
             } else {
-                // Regular text
                 displayText = d.value;
             }
         }
         
-        // Check if it's a hyperlink - either has linkUrl property or value is a URL
         isLink = !!(d.linkUrl || this.isHyperlink(displayText));
         
         cell.textContent = displayText;
@@ -2052,24 +2074,62 @@ class SpreadsheetApp {
             isLink && 'cell-link'
         ].filter(Boolean).join(' ');
         
-        // Direct assignment without Object.assign overhead
         cell.style.backgroundColor = d.backgroundColor || '';
         cell.style.color = d.fontColor || '';
         cell.style.fontSize = d.fontSize ? d.fontSize + 'px' : '';
         
-        // Apply borders
-        if (d.borders) {
-            cell.style.borderTop = d.borders.top || '';
-            cell.style.borderRight = d.borders.right || '';
-            cell.style.borderBottom = d.borders.bottom || '';
-            cell.style.borderLeft = d.borders.left || '';
-        } else {
-            // Reset to default borders if no custom borders
-            cell.style.borderTop = '';
-            cell.style.borderRight = '';
-            cell.style.borderBottom = '';
-            cell.style.borderLeft = '';
+        // Apply borders from this cell's data (borders are stored at full width, applied at half width)
+        let topBorder = d.borders?.top || '';
+        let rightBorder = d.borders?.right || '';
+        let bottomBorder = d.borders?.bottom || '';
+        let leftBorder = d.borders?.left || '';
+        
+        // Helper function to halve border width for rendering
+        const halveBorder = (border) => {
+            if (!border) return '';
+            const match = border.match(/^(\d+(?:\.\d+)?)px\s+(.+)$/);
+            if (match) {
+                const halfWidth = parseFloat(match[1]) / 2;
+                return `${halfWidth}px ${match[2]}`;
+            }
+            return border;
+        };
+        
+        // Halve the border widths for visual display
+        topBorder = halveBorder(topBorder);
+        rightBorder = halveBorder(rightBorder);
+        bottomBorder = halveBorder(bottomBorder);
+        leftBorder = halveBorder(leftBorder);
+        
+        // Check adjacent cells for borders that should appear on shared edges (visual only)
+        // Cell above's bottom border should appear as this cell's top border
+        const cellAbove = this.cellData.get(`${row - 1},${col}`);
+        if (cellAbove?.borders?.bottom && !topBorder) {
+            topBorder = halveBorder(cellAbove.borders.bottom);
         }
+        
+        // Cell below's top border should appear as this cell's bottom border
+        const cellBelow = this.cellData.get(`${row + 1},${col}`);
+        if (cellBelow?.borders?.top && !bottomBorder) {
+            bottomBorder = halveBorder(cellBelow.borders.top);
+        }
+        
+        // Cell to the left's right border should appear as this cell's left border
+        const cellLeft = this.cellData.get(`${row},${col - 1}`);
+        if (cellLeft?.borders?.right && !leftBorder) {
+            leftBorder = halveBorder(cellLeft.borders.right);
+        }
+        
+        // Cell to the right's left border should appear as this cell's right border
+        const cellRight = this.cellData.get(`${row},${col + 1}`);
+        if (cellRight?.borders?.left && !rightBorder) {
+            rightBorder = halveBorder(cellRight.borders.left);
+        }
+        
+        cell.style.borderTop = topBorder;
+        cell.style.borderRight = rightBorder;
+        cell.style.borderBottom = bottomBorder;
+        cell.style.borderLeft = leftBorder;
     }
     
     isHyperlink(text) {
@@ -2819,13 +2879,15 @@ class SpreadsheetApp {
         const minCol = Math.min(...coords.map(c => c.col));
         const maxCol = Math.max(...coords.map(c => c.col));
         
+        // Store FULL width in cellData (format painter and data model use full width)
+        // The halving will happen in updateCellDisplay when rendering
         const borderValue = action === 'clear' ? '' : `${width} ${style} ${color}`;
         
         this.selectedCellCoords.forEach(coordKey => {
             const { row, col } = this.getCoordPos(coordKey);
             const cellData = this.cellData.get(coordKey) || {};
             
-            if (!cellData.borders) {
+            if (!cellData.borders && action !== 'clear') {
                 cellData.borders = {};
             }
             
@@ -2862,28 +2924,24 @@ class SpreadsheetApp {
                     break;
                     
                 case 'left':
-                    // Only apply to leftmost cells
                     if (col === minCol) {
                         cellData.borders.left = borderValue;
                     }
                     break;
                     
                 case 'right':
-                    // Only apply to rightmost cells
                     if (col === maxCol) {
                         cellData.borders.right = borderValue;
                     }
                     break;
                     
                 case 'top':
-                    // Only apply to topmost cells
                     if (row === minRow) {
                         cellData.borders.top = borderValue;
                     }
                     break;
                     
                 case 'bottom':
-                    // Only apply to bottommost cells
                     if (row === maxRow) {
                         cellData.borders.bottom = borderValue;
                     }
@@ -2901,6 +2959,32 @@ class SpreadsheetApp {
         this.selectedCells.forEach(cell => {
             const cellKey = this.getCoord(cell);
             const cellData = this.cellData.get(cellKey);
+            this.updateCellDisplay(cell, cellData);
+        });
+        
+        // Also update adjacent cells visually (without changing their data)
+        const adjacentCellsToUpdate = new Set();
+        
+        this.selectedCells.forEach(cell => {
+            const { row, col } = this.getCellPos(cell);
+            
+            // Check adjacent cells
+            const adjacent = [
+                this.getCellAt(row - 1, col), // above
+                this.getCellAt(row + 1, col), // below
+                this.getCellAt(row, col - 1), // left
+                this.getCellAt(row, col + 1)  // right
+            ];
+            
+            adjacent.forEach(adjCell => {
+                if (adjCell) adjacentCellsToUpdate.add(adjCell);
+            });
+        });
+        
+        // Refresh adjacent cells to update their visual borders
+        adjacentCellsToUpdate.forEach(cell => {
+            const cellKey = this.getCoord(cell);
+            const cellData = this.cellData.get(cellKey) || {};
             this.updateCellDisplay(cell, cellData);
         });
         
