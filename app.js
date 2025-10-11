@@ -1426,6 +1426,9 @@ class SpreadsheetApp {
         
         cell.dataset.originalValue = currentText;
         cell.classList.add('editing');
+        
+        // Reset overflow styles for editing
+        cell.style.pointerEvents = 'auto';
 
         const input = document.createElement('input');
         input.type = 'text';
@@ -2194,11 +2197,18 @@ class SpreadsheetApp {
     handleCellOverflow(cell, displayText, cellData) {
         const { row, col } = this.getCellPos(cell);
         
-        // Remove any existing overflow styling
+        // Remove any existing overflow styling and wrapper
         cell.style.overflow = '';
         cell.style.textOverflow = '';
         cell.style.whiteSpace = '';
         cell.style.zIndex = '';
+        cell.style.pointerEvents = '';
+        
+        // Remove any existing text wrapper
+        const existingWrapper = cell.querySelector('.cell-text-wrapper');
+        if (existingWrapper) {
+            cell.textContent = existingWrapper.textContent;
+        }
         
         // If cell has no content, use default overflow behavior
         if (!displayText || displayText.trim() === '') {
@@ -2250,6 +2260,14 @@ class SpreadsheetApp {
             cell.style.overflow = 'visible';
             cell.style.whiteSpace = 'nowrap';
             cell.style.zIndex = '5';
+            
+            // Wrap text content in a span with pointer-events: none
+            const textWrapper = document.createElement('span');
+            textWrapper.className = 'cell-text-wrapper';
+            textWrapper.style.pointerEvents = 'none';
+            textWrapper.textContent = cell.textContent;
+            cell.textContent = '';
+            cell.appendChild(textWrapper);
         } else {
             // Can't overflow - truncate with ellipsis
             cell.style.overflow = 'hidden';
