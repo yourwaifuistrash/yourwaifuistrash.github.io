@@ -1479,19 +1479,11 @@ class SpreadsheetApp {
         
         if (textWidth > cellWidth - 16) {
             // Text doesn't fit - calculate how much width we need
-            let canOverflow = true;
             let totalWidth = cellWidth;
             
-            // Check if adjacent cells have content
+            // During editing, we IGNORE whether adjacent cells have content
+            // Just calculate how much space we need
             for (let c = col + 1; c < this.config.maxCols; c++) {
-                const adjacentCoord = `${row},${c}`;
-                const adjacentData = this.cellData.get(adjacentCoord);
-                
-                if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
-                    canOverflow = false;
-                    break;
-                }
-                
                 totalWidth += this.getColumnWidth(c);
                 
                 // Stop if we have enough width
@@ -1503,13 +1495,8 @@ class SpreadsheetApp {
                 if (c - col > 10) break;
             }
             
-            if (canOverflow) {
-                // Set input width to accommodate the text
-                input.style.width = Math.max(cellWidth, textWidth + 32) + 'px';
-            } else {
-                // Can't overflow - keep normal width
-                input.style.width = cellWidth + 'px';
-            }
+            // Set input width to accommodate the text (always allow overflow during editing)
+            input.style.width = Math.max(cellWidth, textWidth + 32) + 'px';
         } else {
             // Text fits - use cell width
             input.style.width = cellWidth + 'px';
