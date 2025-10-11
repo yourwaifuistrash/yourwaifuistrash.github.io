@@ -2066,6 +2066,9 @@ class SpreadsheetApp {
         
         cell.textContent = displayText;
         
+        // Handle text overflow into adjacent cells
+        this.handleCellOverflow(cell, displayText, d);
+        
         cell.className = ['cell',
             d.bold && 'bold', d.italic && 'italic', d.underline && 'underline', d.strikethrough && 'strikethrough',
             d.textAlign && `align-${d.textAlign}`, d.verticalAlign && `align-${d.verticalAlign}`,
@@ -2130,6 +2133,97 @@ class SpreadsheetApp {
         cell.style.borderRight = rightBorder;
         cell.style.borderBottom = bottomBorder;
         cell.style.borderLeft = leftBorder;
+    }
+    
+    handleCellOverflow(cell, displayText, cellData) {
+        const { row, col } = this.getCellPos(cell);
+        
+        // Remove any existing overflow styling
+        cell.style.overflow = '';
+        cell.style.textOverflow = '';
+        cell.style.whiteSpace = '';
+        cell.style.zIndex = '';
+        
+        // If cell has no content, use default overflow behavior
+        if (!displayText || displayText.trim() === '') {
+            cell.style.overflow = 'hidden';
+            cell.style.textOverflow = 'ellipsis';
+            cell.style.whiteSpace = 'nowrap';
+            return;
+        }
+        
+        // Check if text fits within the cell
+        const cellWidth = this.getColumnWidth(col);
+        const textWidth = this.measureTextWidth(displayText, cell);
+        
+        if (textWidth <= cellWidth - 16) { // Account for padding
+            // Text fits, no overflow needed
+            cell.style.overflow = 'hidden';
+            cell.style.textOverflow = 'ellipsis';
+            cell.style.whiteSpace = 'nowrap';
+            return;
+        }
+        
+        // Text doesn't fit - check if we can overflow to the right
+        let canOverflow = true;
+        let overflowCells = 0;
+        let totalWidth = cellWidth;
+        
+        // Check cells to the right until we have enough space or hit content
+        for (let c = col + 1; c < this.config.maxCols; c++) {
+            const adjacentCoord = `${row},${c}`;
+            const adjacentData = this.cellData.get(adjacentCoord);
+            
+            // Stop if adjacent cell has content
+            if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
+                canOverflow = false;
+                break;
+            }
+            
+            totalWidth += this.getColumnWidth(c);
+            overflowCells++;
+            
+            // Stop if we have enough width
+            if (textWidth <= totalWidth - 16) {
+                break;
+            }
+        }
+        
+        if (canOverflow && overflowCells > 0) {
+            // Allow overflow - keep position: absolute but allow text to overflow
+            cell.style.overflow = 'visible';
+            cell.style.whiteSpace = 'nowrap';
+            cell.style.zIndex = '1';
+        } else {
+            // Can't overflow - truncate with ellipsis
+            cell.style.overflow = 'hidden';
+            cell.style.textOverflow = 'ellipsis';
+            cell.style.whiteSpace = 'nowrap';
+        }
+    }
+
+    measureTextWidth(text, cell) {
+        // Create a temporary span to measure text width
+        const span = document.createElement('span');
+        span.style.visibility = 'hidden';
+        span.style.position = 'absolute';
+        span.style.whiteSpace = 'nowrap';
+        
+        // Copy relevant styles from the cell
+        const computedStyle = window.getComputedStyle(cell);
+        span.style.font = computedStyle.font;
+        span.style.fontSize = computedStyle.fontSize;
+        span.style.fontWeight = computedStyle.fontWeight;
+        span.style.fontFamily = computedStyle.fontFamily;
+        span.style.fontStyle = computedStyle.fontStyle;
+        
+        span.textContent = text;
+        document.body.appendChild(span);
+        
+        const width = span.offsetWidth;
+        document.body.removeChild(span);
+        
+        return width;
     }
     
     isHyperlink(text) {
