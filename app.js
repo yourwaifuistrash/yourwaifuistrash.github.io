@@ -502,7 +502,8 @@ class SpreadsheetApp {
                     underline: cellData.underline,
                     strikethrough: cellData.strikethrough,
                     textAlign: cellData.textAlign,
-                    verticalAlign: cellData.verticalAlign
+                    verticalAlign: cellData.verticalAlign,
+                    borders: cellData.borders ? { ...cellData.borders } : undefined
                 };
                 
                 // Remove undefined properties
