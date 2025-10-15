@@ -2270,24 +2270,20 @@ handleCellOverflow(cell, displayText, cellData) {
     const textAlign = cellData.textAlign || 'left';
     const verticalAlign = cellData.verticalAlign || 'bottom';
     let maxOverflowWidth = cellWidth;
-    let leftOffset = 0; // For center and right alignment
+    let leftOffset = 0;
     
     // For left-aligned (default), overflow to the right
     if (textAlign === 'left' || !textAlign) {
-        // Check how far we can overflow to the right
         for (let c = col + 1; c < this.config.maxCols; c++) {
             const adjacentCoord = `${row},${c}`;
             const adjacentData = this.cellData.get(adjacentCoord);
             
-            // If we hit a cell with content, stop here
             if (adjacentData && adjacentData.value && adjacentData.value.trim() !== '') {
                 break;
             }
             
-            // Add this column's width to available space
             maxOverflowWidth += this.getColumnWidth(c);
             
-            // If we've accumulated enough space for the text, stop looking
             if (maxOverflowWidth >= textWidth + padding) {
                 break;
             }
@@ -2300,9 +2296,7 @@ handleCellOverflow(cell, displayText, cellData) {
         
         let leftSpace = 0;
         let rightSpace = 0;
-        let leftCols = 0;
         
-        // Check left direction
         for (let c = col - 1; c >= 0; c--) {
             const adjacentCoord = `${row},${c}`;
             const adjacentData = this.cellData.get(adjacentCoord);
@@ -2312,11 +2306,9 @@ handleCellOverflow(cell, displayText, cellData) {
             }
             
             leftSpace += this.getColumnWidth(c);
-            leftCols++;
             if (leftSpace >= halfSpace) break;
         }
         
-        // Check right direction
         for (let c = col + 1; c < this.config.maxCols; c++) {
             const adjacentCoord = `${row},${c}`;
             const adjacentData = this.cellData.get(adjacentCoord);
@@ -2329,10 +2321,7 @@ handleCellOverflow(cell, displayText, cellData) {
             if (rightSpace >= halfSpace) break;
         }
         
-        // Calculate total width and offset
         maxOverflowWidth = cellWidth + leftSpace + rightSpace;
-        
-        // Calculate the actual left offset - we need to shift left by the leftSpace amount
         leftOffset = -leftSpace;
     }
     // For right-aligned text, it can overflow to the left
@@ -2355,18 +2344,16 @@ handleCellOverflow(cell, displayText, cellData) {
             }
         }
         
-        // For right alignment, we need to shift the wrapper left
         leftOffset = -leftSpace;
     }
     
     // If we have more space than just the current cell, allow overflow
     if (maxOverflowWidth > cellWidth) {
-        // Allow overflow - the cell itself must be visible
         cell.style.overflow = 'visible';
         cell.style.whiteSpace = 'nowrap';
         cell.style.zIndex = '5';
         
-        // Create wrapper positioned absolutely to handle left offset
+        // Create wrapper positioned absolutely
         const textWrapper = document.createElement('div');
         textWrapper.className = 'cell-text-wrapper';
         textWrapper.style.pointerEvents = 'none';
@@ -2378,6 +2365,8 @@ handleCellOverflow(cell, displayText, cellData) {
         textWrapper.style.display = 'flex';
         textWrapper.style.paddingLeft = 'var(--space-8)';
         textWrapper.style.paddingRight = 'var(--space-8)';
+        textWrapper.style.paddingTop = 'var(--space-6)';
+        textWrapper.style.paddingBottom = 'var(--space-6)';
         
         // Map vertical alignment
         const alignItemsMap = {
