@@ -2271,66 +2271,92 @@ class SpreadsheetApp {
             return;
         }
         
-        // Text doesn't fit - calculate maximum theoretical overflow space
-        // (regardless of whether adjacent cells have content)
+        // Text doesn't fit - calculate available overflow space based on alignment
         const textAlign = cellData.textAlign || 'left';
         const verticalAlign = cellData.verticalAlign || 'bottom';
-        let maxOverflowWidth = cellWidth;
-        let leftOffset = 0;
         
-        // For left-aligned (default), calculate space to the right
-        if (textAlign === 'left' || !textAlign) {
-            // Calculate available space to the right (up to 20 cells or edge of grid)
-            for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
-                maxOverflowWidth += this.getColumnWidth(c);
-                
-                // Stop if we have enough space for the text
-                if (maxOverflowWidth >= textWidth + padding) {
-                    break;
-                }
-            }
+        // Helper function to check if a cell has content
+        const cellHasContent = (r, c) => {
+            const coordKey = `${r},${c}`;
+            const data = this.cellData.get(coordKey);
+            return data && data.value && data.value.trim() !== '';
+        };
+        
+        // Calculate the TOTAL theoretical space (as if nothing is blocking)
+        let totalLeftSpace = 0;
+        let totalRightSpace = 0;
+        
+        // Calculate total space to the left
+        for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
+            totalLeftSpace += this.getColumnWidth(c);
         }
-        // For center-aligned text, calculate space in both directions
+        
+        // Calculate total space to the right
+        for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
+            totalRightSpace += this.getColumnWidth(c);
+        }
+        
+        // Now calculate the AVAILABLE space (stopping at blocking cells)
+        let availableLeftSpace = 0;
+        let availableRightSpace = 0;
+        
+        // Calculate available space to the left until blocked
+        for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
+            if (cellHasContent(row, c)) {
+                break;
+            }
+            availableLeftSpace += this.getColumnWidth(c);
+        }
+        
+        // Calculate available space to the right until blocked
+        for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
+            if (cellHasContent(row, c)) {
+                break;
+            }
+            availableRightSpace += this.getColumnWidth(c);
+        }
+        
+        let wrapperWidth, wrapperLeft;
+        
+        // For left-aligned: text starts at left edge of cell, extends right
+        if (textAlign === 'left' || !textAlign) {
+            wrapperWidth = cellWidth + availableRightSpace;
+            wrapperLeft = 0;
+        }
+        // For right-aligned: text ends at right edge of cell, extends left
+        else if (textAlign === 'right') {
+            // Use TOTAL left space for wrapper width (not just available)
+            // This ensures the text wrapper is wide enough to hold all the text
+            wrapperWidth = cellWidth + totalLeftSpace;
+            // Position wrapper so its RIGHT edge aligns with the cell's right edge
+            wrapperLeft = -totalLeftSpace;
+        }
+        // For center-aligned: text is centered in cell, extends both ways
         else if (textAlign === 'center') {
             const extraSpaceNeeded = textWidth - (cellWidth - padding);
             const halfSpace = extraSpaceNeeded / 2;
             
+            // Use total theoretical space (like the old code), not available space
+            // This keeps the text position stable even when adjacent cells have content
             let leftSpace = 0;
             let rightSpace = 0;
             
-            // Calculate space to the left
+            // Calculate space to the left (stop when we have enough for half the overflow)
             for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
                 const colWidth = this.getColumnWidth(c);
                 leftSpace += colWidth;
                 if (leftSpace >= halfSpace) break;
             }
             
-            // Calculate space to the right
+            // Calculate space to the right (stop when we have enough for half the overflow)
             for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
                 const colWidth = this.getColumnWidth(c);
                 rightSpace += colWidth;
                 if (rightSpace >= halfSpace) break;
             }
             
-            maxOverflowWidth = cellWidth + leftSpace + rightSpace;
-            leftOffset = -leftSpace;
-        }
-        // For right-aligned text, calculate space to the left
-        else if (textAlign === 'right') {
-            let leftSpace = 0;
-            
-            // Calculate space to the left
-            for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
-                const colWidth = this.getColumnWidth(c);
-                leftSpace += colWidth;
-                maxOverflowWidth += colWidth;
-                
-                if (maxOverflowWidth >= textWidth + padding) {
-                    break;
-                }
-            }
-            
-            leftOffset = -leftSpace;
+            wrapperWidth = cellWidth + leftSpace + rightSpace;
+            wrapperLeft = -leftSpace;
         }
         
         // Always allow overflow (the text stays in place, adjacent cells cover it)
@@ -2343,9 +2369,9 @@ class SpreadsheetApp {
         textWrapper.className = 'cell-text-wrapper';
         textWrapper.style.pointerEvents = 'none';
         textWrapper.style.position = 'absolute';
-        textWrapper.style.left = (leftOffset) + 'px';
+        textWrapper.style.left = wrapperLeft + 'px';
         textWrapper.style.top = '0';
-        textWrapper.style.width = (maxOverflowWidth) + 'px';
+        textWrapper.style.width = wrapperWidth + 'px';
         textWrapper.style.height = '100%';
         textWrapper.style.display = 'flex';
         textWrapper.style.paddingLeft = 'var(--space-8)';
@@ -2374,7 +2400,7 @@ class SpreadsheetApp {
         textSpan.style.overflow = 'hidden';
         textSpan.style.textOverflow = 'ellipsis';
         textSpan.style.whiteSpace = 'nowrap';
-        textSpan.style.maxWidth = (maxOverflowWidth - padding) + 'px';
+        textSpan.style.maxWidth = (wrapperWidth - padding) + 'px';
         textSpan.textContent = cell.textContent;
         
         textWrapper.appendChild(textSpan);
