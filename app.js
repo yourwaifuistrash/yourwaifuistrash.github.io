@@ -2422,10 +2422,9 @@ class SpreadsheetApp {
         };
         textWrapper.style.justifyContent = justifyContentMap[textAlign] || 'flex-start';
         
-        // Create inner span for text with ellipsis
+        // Create inner span for text
         const textSpan = document.createElement('span');
         textSpan.style.overflow = 'hidden';
-        textSpan.style.textOverflow = 'ellipsis';
         textSpan.style.whiteSpace = 'nowrap';
         textSpan.style.maxWidth = (wrapperWidth - padding) + 'px';
         textSpan.textContent = cell.textContent;
