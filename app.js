@@ -2316,7 +2316,7 @@ class SpreadsheetApp {
             availableRightSpace += this.getColumnWidth(c);
         }
         
-        let wrapperWidth, wrapperLeft;
+        let wrapperWidth, wrapperLeft, clipLeft = 0, clipRight = 0;
         
         // For left-aligned: text starts at left edge of cell, extends right
         if (textAlign === 'left' || !textAlign) {
@@ -2330,6 +2330,11 @@ class SpreadsheetApp {
             wrapperWidth = cellWidth + totalLeftSpace;
             // Position wrapper so its RIGHT edge aligns with the cell's right edge
             wrapperLeft = -totalLeftSpace;
+            // Calculate how much to clip from the left if there's blocking content
+            const blockedLeftSpace = totalLeftSpace - availableLeftSpace;
+            if (blockedLeftSpace > 0) {
+                clipLeft = blockedLeftSpace;
+            }
         }
         else if (textAlign === 'center') {
             const extraSpaceNeeded = textWidth - (cellWidth - padding);
@@ -2348,6 +2353,16 @@ class SpreadsheetApp {
                 if (theoreticalRightSpace >= halfSpace) break;
             }
             
+            // Calculate available left space for clipping
+            let availableLeftSpace = 0;
+            for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
+                if (cellHasContent(row, c)) {
+                    break;
+                }
+                availableLeftSpace += this.getColumnWidth(c);
+                if (availableLeftSpace >= theoreticalLeftSpace) break;
+            }
+            
             // Calculate available right space for clipping
             let availableRightSpace = 0;
             for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
@@ -2362,8 +2377,13 @@ class SpreadsheetApp {
             wrapperWidth = cellWidth + theoreticalLeftSpace + theoreticalRightSpace;
             wrapperLeft = -theoreticalLeftSpace;
             
-            // Store clip info for later use
-            cell.dataset.clipRight = availableRightSpace < theoreticalRightSpace ? (wrapperWidth - (cellWidth + theoreticalLeftSpace + availableRightSpace)) : '0';
+            // Calculate clipping from both sides
+            if (availableLeftSpace < theoreticalLeftSpace) {
+                clipLeft = theoreticalLeftSpace - availableLeftSpace;
+            }
+            if (availableRightSpace < theoreticalRightSpace) {
+                clipRight = theoreticalRightSpace - availableRightSpace;
+            }
         }
         
         // Always allow overflow (the text stays in place, adjacent cells cover it)
@@ -2414,9 +2434,9 @@ class SpreadsheetApp {
         cell.textContent = '';
         cell.appendChild(textWrapper);
         
-        // Apply clip-path if needed (for center alignment with blocked right space)
-        if (cell.dataset.clipRight && cell.dataset.clipRight !== '0') {
-            textWrapper.style.clipPath = `inset(0 ${cell.dataset.clipRight}px 0 0)`;
+        // Apply clip-path if needed (for clipping from either or both sides)
+        if (clipLeft > 0 || clipRight > 0) {
+            textWrapper.style.clipPath = `inset(0 ${clipRight}px 0 ${clipLeft}px)`;
         }
     }
 
