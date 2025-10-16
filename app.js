@@ -2331,32 +2331,39 @@ class SpreadsheetApp {
             // Position wrapper so its RIGHT edge aligns with the cell's right edge
             wrapperLeft = -totalLeftSpace;
         }
-        // For center-aligned: text is centered in cell, extends both ways
         else if (textAlign === 'center') {
             const extraSpaceNeeded = textWidth - (cellWidth - padding);
             const halfSpace = extraSpaceNeeded / 2;
             
-            // Use total theoretical space (like the old code), not available space
-            // This keeps the text position stable even when adjacent cells have content
-            let leftSpace = 0;
-            let rightSpace = 0;
-            
-            // Calculate space to the left (stop when we have enough for half the overflow)
+            // Calculate THEORETICAL space on both sides (for stable centering)
+            let theoreticalLeftSpace = 0;
             for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
-                const colWidth = this.getColumnWidth(c);
-                leftSpace += colWidth;
-                if (leftSpace >= halfSpace) break;
+                theoreticalLeftSpace += this.getColumnWidth(c);
+                if (theoreticalLeftSpace >= halfSpace) break;
             }
             
-            // Calculate space to the right (stop when we have enough for half the overflow)
+            let theoreticalRightSpace = 0;
             for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
-                const colWidth = this.getColumnWidth(c);
-                rightSpace += colWidth;
-                if (rightSpace >= halfSpace) break;
+                theoreticalRightSpace += this.getColumnWidth(c);
+                if (theoreticalRightSpace >= halfSpace) break;
             }
             
-            wrapperWidth = cellWidth + leftSpace + rightSpace;
-            wrapperLeft = -leftSpace;
+            // Calculate available right space for clipping
+            let availableRightSpace = 0;
+            for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
+                if (cellHasContent(row, c)) {
+                    break;
+                }
+                availableRightSpace += this.getColumnWidth(c);
+                if (availableRightSpace >= theoreticalRightSpace) break;
+            }
+            
+            // Always use theoretical width for stable positioning
+            wrapperWidth = cellWidth + theoreticalLeftSpace + theoreticalRightSpace;
+            wrapperLeft = -theoreticalLeftSpace;
+            
+            // Store clip info for later use
+            cell.dataset.clipRight = availableRightSpace < theoreticalRightSpace ? (wrapperWidth - (cellWidth + theoreticalLeftSpace + availableRightSpace)) : '0';
         }
         
         // Always allow overflow (the text stays in place, adjacent cells cover it)
@@ -2406,6 +2413,11 @@ class SpreadsheetApp {
         textWrapper.appendChild(textSpan);
         cell.textContent = '';
         cell.appendChild(textWrapper);
+        
+        // Apply clip-path if needed (for center alignment with blocked right space)
+        if (cell.dataset.clipRight && cell.dataset.clipRight !== '0') {
+            textWrapper.style.clipPath = `inset(0 ${cell.dataset.clipRight}px 0 0)`;
+        }
     }
 
     measureTextWidth(text, cell) {
