@@ -2570,23 +2570,69 @@ class SpreadsheetApp {
         this.updateBackgroundColorButton();
     }
 
-    _showPalette(paletteElement, buttonId) {
-        if (this.selectedCells.size === 0) return;
+    _managePalette(action, type) {
+        const config = {
+            color: { element: this.colorPalette, button: 'colorBtn' },
+            fontColor: { element: this.fontColorPalette, button: 'fontColorBtn' },
+            border: { element: this.borderMenu, button: 'borderBtn' }
+        };
         
-        const rect = document.getElementById(buttonId).getBoundingClientRect();
-        paletteElement.classList.remove('hidden');
-        paletteElement.style.left = rect.left + 'px';
-        paletteElement.style.top = (rect.bottom + 5) + 'px';
+        const { element, button } = config[type];
+        
+        if (action === 'show') {
+            if (this.selectedCells.size === 0) return;
+            const rect = document.getElementById(button).getBoundingClientRect();
+            element.classList.remove('hidden');
+            element.style.left = rect.left + 'px';
+            element.style.top = (rect.bottom + 5) + 'px';
+            
+            // Refresh colors in use for border menu
+            if (type === 'border') {
+                const colors = this.getBorderColorsInUse();
+                const container = document.getElementById('borderColorsInUse');
+                const grid = document.getElementById('borderColorsInUseGrid');
+                
+                if (colors.length > 0) {
+                    container.style.display = 'block';
+                    grid.innerHTML = '';
+                    colors.forEach(color => {
+                        const swatch = document.createElement('div');
+                        Object.assign(swatch.style, {
+                            width: '20px', height: '20px', backgroundColor: color,
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 'var(--radius-sm)', cursor: 'pointer'
+                        });
+                        swatch.title = color;
+                        swatch.onclick = () => {
+                            document.getElementById('borderColorPicker').value = color;
+                            document.getElementById('borderColorHex').value = color;
+                            const preview = this.borderMenu.querySelector('.border-preview-cell');
+                            const style = document.getElementById('borderStyleSelect').value;
+                            const width = document.getElementById('borderWidthSelect').value + 'px';
+                            preview.style.border = `${width} ${style} ${color}`;
+                        };
+                        grid.appendChild(swatch);
+                    });
+                } else {
+                    container.style.display = 'none';
+                }
+            }
+        } else {
+            element.classList.add('hidden');
+        }
     }
+
+    // Replace all 8 methods with these 6 one-liners:
+    showColorPalette() { this._managePalette('show', 'color'); }
+    hideColorPalette() { this._managePalette('hide', 'color'); }
+    showFontColorPalette() { this._managePalette('show', 'fontColor'); }
+    hideFontColorPalette() { this._managePalette('hide', 'fontColor'); }
+    showBorderMenu() { this._managePalette('show', 'border'); }
+    hideBorderMenu() { this._managePalette('hide', 'border'); }
 
     _hidePalette(paletteElement) {
         paletteElement.classList.add('hidden');
     }
-
-    showColorPalette() { this._showPalette(this.colorPalette, 'colorBtn'); }
-    showFontColorPalette() { this._showPalette(this.fontColorPalette, 'fontColorBtn'); }
-    hideColorPalette() { this._hidePalette(this.colorPalette); }
-    hideFontColorPalette() { this._hidePalette(this.fontColorPalette); }
 
     setupColorPalette() {
         this._setupColorPaletteGeneric(
@@ -2948,55 +2994,6 @@ class SpreadsheetApp {
             (allSame && value) ? value :
             (allSame && !value) ? 'var(--color-text)' :
             'currentColor';
-    }
-    
-    showBorderMenu() {
-        if (this.selectedCells.size === 0) return;
-        
-        const rect = document.getElementById('borderBtn').getBoundingClientRect();
-        this.borderMenu.classList.remove('hidden');
-        this.borderMenu.style.left = rect.left + 'px';
-        this.borderMenu.style.top = (rect.bottom + 5) + 'px';
-        
-        // Refresh colors in use when opening
-        const updateColorsInUse = () => {
-            const colors = this.getBorderColorsInUse();
-            const container = document.getElementById('borderColorsInUse');
-            const grid = document.getElementById('borderColorsInUseGrid');
-            
-            if (colors.length > 0) {
-                container.style.display = 'block';
-                grid.innerHTML = '';
-                colors.forEach(color => {
-                    const swatch = document.createElement('div');
-                    swatch.style.width = '20px';
-                    swatch.style.height = '20px';
-                    swatch.style.backgroundColor = color;
-                    swatch.style.border = '1px solid var(--color-border)';
-                    swatch.style.borderRadius = 'var(--radius-sm)';
-                    swatch.style.cursor = 'pointer';
-                    swatch.title = color;
-                    swatch.addEventListener('click', () => {
-                        document.getElementById('borderColorPicker').value = color;
-                        document.getElementById('borderColorHex').value = color;
-                        // Update preview
-                        const borderPreviewCell = this.borderMenu.querySelector('.border-preview-cell');
-                        const style = document.getElementById('borderStyleSelect').value;
-                        const width = document.getElementById('borderWidthSelect').value + 'px';
-                        borderPreviewCell.style.border = `${width} ${style} ${color}`;
-                    });
-                    grid.appendChild(swatch);
-                });
-            } else {
-                container.style.display = 'none';
-            }
-        };
-        
-        updateColorsInUse();
-    }
-
-    hideBorderMenu() {
-        this.borderMenu.classList.add('hidden');
     }
 
     setupBorderMenu() {
