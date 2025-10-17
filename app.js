@@ -3197,126 +3197,95 @@ class SpreadsheetApp {
         
         this.saveState(`Apply ${action} border`);
         
-        // Get the bounding box of the selection
-        const coords = Array.from(this.selectedCellCoords).map(coord => 
-            this.getCoordPos(coord)
-        );
-        
+        // Get bounding box once
+        const coords = Array.from(this.selectedCellCoords).map(coord => this.getCoordPos(coord));
         const minRow = Math.min(...coords.map(c => c.row));
         const maxRow = Math.max(...coords.map(c => c.row));
         const minCol = Math.min(...coords.map(c => c.col));
         const maxCol = Math.max(...coords.map(c => c.col));
         
-        // Store FULL width in cellData (format painter and data model use full width)
-        // The halving will happen in updateCellDisplay when rendering
         const borderValue = action === 'clear' ? '' : `${width} ${style} ${color}`;
         
+        // Define border rules as a lookup object
+        // Each function returns array of sides to apply border to
+        const borderRules = {
+            all: () => ['top', 'right', 'bottom', 'left'],
+            
+            outer: (r, c) => [
+                r === minRow && 'top',
+                r === maxRow && 'bottom',
+                c === minCol && 'left',
+                c === maxCol && 'right'
+            ].filter(Boolean),
+            
+            inner: (r, c) => [
+                r > minRow && 'top',
+                r < maxRow && 'bottom',
+                c > minCol && 'left',
+                c < maxCol && 'right'
+            ].filter(Boolean),
+            
+            horizontal: (r) => [
+                r > minRow && 'top',
+                r < maxRow && 'bottom'
+            ].filter(Boolean),
+            
+            vertical: (r, c) => [
+                c > minCol && 'left',
+                c < maxCol && 'right'
+            ].filter(Boolean),
+            
+            left: (r, c) => c === minCol ? ['left'] : [],
+            right: (r, c) => c === maxCol ? ['right'] : [],
+            top: (r) => r === minRow ? ['top'] : [],
+            bottom: (r) => r === maxRow ? ['bottom'] : [],
+            clear: () => null // Special case handled separately
+        };
+        
+        // Apply borders to all selected cells
         this.selectedCellCoords.forEach(coordKey => {
             const { row, col } = this.getCoordPos(coordKey);
             const cellData = this.cellData.get(coordKey) || {};
             
-            if (!cellData.borders && action !== 'clear') {
-                cellData.borders = {};
-            }
-            
-            switch (action) {
-                case 'all':
-                    cellData.borders.top = borderValue;
-                    cellData.borders.right = borderValue;
-                    cellData.borders.bottom = borderValue;
-                    cellData.borders.left = borderValue;
-                    break;
-                    
-                case 'outer':
-                    if (row === minRow) cellData.borders.top = borderValue;
-                    if (row === maxRow) cellData.borders.bottom = borderValue;
-                    if (col === minCol) cellData.borders.left = borderValue;
-                    if (col === maxCol) cellData.borders.right = borderValue;
-                    break;
-                    
-                case 'inner':
-                    if (row > minRow) cellData.borders.top = borderValue;
-                    if (row < maxRow) cellData.borders.bottom = borderValue;
-                    if (col > minCol) cellData.borders.left = borderValue;
-                    if (col < maxCol) cellData.borders.right = borderValue;
-                    break;
-                    
-                case 'horizontal':
-                    if (row > minRow) cellData.borders.top = borderValue;
-                    if (row < maxRow) cellData.borders.bottom = borderValue;
-                    break;
-                    
-                case 'vertical':
-                    if (col > minCol) cellData.borders.left = borderValue;
-                    if (col < maxCol) cellData.borders.right = borderValue;
-                    break;
-                    
-                case 'left':
-                    if (col === minCol) {
-                        cellData.borders.left = borderValue;
-                    }
-                    break;
-                    
-                case 'right':
-                    if (col === maxCol) {
-                        cellData.borders.right = borderValue;
-                    }
-                    break;
-                    
-                case 'top':
-                    if (row === minRow) {
-                        cellData.borders.top = borderValue;
-                    }
-                    break;
-                    
-                case 'bottom':
-                    if (row === maxRow) {
-                        cellData.borders.bottom = borderValue;
-                    }
-                    break;
-                    
-                case 'clear':
-                    delete cellData.borders;
-                    break;
+            if (action === 'clear') {
+                delete cellData.borders;
+            } else {
+                if (!cellData.borders) cellData.borders = {};
+                const sides = borderRules[action](row, col);
+                sides.forEach(side => cellData.borders[side] = borderValue);
             }
             
             this.cellData.set(coordKey, cellData);
         });
         
-        // Update visible cells
-        this.selectedCells.forEach(cell => {
-            const cellKey = this.getCoord(cell);
-            const cellData = this.cellData.get(cellKey);
-            this.updateCellDisplay(cell, cellData);
-        });
-        
-        // Also update adjacent cells visually (without changing their data)
-        const adjacentCellsToUpdate = new Set();
-        
-        this.selectedCells.forEach(cell => {
-            const { row, col } = this.getCellPos(cell);
-            
-            // Check adjacent cells
-            const adjacent = [
-                this.getCellAt(row - 1, col), // above
-                this.getCellAt(row + 1, col), // below
-                this.getCellAt(row, col - 1), // left
-                this.getCellAt(row, col + 1)  // right
-            ];
-            
-            adjacent.forEach(adjCell => {
-                if (adjCell) adjacentCellsToUpdate.add(adjCell);
-            });
-        });
-        
-        // Refresh adjacent cells to update their visual borders
-        adjacentCellsToUpdate.forEach(cell => {
-            const cellKey = this.getCoord(cell);
-            const cellData = this.cellData.get(cellKey) || {};
-            this.updateCellDisplay(cell, cellData);
-        });
+        // Batch update all affected cells
+        this._updateCellsAndAdjacent(this.selectedCells);
         
         this.log(`Applied ${action} border to ${this.selectedCellCoords.size} cells`);
+    }
+
+    // Extract adjacent cell update logic (reusable)
+    _updateCellsAndAdjacent(cells) {
+        const adjacentCells = new Set();
+        
+        cells.forEach(cell => {
+            // Update the cell itself
+            this.updateCellDisplay(cell, this.cellData.get(this.getCoord(cell)));
+            
+            // Collect adjacent cells
+            const { row, col } = this.getCellPos(cell);
+            [
+                this.getCellAt(row - 1, col),
+                this.getCellAt(row + 1, col),
+                this.getCellAt(row, col - 1),
+                this.getCellAt(row, col + 1)
+            ].forEach(adjCell => adjCell && adjacentCells.add(adjCell));
+        });
+        
+        // Update adjacent cells
+        adjacentCells.forEach(cell => {
+            this.updateCellDisplay(cell, this.cellData.get(this.getCoord(cell)) || {});
+        });
     }
 
     handleFormulaKeyDown(event) {
