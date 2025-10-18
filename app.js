@@ -3163,74 +3163,40 @@ class SpreadsheetApp {
 
     applyBorder(action, style, width, color) {
         if (!this.selectedCellCoords.size) return;
-        
         this.saveState(`Apply ${action} border`);
         
-        // Get bounding box once
-        const coords = Array.from(this.selectedCellCoords).map(coord => this.getCoordPos(coord));
-        const minRow = Math.min(...coords.map(c => c.row));
-        const maxRow = Math.max(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-        const maxCol = Math.max(...coords.map(c => c.col));
+        const coords = Array.from(this.selectedCellCoords).map(c => this.getCoordPos(c));
+        const [minR, maxR, minC, maxC] = [
+            Math.min(...coords.map(c => c.row)), Math.max(...coords.map(c => c.row)),
+            Math.min(...coords.map(c => c.col)), Math.max(...coords.map(c => c.col))
+        ];
         
-        const borderValue = action === 'clear' ? '' : `${width} ${style} ${color}`;
-        
-        // Define border rules as a lookup object
-        // Each function returns array of sides to apply border to
-        const borderRules = {
+        const borderVal = action === 'clear' ? '' : `${width} ${style} ${color}`;
+        const rules = {
             all: () => ['top', 'right', 'bottom', 'left'],
-            
-            outer: (r, c) => [
-                r === minRow && 'top',
-                r === maxRow && 'bottom',
-                c === minCol && 'left',
-                c === maxCol && 'right'
-            ].filter(Boolean),
-            
-            inner: (r, c) => [
-                r > minRow && 'top',
-                r < maxRow && 'bottom',
-                c > minCol && 'left',
-                c < maxCol && 'right'
-            ].filter(Boolean),
-            
-            horizontal: (r) => [
-                r > minRow && 'top',
-                r < maxRow && 'bottom'
-            ].filter(Boolean),
-            
-            vertical: (r, c) => [
-                c > minCol && 'left',
-                c < maxCol && 'right'
-            ].filter(Boolean),
-            
-            left: (r, c) => c === minCol ? ['left'] : [],
-            right: (r, c) => c === maxCol ? ['right'] : [],
-            top: (r) => r === minRow ? ['top'] : [],
-            bottom: (r) => r === maxRow ? ['bottom'] : [],
-            clear: () => null // Special case handled separately
+            outer: (r, c) => [[r === minR, 'top'], [r === maxR, 'bottom'], [c === minC, 'left'], [c === maxC, 'right']].filter(x => x[0]).map(x => x[1]),
+            inner: (r, c) => [[r > minR, 'top'], [r < maxR, 'bottom'], [c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
+            horizontal: r => [[r > minR, 'top'], [r < maxR, 'bottom']].filter(x => x[0]).map(x => x[1]),
+            vertical: (r, c) => [[c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
+            left: (r, c) => c === minC ? ['left'] : [],
+            right: (r, c) => c === maxC ? ['right'] : [],
+            top: r => r === minR ? ['top'] : [],
+            bottom: r => r === maxR ? ['bottom'] : [],
+            clear: () => null
         };
         
-        // Apply borders to all selected cells
-        this.selectedCellCoords.forEach(coordKey => {
-            const { row, col } = this.getCoordPos(coordKey);
-            const cellData = this.cellData.get(coordKey) || {};
-            
-            if (action === 'clear') {
-                delete cellData.borders;
-            } else {
-                if (!cellData.borders) cellData.borders = {};
-                const sides = borderRules[action](row, col);
-                sides.forEach(side => cellData.borders[side] = borderValue);
+        this.selectedCellCoords.forEach(coord => {
+            const { row, col } = this.getCoordPos(coord);
+            const data = this.cellData.get(coord) || {};
+            if (action === 'clear') delete data.borders;
+            else {
+                if (!data.borders) data.borders = {};
+                rules[action](row, col)?.forEach(side => data.borders[side] = borderVal);
             }
-            
-            this.cellData.set(coordKey, cellData);
+            this.cellData.set(coord, data);
         });
         
-        // Batch update all affected cells
         this._updateCellsAndAdjacent(this.selectedCells);
-        
-        this.log(`Applied ${action} border to ${this.selectedCellCoords.size} cells`);
     }
 
     // Extract adjacent cell update logic (reusable)
