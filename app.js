@@ -323,6 +323,37 @@ const BORDER_MENU_HTML = `
     </div>
 `;
 
+const SAVE_OPTIONS_MODAL_HTML = `
+    <div id="saveOptionsModal" class="save-modal hidden" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle">
+        <div class="save-modal__backdrop" data-modal-dismiss></div>
+        <div class="save-modal__dialog">
+            <div class="save-modal__header">
+                <h2 id="saveModalTitle">Share your changes</h2>
+                <button class="save-modal__close" type="button" data-modal-dismiss aria-label="Close">×</button>
+            </div>
+            <div class="save-modal__body">
+                <p>Select how you would like to deliver the updated <code>index.html</code>:</p>
+                <div class="save-modal__actions">
+                    <button type="button" class="btn btn--primary" data-save-action="download">Download page</button>
+                    <button type="button" class="btn btn--primary" data-save-action="pull-request">PR via OAuth</button>
+                    <button type="button" class="btn btn--primary" data-save-action="issue">Issue</button>
+                </div>
+                <p class="save-modal__note">
+                    PR and Issue both require an account. PR is preferred but asks for <code>write:repository</code> and <code>read:user</code> permissions for this application.
+                    If you don’t trust the app, use Issue. If Codeberg ever supports anonymous issues I will add them for folks without an account.
+                    You can always download the HTML and send it to me manually if you prefer.
+                </p>
+                <div class="save-modal__oauth" id="saveModalOAuthInfo"></div>
+                <div class="save-modal__status" id="saveModalStatus" role="status" aria-live="polite"></div>
+            </div>
+        </div>
+    </div>
+`;
+
+const CODEBERG_API_BASE = 'https://codeberg.org/api/v1';
+const CODEBERG_OAUTH_AUTHORIZE = 'https://codeberg.org/login/oauth/authorize';
+const CODEBERG_OAUTH_TOKEN = 'https://codeberg.org/login/oauth/access_token';
+
 const escapeHTML = (str = '') => str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -405,8 +436,14 @@ class SpreadsheetApp {
         this.borderMenu = document.getElementById('borderMenu');
         this.codebergRepo = null;
         this.repoConfigPromise = null;
+        this.repoConfig = null;
+        this.oauthConfigPromise = null;
+        this.oauthConfig = null;
+        this.accessTokenInfo = null;
         this.loadInitialDataFromDOM();
         this.initialCellData = this.cloneCellData(this.cellData);
+        this.ensureSaveOptionsModal();
+        this.maybeHandleOAuthRedirect();
         
         this.clipboard = {
             data: null,
@@ -554,6 +591,581 @@ class SpreadsheetApp {
         }
 
         return { text: output.join('\n'), truncated };
+    }
+
+    gatherSaveArtifacts() {
+        const range = this.getUsedRange();
+        this.persistedRange = { maxRow: range.maxRow, maxCol: range.maxCol };
+        const tableMarkup = this.generateStaticTableHTML(range);
+        const fullHTML = this.buildFullHTMLDocument(tableMarkup);
+        const diff = this.generateDiffText();
+        return {
+            fullHTML,
+            diffText: diff.text,
+            diffTruncated: diff.truncated
+        };
+    }
+
+    ensureSaveOptionsModal() {
+        if (this.saveModal) return;
+        document.body.insertAdjacentHTML('beforeend', SAVE_OPTIONS_MODAL_HTML);
+        this.saveModal = document.getElementById('saveOptionsModal');
+        this.saveModalStatus = document.getElementById('saveModalStatus');
+        this.saveModalOAuth = document.getElementById('saveModalOAuthInfo');
+
+        this.saveModal?.addEventListener('click', (event) => {
+            const target = event.target;
+            if (!(target instanceof HTMLElement)) return;
+
+            if (target.hasAttribute('data-modal-dismiss')) {
+                this.hideSaveOptionsModal();
+                return;
+            }
+
+            if (target.dataset.saveAction) {
+                const action = target.dataset.saveAction;
+                switch (action) {
+                    case 'download':
+                        this.handleDownloadOption();
+                        break;
+                    case 'issue':
+                        this.handleIssueOption();
+                        break;
+                    case 'pull-request':
+                        this.handlePullRequestOption();
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
+    }
+
+    showSaveOptionsModal() {
+        this.ensureSaveOptionsModal();
+        this.updateSaveModalStatus('');
+        this.saveModal?.classList.remove('hidden');
+        this.refreshOAuthInfo();
+    }
+
+    hideSaveOptionsModal() {
+        if (!this.saveModal) return;
+        this.saveModal.classList.add('hidden');
+        this.updateSaveModalStatus('');
+    }
+
+    updateSaveModalStatus(message, isError = false) {
+        if (!this.saveModalStatus) return;
+        this.saveModalStatus.textContent = message || '';
+        this.saveModalStatus.classList.toggle('save-modal__status--error', Boolean(message && isError));
+    }
+
+    async refreshOAuthInfo() {
+        if (!this.saveModalOAuth) return;
+        if (this.oauthConfig) {
+            this.saveModalOAuth.innerHTML = this.renderOAuthSummary(this.oauthConfig);
+        } else {
+            this.saveModalOAuth.innerHTML = '<em>Checking OAuth configuration…</em>';
+        }
+
+        try {
+            const config = await this.loadOauthConfig();
+            if (config?.clientId) {
+                this.saveModalOAuth.innerHTML = this.renderOAuthSummary(config);
+            } else {
+                this.saveModalOAuth.innerHTML = 'No OAuth credentials found. Add <code>oauth.clientId</code> to <code>codeberg-repo.json</code> (and optional <code>clientSecret</code> for confidential clients) to enable PR creation.';
+            }
+        } catch (error) {
+            console.error('Unable to load OAuth config', error);
+            this.saveModalOAuth.innerHTML = `Failed to read OAuth configuration: ${escapeHTML(error.message || 'Unknown error')}`;
+        }
+    }
+
+    renderOAuthSummary(config) {
+        const redirect = config.redirectUri || `${window.location.origin}${window.location.pathname}`;
+        const clientType = config.clientSecret ? 'Confidential client' : 'Public client';
+        return [
+            `<strong>OAuth client</strong>: ${escapeHTML(config.clientId)}`,
+            `<strong>Redirect URI</strong>: ${escapeHTML(redirect)}`,
+            `<strong>Client type</strong>: ${clientType}`
+        ].join('<br>');
+    }
+
+    handleDownloadOption() {
+        try {
+            this.updateSaveModalStatus('Preparing download…');
+            const artifacts = this.gatherSaveArtifacts();
+            this.downloadHTML(artifacts.fullHTML);
+            this.initialCellData = this.cloneCellData(this.cellData);
+            this.updateSaveModalStatus('Downloaded index.html.');
+        } catch (error) {
+            console.error('Download failed', error);
+            this.updateSaveModalStatus('Download failed. See console for details.', true);
+            return;
+        }
+
+        setTimeout(() => this.hideSaveOptionsModal(), 800);
+    }
+
+    async handleIssueOption() {
+        const artifacts = this.gatherSaveArtifacts();
+        try {
+            this.updateSaveModalStatus('Preparing issue summary…');
+            await this.submitIssueRequest(artifacts);
+            this.initialCellData = this.cloneCellData(this.cellData);
+            this.updateSaveModalStatus('Issue draft opened in a new tab.');
+            setTimeout(() => this.hideSaveOptionsModal(), 800);
+        } catch (error) {
+            console.error('Unable to open issue', error);
+            this.updateSaveModalStatus(error.message || 'Unable to open issue.', true);
+            try {
+                this.downloadHTML(artifacts.fullHTML);
+                this.initialCellData = this.cloneCellData(this.cellData);
+            } catch (downloadError) {
+                console.error('Fallback download failed', downloadError);
+            }
+        }
+    }
+
+    async submitIssueRequest(artifacts) {
+        const { fullHTML, diffText, diffTruncated } = artifacts;
+        const repo = await this.resolveCodebergRepo();
+        if (!repo) {
+            throw new Error('Repository could not be detected.');
+        }
+
+        const issueUrl = this.buildCodebergIssueUrl(repo, diffText, diffTruncated);
+        if (typeof window !== 'undefined' && window.open) {
+            window.open(issueUrl, '_blank', 'noopener');
+        }
+
+        this.downloadHTML(fullHTML);
+    }
+
+    async handlePullRequestOption(resumeFromOAuth = false) {
+        try {
+            if (!resumeFromOAuth) {
+                this.updateSaveModalStatus('Gathering changes for pull request…');
+                if (sessionStorage.getItem('codeberg_oauth_in_progress') === 'true') {
+                    this.updateSaveModalStatus('Authorization already in progress. Complete the Codeberg consent flow in the other tab.', true);
+                    return;
+                }
+            }
+
+            const artifacts = this.gatherSaveArtifacts();
+            const repo = await this.resolveCodebergRepo();
+            if (!repo) {
+                this.updateSaveModalStatus('Repository could not be detected. Downloading HTML instead.', true);
+                this.downloadHTML(artifacts.fullHTML);
+                this.initialCellData = this.cloneCellData(this.cellData);
+                return;
+            }
+
+            const token = await this.ensureAccessToken('create-pr');
+            if (!token) {
+                if (sessionStorage.getItem('codeberg_oauth_in_progress') === 'true') {
+                    this.updateSaveModalStatus('Waiting for Codeberg authorization…');
+                } else {
+                    this.updateSaveModalStatus('Redirecting to Codeberg for authorization…');
+                }
+                return;
+            }
+
+            this.updateSaveModalStatus('Submitting pull request…');
+            const prUrl = await this.submitPullRequest(repo, artifacts, token);
+            this.initialCellData = this.cloneCellData(this.cellData);
+            this.updateSaveModalStatus('Pull request created successfully.');
+            this.downloadHTML(artifacts.fullHTML);
+            if (prUrl && typeof window !== 'undefined') {
+                window.open(prUrl, '_blank', 'noopener');
+            }
+            setTimeout(() => this.hideSaveOptionsModal(), 1200);
+        } catch (error) {
+            console.error('Unable to create pull request', error);
+            this.updateSaveModalStatus(error.message || 'Pull request failed.', true);
+            if ((error?.message || '').includes('required scope')) {
+                this.clearStoredAccessToken();
+                this.clearOAuthSession();
+                this.updateSaveModalStatus('Token missing required permissions. Please authorize again.', true);
+            }
+            if ((error?.message || '').includes('authorize again')) {
+                this.clearStoredAccessToken();
+                this.clearOAuthSession();
+                this.updateSaveModalStatus('Authentication failed. Please authorize again.', true);
+            }
+        }
+    }
+
+    maybeHandleOAuthRedirect() {
+        if (typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('code');
+        const state = params.get('state');
+
+        if (!code || !state) {
+            return;
+        }
+
+        params.delete('code');
+        params.delete('state');
+        const newQuery = params.toString();
+        const newUrl = `${window.location.pathname}${newQuery ? `?${newQuery}` : ''}${window.location.hash}`;
+        window.history.replaceState({}, document.title, newUrl);
+
+        const expectedState = sessionStorage.getItem('codeberg_oauth_state');
+        const action = sessionStorage.getItem('codeberg_oauth_action');
+        const verifier = sessionStorage.getItem('codeberg_oauth_verifier');
+
+        const actionFromState = state.split(':')[1] || action;
+        if (!sessionStorage.getItem('codeberg_oauth_action')) {
+            sessionStorage.setItem('codeberg_oauth_action', actionFromState);
+        }
+
+        if (!expectedState || expectedState !== state || !verifier) {
+            console.warn('OAuth state mismatch or verifier missing.');
+            this.clearOAuthSession();
+            return;
+        }
+
+        this.completeOAuthExchange(code, verifier, actionFromState).catch(error => {
+            console.error('OAuth exchange failed', error);
+            this.updateSaveModalStatus('Authorization failed. Please try again.', true);
+            this.clearOAuthSession();
+        });
+    }
+
+    clearOAuthSession() {
+        sessionStorage.removeItem('codeberg_oauth_state');
+        sessionStorage.removeItem('codeberg_oauth_verifier');
+        sessionStorage.removeItem('codeberg_oauth_action');
+        sessionStorage.removeItem('codeberg_oauth_in_progress');
+    }
+
+    async completeOAuthExchange(code, verifier, action) {
+        const config = await this.loadOauthConfig();
+        if (!config) {
+            throw new Error('OAuth configuration is missing.');
+        }
+
+        const bodyParams = new URLSearchParams({
+            client_id: config.clientId,
+            code,
+            grant_type: 'authorization_code',
+            code_verifier: verifier,
+            redirect_uri: config.redirectUri || `${window.location.origin}${window.location.pathname}`
+        });
+        if (config.clientSecret) {
+            bodyParams.set('client_secret', config.clientSecret);
+        }
+
+        const response = await fetch(CODEBERG_OAUTH_TOKEN, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: bodyParams.toString()
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`OAuth token exchange failed (${response.status}): ${errorText}`);
+        }
+
+        const data = await response.json();
+        if (!data.access_token) {
+            throw new Error('OAuth token response missing access_token.');
+        }
+
+        const expiresIn = data.expires_in ? Number(data.expires_in) * 1000 : 3600 * 1000;
+        const tokenInfo = {
+            token: data.access_token,
+            tokenType: data.token_type || 'Bearer',
+            expiresAt: Date.now() + expiresIn - 60000,
+            refreshToken: data.refresh_token || null
+        };
+        this.storeAccessToken(tokenInfo);
+        this.clearOAuthSession();
+
+        if (action === 'create-pr') {
+            // Continue PR automatically after token acquisition
+            setTimeout(() => {
+                this.ensureSaveOptionsModal();
+                this.showSaveOptionsModal();
+                this.updateSaveModalStatus('Authorization complete. Creating pull request…');
+                this.handlePullRequestOption(true);
+            }, 0);
+        }
+    }
+
+    async ensureAccessToken(action) {
+        const existing = this.getStoredAccessToken();
+        if (existing) {
+            return existing.token;
+        }
+
+        const inProgress = sessionStorage.getItem('codeberg_oauth_in_progress');
+        if (inProgress === 'true') {
+            return null;
+        }
+
+        const config = await this.loadOauthConfig();
+        if (!config) {
+            throw new Error('OAuth configuration is missing. Provide oauth.clientId (and optionally clientSecret) in codeberg-repo.json or codeberg-oauth.json.');
+        }
+
+        try {
+            await this.beginOAuthFlow(config, action);
+        } catch (error) {
+            this.clearOAuthSession();
+            throw error;
+        }
+        return null;
+    }
+
+    async beginOAuthFlow(config, action) {
+        if (typeof window === 'undefined') return;
+
+        const verifier = this.generateCodeVerifier();
+        const challenge = await this.computeCodeChallenge(verifier);
+        const state = `${this.generateRandomState()}:${action}`;
+        const redirectUri = config.redirectUri || `${window.location.origin}${window.location.pathname}`;
+
+        sessionStorage.setItem('codeberg_oauth_verifier', verifier);
+        sessionStorage.setItem('codeberg_oauth_state', state);
+        sessionStorage.setItem('codeberg_oauth_action', action);
+        sessionStorage.setItem('codeberg_oauth_in_progress', 'true');
+
+        const authorizeUrl = new URL(CODEBERG_OAUTH_AUTHORIZE);
+        authorizeUrl.searchParams.set('client_id', config.clientId);
+        authorizeUrl.searchParams.set('redirect_uri', redirectUri);
+        authorizeUrl.searchParams.set('response_type', 'code');
+        authorizeUrl.searchParams.set('scope', 'write:repository read:user');
+        authorizeUrl.searchParams.set('state', state);
+        authorizeUrl.searchParams.set('code_challenge', challenge);
+        authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+        window.location.href = authorizeUrl.toString();
+    }
+
+    generateCodeVerifier(length = 64) {
+        const array = new Uint8Array(length);
+        if (window.crypto?.getRandomValues) {
+            window.crypto.getRandomValues(array);
+        } else {
+            for (let i = 0; i < length; i++) {
+                array[i] = Math.floor(Math.random() * 256);
+            }
+        }
+        return this.base64UrlEncode(array);
+    }
+
+    generateRandomState(length = 16) {
+        const array = new Uint8Array(length);
+        if (window.crypto?.getRandomValues) {
+            window.crypto.getRandomValues(array);
+        } else {
+            for (let i = 0; i < length; i++) {
+                array[i] = Math.floor(Math.random() * 256);
+            }
+        }
+        return this.base64UrlEncode(array);
+    }
+
+    async computeCodeChallenge(verifier) {
+        if (!window.crypto?.subtle) {
+            throw new Error('Web Crypto API is required for OAuth PKCE, but is not available in this environment.');
+        }
+        const encoder = new TextEncoder();
+        const data = encoder.encode(verifier);
+        const digest = await window.crypto.subtle.digest('SHA-256', data);
+        return this.base64UrlEncode(new Uint8Array(digest));
+    }
+
+    base64UrlEncode(input) {
+        let output = '';
+        if (input instanceof Uint8Array) {
+            output = btoa(String.fromCharCode(...input));
+        } else {
+            output = btoa(unescape(encodeURIComponent(input)));
+        }
+        return output.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+
+    encodeContentToBase64(content) {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(content);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            const chunk = bytes.subarray(i, i + chunkSize);
+            binary += String.fromCharCode(...chunk);
+        }
+        return btoa(binary);
+    }
+
+    async callCodebergApi(path, token, options = {}) {
+        const url = `${CODEBERG_API_BASE}${path}`;
+        const headers = Object.assign({
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${token}`
+        }, options.headers || {});
+
+        const response = await fetch(url, {
+            ...options,
+            headers
+        });
+
+        if (!response.ok) {
+            let details = '';
+            try {
+                const data = await response.json();
+                details = data?.message || JSON.stringify(data);
+            } catch {
+                details = await response.text();
+            }
+            throw new Error(`API ${response.status} ${response.statusText}: ${details}`);
+        }
+
+        if (response.status === 204) return null;
+
+        const text = await response.text();
+        if (!text) return null;
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    buildPullRequestBody(diffText, diffTruncated) {
+        const parts = [
+            'This pull request updates `index.html` generated from Spreadsheet Pro.',
+            '',
+            '### Summary of changes'
+        ];
+
+        if (diffText) {
+            parts.push('```diff', diffText, '```');
+        } else {
+            parts.push('_No cell-level differences detected._');
+        }
+
+        if (diffTruncated) {
+            parts.push('', '> ⚠️ Change summary truncated for brevity.');
+        }
+
+        parts.push(
+            '',
+            'The updated HTML file is attached to this PR by the submitter. Please replace the existing `index.html` with the provided content.'
+        );
+
+        return parts.join('\n');
+    }
+
+    async submitPullRequest(repo, artifacts, token) {
+        let repoInfo;
+        try {
+            repoInfo = await this.callCodebergApi(`/repos/${repo.owner}/${repo.repo}`, token);
+        } catch (error) {
+            if (`${error.message}`.includes('401')) {
+                this.clearStoredAccessToken();
+                this.clearOAuthSession();
+                throw new Error('Authentication failed. Please authorize again.');
+            }
+            throw error;
+        }
+        const defaultBranch = repoInfo.default_branch || 'main';
+        const permissions = repoInfo.permissions || {};
+        let user;
+        try {
+            user = await this.callCodebergApi('/user', token);
+        } catch (error) {
+            if (`${error.message}`.includes('401')) {
+                this.clearStoredAccessToken();
+                this.clearOAuthSession();
+                throw new Error('Authentication failed. Please authorize again.');
+            }
+            throw error;
+        }
+        const login = user.login;
+
+        let targetOwner = repo.owner;
+        let targetRepo = repo.repo;
+
+        if (!permissions.push) {
+            await this.callCodebergApi(`/repos/${repo.owner}/${repo.repo}/forks`, token, { method: 'POST' });
+            targetOwner = login;
+            targetRepo = repo.repo;
+
+            // Wait for fork to be ready
+            let attempts = 0;
+            const maxAttempts = 10;
+            while (attempts < maxAttempts) {
+                try {
+                    await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}`, token);
+                    break;
+                } catch (error) {
+                    attempts++;
+                    if (attempts >= maxAttempts) {
+                        throw new Error('Fork repository is not available yet. Please try again in a moment.');
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 1500));
+                }
+            }
+        }
+
+        const branchName = `update-index-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}`;
+
+        try {
+            await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/branches`, token, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    new_branch_name: branchName,
+                    old_branch_name: defaultBranch
+                })
+            });
+        } catch (error) {
+            if (!`${error.message}`.includes('already exists')) {
+                throw error;
+            }
+        }
+
+        let fileInfo;
+        try {
+            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(branchName)}`, token);
+        } catch (error) {
+            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(defaultBranch)}`, token);
+        }
+        const encodedContent = this.encodeContentToBase64(artifacts.fullHTML);
+
+        await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html`, token, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                content: encodedContent,
+                message: `Update index.html (${new Date().toISOString()})`,
+                branch: branchName,
+                sha: fileInfo.sha
+            })
+        });
+
+        const prTitle = `Update index.html (${new Date().toISOString().split('T')[0]})`;
+        const prBody = this.buildPullRequestBody(artifacts.diffText, artifacts.diffTruncated);
+
+        const pr = await this.callCodebergApi(`/repos/${repo.owner}/${repo.repo}/pulls`, token, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                title: prTitle,
+                body: prBody,
+                head: `${targetOwner}:${branchName}`,
+                base: defaultBranch
+            })
+        });
+
+        return pr?.html_url || pr?.url || '';
     }
 
     compareCellData(before = {}, after = {}) {
@@ -1049,7 +1661,7 @@ class SpreadsheetApp {
 
     setupEventListeners() {
         const events = [
-            ['#saveBtn', 'click', e => this.handleSaveClick(e)],
+            ['#saveBtn', 'click', () => this.showSaveOptionsModal()],
             ['#undoBtn', 'click', () => this.undo()],
             ['#redoBtn', 'click', () => this.redo()],
             [this.mainGrid, 'mousedown', e => this.handleMouseDown(e)],
@@ -4095,36 +4707,6 @@ class SpreadsheetApp {
         return values;
     }
 
-    async handleSaveClick(event) {
-        const range = this.getUsedRange();
-        this.persistedRange = { maxRow: range.maxRow, maxCol: range.maxCol };
-        const tableMarkup = this.generateStaticTableHTML(range);
-        const fullHTML = this.buildFullHTMLDocument(tableMarkup);
-        const { text: diffText, truncated: diffTruncated } = this.generateDiffText();
-
-        try {
-            const repo = await this.resolveCodebergRepo();
-            if (!repo) {
-                this.log('No Codeberg repository resolved; downloading HTML instead.');
-                this.downloadHTML(fullHTML);
-                return;
-            }
-
-            const issueUrl = this.buildCodebergIssueUrl(repo, diffText, diffTruncated);
-            if (typeof window !== 'undefined' && window.open) {
-                window.open(issueUrl, '_blank', 'noopener');
-            }
-            alert('Opening Codeberg issue composer in a new tab.\nPlease submit the request to update index.html.');
-            this.log(`Prefilled Codeberg issue opened: ${issueUrl}`);
-            this.downloadHTML(fullHTML);
-            this.initialCellData = this.cloneCellData(this.cellData);
-        } catch (error) {
-            console.error('Failed to open Codeberg issue URL', error);
-            alert('Could not open the Codeberg issue page. Downloading the HTML locally instead.');
-            this.downloadHTML(fullHTML);
-        }
-    }
-
     downloadHTML(fullHTML) {
         const blob = new Blob([fullHTML], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
@@ -4213,16 +4795,110 @@ class SpreadsheetApp {
             .then(response => response.ok ? response.json() : null)
             .then(data => {
                 if (data?.owner && data?.repo) {
-                    return {
+                    const normalized = {
                         owner: String(data.owner).trim(),
                         repo: String(data.repo).trim()
                     };
+
+                    if (data.oauth && data.oauth.clientId) {
+                        normalized.oauth = {
+                            clientId: String(data.oauth.clientId).trim(),
+                            redirectUri: data.oauth.redirectUri ? String(data.oauth.redirectUri).trim() : undefined,
+                            clientSecret: data.oauth.clientSecret ? String(data.oauth.clientSecret).trim() : undefined
+                        };
+                    }
+
+                    this.repoConfig = normalized;
+                    return normalized;
                 }
                 return null;
             })
             .catch(() => null);
 
         return this.repoConfigPromise;
+    }
+
+    async loadOauthConfig() {
+        if (this.oauthConfigPromise) return this.oauthConfigPromise;
+
+        if (typeof fetch !== 'function') {
+            this.oauthConfigPromise = Promise.resolve(null);
+            return this.oauthConfigPromise;
+        }
+
+        this.oauthConfigPromise = (async () => {
+            let config = null;
+            const repoConfig = await this.loadRepoConfig();
+            if (repoConfig?.oauth?.clientId) {
+                config = {
+                    clientId: repoConfig.oauth.clientId,
+                    redirectUri: repoConfig.oauth.redirectUri || `${window.location.origin}${window.location.pathname}`
+                };
+                if (repoConfig.oauth.clientSecret) {
+                    config.clientSecret = repoConfig.oauth.clientSecret;
+                }
+            } else {
+                try {
+                    const response = await fetch('codeberg-oauth.json', { cache: 'no-store' });
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data?.clientId) {
+                            config = {
+                                clientId: String(data.clientId).trim(),
+                                redirectUri: data.redirectUri ? String(data.redirectUri).trim() : `${window.location.origin}${window.location.pathname}`
+                            };
+                            if (data.clientSecret) {
+                                config.clientSecret = String(data.clientSecret).trim();
+                            }
+                        }
+                    }
+                } catch (error) {
+                    config = null;
+                }
+            }
+
+            this.oauthConfig = config;
+            return config;
+        })();
+
+        return this.oauthConfigPromise;
+    }
+
+    getStoredAccessToken() {
+        if (this.accessTokenInfo && this.accessTokenInfo.expiresAt > Date.now() + 30000) {
+            return this.accessTokenInfo;
+        }
+
+        try {
+            const raw = localStorage.getItem('codeberg-oauth-token');
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (parsed.expiresAt && parsed.expiresAt > Date.now() + 30000) {
+                this.accessTokenInfo = parsed;
+                return parsed;
+            }
+        } catch (error) {
+            console.warn('Failed to parse stored OAuth token', error);
+        }
+        return null;
+    }
+
+    storeAccessToken(info) {
+        this.accessTokenInfo = info;
+        try {
+            localStorage.setItem('codeberg-oauth-token', JSON.stringify(info));
+        } catch (error) {
+            console.warn('Failed to persist OAuth token', error);
+        }
+    }
+
+    clearStoredAccessToken() {
+        this.accessTokenInfo = null;
+        try {
+            localStorage.removeItem('codeberg-oauth-token');
+        } catch (error) {
+            console.warn('Failed to clear OAuth token', error);
+        }
     }
 
     buildCodebergIssueUrl(repo, diffText, diffTruncated) {
