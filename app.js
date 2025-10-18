@@ -126,6 +126,33 @@ class SpreadsheetApp {
         return { row, col };
     }
 
+    hasSelection() {
+        return this.selectedCellCoords.size > 0;
+    }
+
+    getSelectionPositions() {
+        return Array.from(this.selectedCellCoords, coord => this.getCoordPos(coord));
+    }
+
+    getSelectionBounds() {
+        const coords = this.getSelectionPositions();
+        if (!coords.length) return null;
+        let minRow = Infinity, maxRow = -Infinity, minCol = Infinity, maxCol = -Infinity;
+        coords.forEach(({ row, col }) => {
+            if (row < minRow) minRow = row;
+            if (row > maxRow) maxRow = row;
+            if (col < minCol) minCol = col;
+            if (col > maxCol) maxCol = col;
+        });
+        return { coords, minRow, maxRow, minCol, maxCol };
+    }
+
+    clearSelectionVisuals() {
+        this.selectedCells.forEach(cell => cell.classList.remove('selected', 'primary-selected'));
+        this.selectedCells.clear();
+        this.selectedCellCoords.clear();
+    }
+
     // Undo/Redo Methods
     saveState(action) {
         this.undoStack.push({ action, cellData: new Map(this.cellData), timestamp: Date.now() });
@@ -456,15 +483,13 @@ class SpreadsheetApp {
     }
     
     activateFormatPainter() {
-        if (!this.primaryCell || this.selectedCellCoords.size === 0) {
+        if (!this.primaryCell || !this.hasSelection()) {
             this.log('No cell selected for format painter');
             return;
         }
         
         // Get all selected cell coordinates
-        const coords = Array.from(this.selectedCellCoords).map(coord => 
-            this.getCoordPos(coord)
-        );
+        const coords = this.getSelectionPositions();
         
         // Sort by row, then by column
         coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
@@ -581,22 +606,13 @@ class SpreadsheetApp {
             return;
         }
         
-        if (this.selectedCellCoords.size === 0) {
-            return;
-        }
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return;
         
         // Save state
         this.saveState(`Apply painted format to ${this.selectedCellCoords.size} cells`);
         
-        // Get the bounding box of the target selection
-        const coords = Array.from(this.selectedCellCoords).map(coord => 
-            this.getCoordPos(coord)
-        );
-        
-        const minRow = Math.min(...coords.map(c => c.row));
-        const maxRow = Math.max(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-        const maxCol = Math.max(...coords.map(c => c.col));
+        const { minRow, maxRow, minCol, maxCol } = bounds;
         
         // Apply format pattern to each cell in the target area
         for (let row = minRow; row <= maxRow; row++) {
@@ -670,7 +686,7 @@ class SpreadsheetApp {
     }
     
     applyFormatting(type, value) {
-        if (!this.selectedCellCoords.size) return;
+        if (!this.hasSelection()) return;
         
         const configs = {
             bold: [['bold']], italic: [['italic']], underline: [['underline']], strikethrough: [['strikethrough']],
@@ -856,7 +872,7 @@ class SpreadsheetApp {
         const input = document.getElementById('fontSizeInput');
         const size = parseInt(input.value);
         
-        if (!size || isNaN(size) || size < 1 || !this.selectedCellCoords.size) return;
+        if (!size || isNaN(size) || size < 1 || !this.hasSelection()) return;
         
         const clamped = Math.max(6, Math.min(200, size));
         input.value = clamped;
@@ -864,7 +880,7 @@ class SpreadsheetApp {
     }
 
     applyFontSize(fontSize) {
-        if (!this.selectedCellCoords.size) return;
+        if (!this.hasSelection()) return;
         
         this.saveState(`Apply font size ${fontSize}px`);
         
@@ -886,7 +902,7 @@ class SpreadsheetApp {
     updateFontSizeInput() {
         const fontSizeInput = document.getElementById('fontSizeInput');
         
-        if (this.selectedCellCoords.size === 0) {
+        if (!this.hasSelection()) {
             fontSizeInput.value = '';
             return;
         }
@@ -1209,20 +1225,9 @@ class SpreadsheetApp {
             return;
         }
         
-        if (this.selectedCellCoords.size === 0) {
-            return;
-        }
-        
-        // Get all selected cell coordinates
-        const coords = Array.from(this.selectedCellCoords).map(coord => 
-            this.getCoordPos(coord)
-        );
-        
-        // Get the bounding box of current selection
-        const minRow = Math.min(...coords.map(c => c.row));
-        const maxRow = Math.max(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-        const maxCol = Math.max(...coords.map(c => c.col));
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return;
+        const { minRow, maxRow, minCol, maxCol } = bounds;
         
         const currentWidth = maxCol - minCol + 1;
         const currentHeight = maxRow - minRow + 1;
@@ -1241,11 +1246,7 @@ class SpreadsheetApp {
             const newMaxRow = Math.min(this.config.maxRows - 1, minRow + extendedHeight - 1);
             
             // Clear and rebuild selection with extended range
-            this.selectedCells.forEach(cell => {
-                cell.classList.remove('selected', 'primary-selected');
-            });
-            this.selectedCells.clear();
-            this.selectedCellCoords.clear();
+            this.clearSelectionVisuals();
             
             // Add all cells in the extended range (contiguous rectangle)
             for (let row = minRow; row <= newMaxRow; row++) {
@@ -1367,11 +1368,7 @@ class SpreadsheetApp {
     }
     
     clearAllSelections() {
-        this.selectedCells.forEach(cell => {
-            cell.classList.remove('selected', 'primary-selected');
-        });
-        this.selectedCells.clear();
-        this.selectedCellCoords.clear();
+        this.clearSelectionVisuals();
         this.primaryCell = null;
         this.primaryCellCoord = null;
         this.updateUI();
@@ -1379,7 +1376,7 @@ class SpreadsheetApp {
     }
 
     updateCellReference() {
-        if (this.selectedCellCoords.size === 0) {
+        if (!this.hasSelection()) {
             this.cellReference.value = '';
             return;
         }
@@ -1391,16 +1388,11 @@ class SpreadsheetApp {
             return;
         }
         
-        const coords = Array.from(this.selectedCellCoords).map(coord => 
-            this.getCoordPos(coord)
-        );
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return;
+        const { coords, minRow, maxRow, minCol, maxCol } = bounds;
         
         coords.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col);
-        
-        const minRow = Math.min(...coords.map(c => c.row));
-        const maxRow = Math.max(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-        const maxCol = Math.max(...coords.map(c => c.col));
         
         const expectedSize = (maxRow - minRow + 1) * (maxCol - minCol + 1);
         
@@ -1921,19 +1913,15 @@ class SpreadsheetApp {
     }
     
     _getRelativeCoords() {
-        const coords = Array.from(this.selectedCellCoords).map(coord => 
-            this.getCoordPos(coord)
-        );
-        
-        const minRow = Math.min(...coords.map(c => c.row));
-        const minCol = Math.min(...coords.map(c => c.col));
-        
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return { coords: [], minRow: 0, minCol: 0 };
+        const { coords, minRow, minCol } = bounds;
         return { coords, minRow, minCol };
     }
     
     cutCells() { this.copyCells(true); }
     copyCells(isCut = false) {
-        if (!this.selectedCellCoords.size) return;
+        if (!this.hasSelection()) return;
 
         this.clipboard = {
             data: new Map(),
@@ -2904,7 +2892,7 @@ class SpreadsheetApp {
     }
 
     _applyColor(prop, styleProp, color, updateFn) {
-        if (!this.selectedCellCoords.size) return;
+        if (!this.hasSelection()) return;
         this.saveState(`Apply ${prop}`);
         
         this.selectedCellCoords.forEach(c => {
@@ -2927,7 +2915,7 @@ class SpreadsheetApp {
     }
     
     _getCommonCellProperty(property) {
-        if (this.selectedCellCoords.size === 0) return { hasValue: false, value: null, allSame: false };
+        if (!this.hasSelection()) return { hasValue: false, value: null, allSame: false };
         
         let commonValue = null;
         let allSame = true;
@@ -3162,14 +3150,12 @@ class SpreadsheetApp {
     }
 
     applyBorder(action, style, width, color) {
-        if (!this.selectedCellCoords.size) return;
+        if (!this.hasSelection()) return;
         this.saveState(`Apply ${action} border`);
         
-        const coords = Array.from(this.selectedCellCoords).map(c => this.getCoordPos(c));
-        const [minR, maxR, minC, maxC] = [
-            Math.min(...coords.map(c => c.row)), Math.max(...coords.map(c => c.row)),
-            Math.min(...coords.map(c => c.col)), Math.max(...coords.map(c => c.col))
-        ];
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return;
+        const { minRow: minR, maxRow: maxR, minCol: minC, maxCol: maxC } = bounds;
         
         const borderVal = action === 'clear' ? '' : `${width} ${style} ${color}`;
         const rules = {
