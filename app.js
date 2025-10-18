@@ -1,6 +1,9 @@
 const TOOLBAR_AND_FORMULA_HTML = `
         <div class="toolbar">
             <div class="toolbar-section">
+                <button class="btn btn--sm toolbar-btn" id="saveBtn" title="Save changes (opens GitHub issue). Hold Shift to configure GitHub.">
+                    <span>💾</span>
+                </button>
                 <button class="btn btn--sm toolbar-btn" id="undoBtn" title="Undo">
                     <span>↶</span>
                 </button>
@@ -78,6 +81,38 @@ const TOOLBAR_AND_FORMULA_HTML = `
             <div class="formula-bar-label">fx</div>
             <input type="text" id="formulaInput" class="form-control formula-input" placeholder="Enter formula or value...">
         </div>
+`;
+
+const HTML_PREFIX = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spreadsheet Pro</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="spreadsheet-container">
+        <div class="grid-container">
+            <div class="corner-cell"></div>
+            <div class="column-headers">
+                <div class="header-content" id="columnHeaderContent"></div>
+            </div>
+            <div class="row-headers">
+                <div class="header-content" id="rowHeaderContent"></div>
+            </div>
+            <div class="main-grid" id="mainGrid">
+                <div class="grid-content" id="gridContent">
+`;
+
+const HTML_SUFFIX = `
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
 `;
 
 const LINK_EDITOR_HTML = `
@@ -288,8 +323,20 @@ const BORDER_MENU_HTML = `
     </div>
 `;
 
+const escapeHTML = (str = '') => str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const escapeAttribute = (str = '') => escapeHTML(str).replace(/\r/g, '&#13;').replace(/\n/g, '&#10;');
+
+const escapeForCodeBlock = (str = '') => str.replace(/```/g, '\\`\\`\\`');
+
 class SpreadsheetApp {
     constructor() {
+        this.persistedRange = { maxRow: 19, maxCol: 9 };
         this.container = document.querySelector('.spreadsheet-container');
         if (!this.container) {
             throw new Error('Spreadsheet container not found');
@@ -358,6 +405,9 @@ class SpreadsheetApp {
         this.fontColorPalette = document.getElementById('fontColorPalette');
         this.linkEditor = document.getElementById('linkEditor');
         this.borderMenu = document.getElementById('borderMenu');
+        this.loadInitialDataFromDOM();
+        this.codebergRepo = null;
+        this.repoConfigPromise = null;
         
         this.clipboard = {
             data: null,
@@ -471,6 +521,72 @@ class SpreadsheetApp {
         if (!document.getElementById('borderMenu')) {
             document.body.insertAdjacentHTML('beforeend', BORDER_MENU_HTML);
         }
+    }
+
+    loadInitialDataFromDOM() {
+        if (!this.gridContent) return;
+        const fallbackTable = this.gridContent.querySelector('table[data-spreadsheet-export]');
+        if (!fallbackTable) return;
+
+        const bodyRows = fallbackTable.querySelectorAll('tbody tr');
+        let detectedMaxRow = -1;
+        let detectedMaxCol = -1;
+
+        bodyRows.forEach((tr, rowIndex) => {
+            const rowAttr = parseInt(tr.getAttribute('data-row'), 10);
+            const row = Number.isInteger(rowAttr) ? rowAttr : rowIndex;
+            detectedMaxRow = Math.max(detectedMaxRow, row);
+
+            const cells = tr.querySelectorAll('td');
+            cells.forEach((td, colIndex) => {
+                const colAttr = parseInt(td.getAttribute('data-col'), 10);
+                const col = Number.isInteger(colAttr) ? colAttr : colIndex;
+                detectedMaxCol = Math.max(detectedMaxCol, col);
+
+                const value = td.textContent ?? '';
+                const data = {};
+
+                const ds = td.dataset;
+                const raw = ds.raw;
+                if (raw) {
+                    data.value = raw;
+                } else if (value && value.length) {
+                    data.value = value;
+                }
+                if (ds.bg) data.backgroundColor = ds.bg;
+                if (ds.font) data.fontColor = ds.font;
+                if (ds.size && !Number.isNaN(parseInt(ds.size, 10))) data.fontSize = parseInt(ds.size, 10);
+                if (ds.bold === 'true') data.bold = true;
+                if (ds.italic === 'true') data.italic = true;
+                if (ds.underline === 'true') data.underline = true;
+                if (ds.strikethrough === 'true') data.strikethrough = true;
+                if (ds.align) data.textAlign = ds.align;
+                if (ds.valign) data.verticalAlign = ds.valign;
+                if (ds.link) data.linkUrl = ds.link;
+
+                const borderSides = ['top', 'right', 'bottom', 'left'];
+                borderSides.forEach(side => {
+                    const key = `border${side.charAt(0).toUpperCase()}${side.slice(1)}`;
+                    if (ds[key]) {
+                        if (!data.borders) data.borders = {};
+                        data.borders[side] = ds[key];
+                    }
+                });
+
+                if (Object.keys(data).length) {
+                    this.cellData.set(`${row},${col}`, data);
+                }
+            });
+        });
+
+        if (detectedMaxRow >= 0) {
+            this.persistedRange.maxRow = Math.max(this.persistedRange.maxRow, detectedMaxRow);
+        }
+        if (detectedMaxCol >= 0) {
+            this.persistedRange.maxCol = Math.max(this.persistedRange.maxCol, detectedMaxCol);
+        }
+
+        fallbackTable.remove();
     }
 
     // Undo/Redo Methods
@@ -741,6 +857,7 @@ class SpreadsheetApp {
 
     setupEventListeners() {
         const events = [
+            ['#saveBtn', 'click', e => this.handleSaveClick(e)],
             ['#undoBtn', 'click', () => this.undo()],
             ['#redoBtn', 'click', () => this.redo()],
             [this.mainGrid, 'mousedown', e => this.handleMouseDown(e)],
@@ -777,8 +894,6 @@ class SpreadsheetApp {
             ['.corner-cell', 'click', e => this.handleCornerCellClick(e)],
             ['#formatPainterBtn', 'click', () => this.activateFormatPainter()]
         ];
-        console.log('Save button:', document.getElementById('linkSaveBtn'));
-        console.log('Cancel button:', document.getElementById('linkCancelBtn'));
         
         events.forEach(([sel, evt, fn]) => {
             const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
@@ -2424,8 +2539,6 @@ class SpreadsheetApp {
             return;
         }
         
-        console.log('URL:', url, 'Text:', text);
-        
         const cellKey = this.getCoord(this.primaryCell);
         
         this.saveState(`Edit link in ${this.primaryCell.dataset.address}`);
@@ -3788,6 +3901,327 @@ class SpreadsheetApp {
         }
         
         return values;
+    }
+
+    async handleSaveClick(event) {
+        const range = this.getUsedRange();
+        this.persistedRange = { maxRow: range.maxRow, maxCol: range.maxCol };
+        const tableMarkup = this.generateStaticTableHTML(range);
+        const fullHTML = this.buildFullHTMLDocument(tableMarkup);
+
+        try {
+            const repo = await this.resolveCodebergRepo();
+            if (!repo) {
+                this.log('No Codeberg repository resolved; downloading HTML instead.');
+                this.downloadHTML(fullHTML);
+                return;
+            }
+
+            const issueUrl = this.buildCodebergIssueUrl(repo, fullHTML);
+            if (typeof window !== 'undefined' && window.open) {
+                window.open(issueUrl, '_blank', 'noopener');
+            }
+            alert('Opening Codeberg issue composer in a new tab.\nPlease submit the request to update index.html.');
+            this.log(`Prefilled Codeberg issue opened: ${issueUrl}`);
+        } catch (error) {
+            console.error('Failed to open Codeberg issue URL', error);
+            alert('Could not open the Codeberg issue page. Downloading the HTML locally instead.');
+            this.downloadHTML(fullHTML);
+        }
+    }
+
+    downloadHTML(fullHTML) {
+        const blob = new Blob([fullHTML], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'index.html';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        this.log('Downloaded index.html locally');
+    }
+
+    async resolveCodebergRepo() {
+        if (this.codebergRepo) return this.codebergRepo;
+
+        const detected = this.detectRepoFromHostname();
+        if (detected) {
+            this.codebergRepo = detected;
+            return detected;
+        }
+
+        const fromConfig = await this.loadRepoConfig();
+        if (fromConfig) {
+            this.codebergRepo = fromConfig;
+            return fromConfig;
+        }
+
+        return null;
+    }
+
+    detectRepoFromHostname() {
+        if (typeof window === 'undefined') return null;
+
+        const rawHost = window.location.hostname || '';
+        const host = rawHost.toLowerCase();
+        const pathSegments = window.location.pathname
+            .split('/')
+            .filter(Boolean)
+            .map(segment => decodeURIComponent(segment).trim())
+            .filter(Boolean);
+        const firstSegment = pathSegments[0];
+        const hasCustomRepo = firstSegment && !firstSegment.toLowerCase().startsWith('index.');
+
+        if (host.endsWith('.codeberg.page')) {
+            const subdomain = rawHost.split('.')[0];
+            if (!subdomain) return null;
+            return {
+                owner: subdomain,
+                repo: hasCustomRepo ? firstSegment : 'pages'
+            };
+        }
+
+        if (host.endsWith('.codeberg.org')) {
+            const parts = rawHost.split('.');
+            if (parts.length >= 3) {
+                const owner = parts[parts.length - 3];
+                if (owner) {
+                    return {
+                        owner,
+                        repo: hasCustomRepo ? firstSegment : 'pages'
+                    };
+                }
+            }
+        }
+
+        if (host === 'codeberg.org' && pathSegments.length >= 2) {
+            return {
+                owner: pathSegments[0],
+                repo: pathSegments[1]
+            };
+        }
+
+        return null;
+    }
+
+    async loadRepoConfig() {
+        if (this.repoConfigPromise) return this.repoConfigPromise;
+
+        if (typeof fetch !== 'function') {
+            this.repoConfigPromise = Promise.resolve(null);
+            return this.repoConfigPromise;
+        }
+
+        this.repoConfigPromise = fetch('codeberg-repo.json', { cache: 'no-store' })
+            .then(response => response.ok ? response.json() : null)
+            .then(data => {
+                if (data?.owner && data?.repo) {
+                    return {
+                        owner: String(data.owner).trim(),
+                        repo: String(data.repo).trim()
+                    };
+                }
+                return null;
+            })
+            .catch(() => null);
+
+        return this.repoConfigPromise;
+    }
+
+    buildCodebergIssueUrl(repo, fullHTML) {
+        const MAX_BODY = 6000;
+        const title = `Update index.html (${new Date().toISOString()})`;
+        const truncated = fullHTML.length > MAX_BODY ? fullHTML.slice(0, MAX_BODY) + '\n<!-- truncated -->' : fullHTML;
+        const notice = fullHTML.length > MAX_BODY ? `\n\n> ⚠️ HTML truncated to ${MAX_BODY} characters (original length ${fullHTML.length}).` : '';
+        const body = [
+            'A user requested updating `index.html` with the latest spreadsheet changes.',
+            notice,
+            '<details>',
+            '<summary>Proposed `index.html` content</summary>',
+            '',
+            '```html',
+            escapeForCodeBlock(truncated),
+            '```',
+            '',
+            '</details>',
+            '',
+            `Generated at ${new Date().toISOString()} via the Spreadsheet Pro web UI.`
+        ].filter(Boolean).join('\n');
+
+        const params = new URLSearchParams();
+        params.set('title', title);
+        params.set('body', body);
+
+        const owner = encodeURIComponent(repo.owner);
+        const repository = encodeURIComponent(repo.repo);
+        return `https://codeberg.org/${owner}/${repository}/issues/new?${params.toString()}`;
+    }
+
+    buildFullHTMLDocument(tableMarkup) {
+        return `${HTML_PREFIX}${tableMarkup}${HTML_SUFFIX}`;
+    }
+
+    getUsedRange() {
+        let maxRow = this.persistedRange?.maxRow ?? 0;
+        let maxCol = this.persistedRange?.maxCol ?? 0;
+        let minRow = 0;
+        let minCol = 0;
+
+        this.cellData.forEach((_, coord) => {
+            const { row, col } = this.getCoordPos(coord);
+            if (row > maxRow) maxRow = row;
+            if (col > maxCol) maxCol = col;
+        });
+
+        if (maxRow < minRow) maxRow = minRow;
+        if (maxCol < minCol) maxCol = minCol;
+
+        return { minRow, maxRow, minCol, maxCol };
+    }
+
+    generateStaticTableHTML(range) {
+        const { minRow, maxRow, minCol, maxCol } = range;
+        const rows = [];
+        rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback">');
+        rows.push('                        <thead>');
+        rows.push('                            <tr>');
+        rows.push('                                <th scope="col"></th>');
+        for (let col = minCol; col <= maxCol; col++) {
+            rows.push(`                                <th scope="col">${this.getColumnName(col)}</th>`);
+        }
+        rows.push('                            </tr>');
+        rows.push('                        </thead>');
+        rows.push('                        <tbody>');
+
+        for (let row = minRow; row <= maxRow; row++) {
+            rows.push(`                            <tr data-row="${row}">`);
+            rows.push(`                                <th scope="row">${row + 1}</th>`);
+            for (let col = minCol; col <= maxCol; col++) {
+                const coordKey = `${row},${col}`;
+                const cellData = this.cellData.get(coordKey) || {};
+                const datasets = [`data-col="${col}"`];
+                const styles = [];
+
+                const rawValue = cellData.value ?? '';
+                if (rawValue) {
+                    datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
+                }
+
+                if (cellData.linkUrl) {
+                    datasets.push(`data-link="${escapeAttribute(cellData.linkUrl)}"`);
+                }
+
+                if (cellData.borders) {
+                    ['top', 'right', 'bottom', 'left'].forEach(side => {
+                        if (cellData.borders[side]) {
+                            datasets.push(`data-border-${side}="${escapeAttribute(cellData.borders[side])}"`);
+                        }
+                    });
+                }
+
+                const displayText = this.getDisplayTextForCell(row, col, cellData);
+                if (cellData.backgroundColor) {
+                    datasets.push(`data-bg="${escapeAttribute(cellData.backgroundColor)}"`);
+                    styles.push(`background-color:${cellData.backgroundColor}`);
+                }
+                if (cellData.fontColor) {
+                    datasets.push(`data-font="${escapeAttribute(cellData.fontColor)}"`);
+                    styles.push(`color:${cellData.fontColor}`);
+                }
+                if (cellData.fontSize) {
+                    datasets.push(`data-size="${escapeAttribute(String(cellData.fontSize))}"`);
+                    styles.push(`font-size:${cellData.fontSize}px`);
+                }
+                const textDecorations = [];
+
+                if (cellData.bold) {
+                    datasets.push('data-bold="true"');
+                    styles.push('font-weight:bold');
+                }
+                if (cellData.italic) {
+                    datasets.push('data-italic="true"');
+                    styles.push('font-style:italic');
+                }
+                if (cellData.underline) {
+                    datasets.push('data-underline="true"');
+                    textDecorations.push('underline');
+                }
+                if (cellData.strikethrough) {
+                    datasets.push('data-strikethrough="true"');
+                    textDecorations.push('line-through');
+                }
+                if (cellData.textAlign) {
+                    datasets.push(`data-align="${escapeAttribute(cellData.textAlign)}"`);
+                    styles.push(`text-align:${cellData.textAlign}`);
+                }
+                if (cellData.verticalAlign) {
+                    datasets.push(`data-valign="${escapeAttribute(cellData.verticalAlign)}"`);
+                    styles.push(`vertical-align:${cellData.verticalAlign}`);
+                }
+                if (displayText.includes('\n')) {
+                    styles.push('white-space:pre-wrap');
+                }
+
+                if (textDecorations.length) {
+                    styles.push(`text-decoration:${textDecorations.join(' ')}`);
+                }
+
+                const borderStyles = this.collectBorderStylesForCell(row, col, cellData);
+                if (borderStyles.length) {
+                    styles.push(...borderStyles);
+                }
+
+                let cellContent = escapeHTML(displayText);
+                if (!cellContent && cellData.linkUrl) {
+                    cellContent = escapeHTML(cellData.linkUrl);
+                }
+                if (cellData.linkUrl) {
+                    const href = escapeAttribute(cellData.linkUrl);
+                    cellContent = `<a href="${href}">${cellContent}</a>`;
+                }
+
+                const styleAttr = styles.filter(Boolean).length ? ` style="${styles.join(';')}"` : '';
+                rows.push(`                                <td ${datasets.join(' ')}${styleAttr}>${cellContent}</td>`);
+            }
+            rows.push('                            </tr>');
+        }
+
+        rows.push('                        </tbody>');
+        rows.push('                    </table>');
+        return rows.join('\n');
+    }
+
+    collectBorderStylesForCell(row, col, cellData) {
+        const styles = [];
+        const borderSource = (direction) => {
+            if (cellData?.borders?.[direction]) return cellData.borders[direction];
+            if (direction === 'top') return this.cellData.get(`${row - 1},${col}`)?.borders?.bottom || '';
+            if (direction === 'bottom') return this.cellData.get(`${row + 1},${col}`)?.borders?.top || '';
+            if (direction === 'left') return this.cellData.get(`${row},${col - 1}`)?.borders?.right || '';
+            if (direction === 'right') return this.cellData.get(`${row},${col + 1}`)?.borders?.left || '';
+            return '';
+        };
+
+        ['top', 'right', 'bottom', 'left'].forEach(side => {
+            const border = borderSource(side);
+            if (border) styles.push(`border-${side}:${border}`);
+        });
+
+        return styles;
+    }
+
+    getDisplayTextForCell(row, col, cellData) {
+        if (!cellData || !cellData.value) return '';
+        if (cellData.value.startsWith("'")) {
+            return cellData.value.substring(1);
+        }
+        if (cellData.value.startsWith('=')) {
+            const result = this.parseFormula(cellData.value, row, col);
+            return result === undefined || result === null ? '' : String(result);
+        }
+        return cellData.value;
     }
 
     log(message, data = null) {
