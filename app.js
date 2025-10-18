@@ -2876,55 +2876,24 @@ class SpreadsheetApp {
         container.appendChild(grid);
     }
 
-    getBackgroundColorsInUse() {
+    _getColorsInUse(prop) {
         const colors = new Set();
-        
-        // Scan all cell data for background colors
-        this.cellData.forEach((data) => {
-            if (data.backgroundColor) {
-                colors.add(data.backgroundColor.toUpperCase());
+        this.cellData.forEach(data => {
+            if (prop === 'borders' && data.borders) {
+                ['top', 'right', 'bottom', 'left'].forEach(side => {
+                    const match = data.borders[side]?.match(/#[0-9A-F]{6}/i);
+                    if (match) colors.add(match[0].toUpperCase());
+                });
+            } else if (data[prop]) {
+                colors.add(data[prop].toUpperCase());
             }
         });
-        
-        // Convert to array and sort
         return Array.from(colors).sort();
     }
 
-    getFontColorsInUse() {
-        const colors = new Set();
-        
-        // Scan all cell data for font colors
-        this.cellData.forEach((data) => {
-            if (data.fontColor) {
-                colors.add(data.fontColor.toUpperCase());
-            }
-        });
-        
-        // Convert to array and sort
-        return Array.from(colors).sort();
-    }
-    
-    getBorderColorsInUse() {
-        const colors = new Set();
-        
-        // Scan all cell data for border colors
-        this.cellData.forEach((data) => {
-            if (data.borders) {
-                ['top', 'right', 'bottom', 'left'].forEach(side => {
-                    if (data.borders[side]) {
-                        // Extract color from border string like "2px solid #000000"
-                        const match = data.borders[side].match(/#[0-9A-Fa-f]{6}/);
-                        if (match) {
-                            colors.add(match[0].toUpperCase());
-                        }
-                    }
-                });
-            }
-        });
-        
-        // Convert to array and sort
-        return Array.from(colors).sort();
-    }
+    getBackgroundColorsInUse() { return this._getColorsInUse('backgroundColor'); }
+    getFontColorsInUse() { return this._getColorsInUse('fontColor'); }
+    getBorderColorsInUse() { return this._getColorsInUse('borders'); }
     
     refreshColorPalette() {
         this.setupColorPalette();
