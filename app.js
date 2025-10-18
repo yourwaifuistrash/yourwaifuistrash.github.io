@@ -332,8 +332,6 @@ const escapeHTML = (str = '') => str
 
 const escapeAttribute = (str = '') => escapeHTML(str).replace(/\r/g, '&#13;').replace(/\n/g, '&#10;');
 
-const escapeForCodeBlock = (str = '') => str.replace(/```/g, '\\`\\`\\`');
-
 class SpreadsheetApp {
     constructor() {
         this.persistedRange = { maxRow: 19, maxCol: 9 };
@@ -405,9 +403,10 @@ class SpreadsheetApp {
         this.fontColorPalette = document.getElementById('fontColorPalette');
         this.linkEditor = document.getElementById('linkEditor');
         this.borderMenu = document.getElementById('borderMenu');
-        this.loadInitialDataFromDOM();
         this.codebergRepo = null;
         this.repoConfigPromise = null;
+        this.loadInitialDataFromDOM();
+        this.initialCellData = this.cloneCellData(this.cellData);
         
         this.clipboard = {
             data: null,
@@ -467,6 +466,199 @@ class SpreadsheetApp {
     getCoordPos(coord) {
         const [row, col] = this.parseCoord(coord);
         return { row, col };
+    }
+
+    cloneCellData(source = new Map()) {
+        const clone = new Map();
+        if (!source) return clone;
+        source.forEach((value, key) => {
+            if (value && typeof value === 'object') {
+                clone.set(key, JSON.parse(JSON.stringify(value)));
+            } else {
+                clone.set(key, value);
+            }
+        });
+        return clone;
+    }
+
+    generateDiffText(maxLines = 120, maxChars = 3200) {
+        if (!this.initialCellData) {
+            return { text: '', truncated: false };
+        }
+
+        const initial = this.initialCellData;
+        const current = this.cellData || new Map();
+        const allCoords = new Set([...initial.keys(), ...current.keys()]);
+
+        const sortedCoords = Array.from(allCoords).sort((a, b) => {
+            const [rowA, colA] = this.parseCoord(a);
+            const [rowB, colB] = this.parseCoord(b);
+            return rowA === rowB ? colA - colB : rowA - rowB;
+        });
+
+        const allLines = [];
+
+        sortedCoords.forEach(coord => {
+            const before = initial.get(coord);
+            const after = current.get(coord);
+
+            const beforeEmpty = this.isCellEffectivelyEmpty(before);
+            const afterEmpty = this.isCellEffectivelyEmpty(after);
+            if (beforeEmpty && afterEmpty) return;
+
+            const { row, col } = this.getCoordPos(coord);
+            const address = this.getCellAddress(row, col);
+
+            if (beforeEmpty && !afterEmpty) {
+                allLines.push(`+ ${address} ${this.describeCell(after)}`);
+                return;
+            }
+
+            if (!beforeEmpty && afterEmpty) {
+                allLines.push(`- ${address} ${this.describeCell(before)} (cleared)`);
+                return;
+            }
+
+            const changes = this.compareCellData(before, after);
+            if (changes.length) {
+                allLines.push(`~ ${address} ${changes.join('; ')}`);
+            }
+        });
+
+        if (!allLines.length) {
+            return { text: '', truncated: false };
+        }
+
+        let truncated = false;
+        let lines = allLines;
+        if (lines.length > maxLines) {
+            truncated = true;
+            lines = lines.slice(0, maxLines);
+        }
+
+        const output = [];
+        let charCount = 0;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (charCount + line.length + 1 > maxChars) {
+                truncated = true;
+                break;
+            }
+            output.push(line);
+            charCount += line.length + 1;
+        }
+
+        if (truncated) {
+            const remaining = allLines.length - output.length;
+            output.push(`… ${remaining} more change(s) not shown.`);
+        }
+
+        return { text: output.join('\n'), truncated };
+    }
+
+    compareCellData(before = {}, after = {}) {
+        const fields = [
+            ['value', 'value'],
+            ['backgroundColor', 'background'],
+            ['fontColor', 'font color'],
+            ['fontSize', 'font size'],
+            ['bold', 'bold'],
+            ['italic', 'italic'],
+            ['underline', 'underline'],
+            ['strikethrough', 'strikethrough'],
+            ['textAlign', 'text align'],
+            ['verticalAlign', 'vertical align'],
+            ['linkUrl', 'link'],
+            ['borders', 'borders']
+        ];
+
+        const changes = [];
+
+        fields.forEach(([key, label]) => {
+            const beforeVal = this.normalizeField(before[key], key);
+            const afterVal = this.normalizeField(after[key], key);
+            if (beforeVal === afterVal) return;
+            changes.push(`${label}: ${beforeVal} → ${afterVal}`);
+        });
+
+        return changes;
+    }
+
+    normalizeField(value, key) {
+        if (key === 'bold' || key === 'italic' || key === 'underline' || key === 'strikethrough') {
+            return value ? 'on' : 'off';
+        }
+
+        if (key === 'fontSize') {
+            return value ? `${value}px` : 'default';
+        }
+
+        if (key === 'textAlign') {
+            const val = value || 'left';
+            return val === 'left' ? 'default' : val;
+        }
+
+        if (key === 'verticalAlign') {
+            const val = value || 'bottom';
+            return val === 'bottom' ? 'default' : val;
+        }
+
+        if (key === 'borders') {
+            return value ? JSON.stringify(value) : 'none';
+        }
+
+        return this.formatValue(value);
+    }
+
+    formatValue(value) {
+        if (value === undefined || value === null) return '∅';
+        if (typeof value === 'string') {
+            if (value === '') return '∅';
+            return `"${value.replace(/\n/g, '\\n')}"`;
+        }
+        if (typeof value === 'object') {
+            return JSON.stringify(value);
+        }
+        return String(value);
+    }
+
+    describeCell(data) {
+        if (!data || typeof data !== 'object') return '∅';
+
+        const fragments = [];
+        if ('value' in data) fragments.push(`value=${this.formatValue(data.value)}`);
+        if (data.backgroundColor) fragments.push(`bg=${data.backgroundColor}`);
+        if (data.fontColor) fragments.push(`font=${data.fontColor}`);
+        if (data.fontSize) fragments.push(`size=${data.fontSize}px`);
+        if (data.bold) fragments.push('bold');
+        if (data.italic) fragments.push('italic');
+        if (data.underline) fragments.push('underline');
+        if (data.strikethrough) fragments.push('strikethrough');
+        if (data.textAlign && data.textAlign !== 'left') fragments.push(`align=${data.textAlign}`);
+        if (data.verticalAlign && data.verticalAlign !== 'bottom') fragments.push(`valign=${data.verticalAlign}`);
+        if (data.linkUrl) fragments.push(`link=${data.linkUrl}`);
+        if (data.borders) fragments.push(`borders=${JSON.stringify(data.borders)}`);
+
+        return fragments.length ? fragments.join(', ') : 'empty';
+    }
+
+    isCellEffectivelyEmpty(data) {
+        if (!data || typeof data !== 'object') return true;
+
+        if (data.value !== undefined && data.value !== null && data.value !== '') return false;
+        if (data.backgroundColor) return false;
+        if (data.fontColor) return false;
+        if (data.fontSize) return false;
+        if (data.bold) return false;
+        if (data.italic) return false;
+        if (data.underline) return false;
+        if (data.strikethrough) return false;
+        if (data.textAlign && data.textAlign !== 'left') return false;
+        if (data.verticalAlign && data.verticalAlign !== 'bottom') return false;
+        if (data.linkUrl) return false;
+        if (data.borders && Object.values(data.borders).some(Boolean)) return false;
+
+        return true;
     }
 
     hasSelection() {
@@ -3908,6 +4100,7 @@ class SpreadsheetApp {
         this.persistedRange = { maxRow: range.maxRow, maxCol: range.maxCol };
         const tableMarkup = this.generateStaticTableHTML(range);
         const fullHTML = this.buildFullHTMLDocument(tableMarkup);
+        const { text: diffText, truncated: diffTruncated } = this.generateDiffText();
 
         try {
             const repo = await this.resolveCodebergRepo();
@@ -3917,12 +4110,14 @@ class SpreadsheetApp {
                 return;
             }
 
-            const issueUrl = this.buildCodebergIssueUrl(repo, fullHTML);
+            const issueUrl = this.buildCodebergIssueUrl(repo, diffText, diffTruncated);
             if (typeof window !== 'undefined' && window.open) {
                 window.open(issueUrl, '_blank', 'noopener');
             }
             alert('Opening Codeberg issue composer in a new tab.\nPlease submit the request to update index.html.');
             this.log(`Prefilled Codeberg issue opened: ${issueUrl}`);
+            this.downloadHTML(fullHTML);
+            this.initialCellData = this.cloneCellData(this.cellData);
         } catch (error) {
             console.error('Failed to open Codeberg issue URL', error);
             alert('Could not open the Codeberg issue page. Downloading the HTML locally instead.');
@@ -4030,25 +4225,40 @@ class SpreadsheetApp {
         return this.repoConfigPromise;
     }
 
-    buildCodebergIssueUrl(repo, fullHTML) {
+    buildCodebergIssueUrl(repo, diffText, diffTruncated) {
         const MAX_BODY = 6000;
         const title = `Update index.html (${new Date().toISOString()})`;
-        const truncated = fullHTML.length > MAX_BODY ? fullHTML.slice(0, MAX_BODY) + '\n<!-- truncated -->' : fullHTML;
-        const notice = fullHTML.length > MAX_BODY ? `\n\n> ⚠️ HTML truncated to ${MAX_BODY} characters (original length ${fullHTML.length}).` : '';
-        const body = [
+
+        const introLines = [
             'A user requested updating `index.html` with the latest spreadsheet changes.',
-            notice,
-            '<details>',
-            '<summary>Proposed `index.html` content</summary>',
+            'The updated HTML file was downloaded locally alongside this request.'
+        ];
+
+        if (diffTruncated) {
+            introLines.push('> ⚠️ Change summary truncated for brevity.');
+        }
+
+        const bodyParts = [
+            ...introLines,
             '',
-            '```html',
-            escapeForCodeBlock(truncated),
-            '```',
-            '',
-            '</details>',
-            '',
-            `Generated at ${new Date().toISOString()} via the Spreadsheet Pro web UI.`
-        ].filter(Boolean).join('\n');
+            '### Cell changes'
+        ];
+
+        if (diffText) {
+            bodyParts.push('```diff', diffText, '```');
+        } else {
+            bodyParts.push('_No cell-level differences detected._');
+        }
+
+        let body = bodyParts.join('\n');
+
+        if (body.length > MAX_BODY) {
+            body = [
+                introLines.join('\n'),
+                '',
+                '_Change summary exceeded URL length limits. The updated HTML file has been downloaded locally._'
+            ].join('\n');
+        }
 
         const params = new URLSearchParams();
         params.set('title', title);
