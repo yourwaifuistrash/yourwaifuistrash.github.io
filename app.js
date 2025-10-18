@@ -2,7 +2,10 @@ const TOOLBAR_AND_FORMULA_HTML = `
         <div class="toolbar">
             <div class="toolbar-section">
                 <button class="btn btn--sm toolbar-btn" id="saveBtn" title="Save changes (opens GitHub issue). Hold Shift to configure GitHub.">
-                    <span>💾</span>
+                    <span class="toolbar-btn__icon">
+                        💾
+                        <span class="save-indicator-badge hidden" id="saveBtnBadge" aria-hidden="true"></span>
+                    </span>
                 </button>
                 <button class="btn btn--sm toolbar-btn" id="undoBtn" title="Undo">
                     <span>↶</span>
@@ -333,6 +336,9 @@ const SAVE_OPTIONS_MODAL_HTML = `
             </div>
             <div class="save-modal__body">
                 <p>Select how you would like to deliver the updated <code>index.html</code>:</p>
+                <div class="save-modal__diff" id="saveModalDiff" aria-live="polite">
+                    <div class="save-modal__diff-empty">No local changes detected.</div>
+                </div>
                 <div class="save-modal__actions">
                     <button type="button" class="btn btn--primary" data-save-action="download">Download page</button>
                     <button type="button" class="btn btn--primary" data-save-action="pull-request">PR via OAuth</button>
@@ -442,8 +448,24 @@ class SpreadsheetApp {
         this.accessTokenInfo = null;
         this.loadInitialDataFromDOM();
         this.initialCellData = this.cloneCellData(this.cellData);
+        this.initialRowHeights = new Map(this.rowHeights);
+        this.initialColumnWidths = new Map(this.columnWidths);
+        this.initialPersistedRange = { ...this.persistedRange };
         this.ensureSaveOptionsModal();
         this.maybeHandleOAuthRedirect();
+        this.saveButton = document.getElementById('saveBtn');
+        this.saveButtonBadge = document.getElementById('saveBtnBadge');
+        this.localDraftKey = 'verbosecell-draft-v1';
+        this.dirtyUpdateScheduled = false;
+        this.draftSaveTimer = null;
+        this.latestDiffEntries = [];
+        this.latestDiffTotal = 0;
+        this.latestDiffTruncated = false;
+        this.unsavedChanges = false;
+        this.persistDelayMs = 400;
+        this.restoreDraftIfAvailable();
+        this.updateSaveIndicator(false);
+        this.updateDirtyState({ persist: false });
         
         this.clipboard = {
             data: null,
@@ -593,6 +615,727 @@ class SpreadsheetApp {
         return { text: output.join('\n'), truncated };
     }
 
+    collectDiffEntries(maxEntries = Infinity) {
+        const initial = this.initialCellData || new Map();
+        const current = this.cellData || new Map();
+        const allCoords = new Set([...initial.keys(), ...current.keys()]);
+        const sortedCoords = Array.from(allCoords).sort((a, b) => {
+            const [rowA, colA] = this.parseCoord(a);
+            const [rowB, colB] = this.parseCoord(b);
+            return rowA === rowB ? colA - colB : rowA - rowB;
+        });
+
+        const entries = [];
+        let total = 0;
+        let truncated = false;
+
+        sortedCoords.forEach(coord => {
+            const before = initial.get(coord);
+            const after = current.get(coord);
+            const beforeEmpty = this.isCellEffectivelyEmpty(before);
+            const afterEmpty = this.isCellEffectivelyEmpty(after);
+            if (beforeEmpty && afterEmpty) {
+                return;
+            }
+
+            total += 1;
+            if (entries.length >= maxEntries) {
+                truncated = true;
+                return;
+            }
+
+            const { row, col } = this.getCoordPos(coord);
+            const changeType = beforeEmpty ? 'added' : afterEmpty ? 'removed' : 'modified';
+            const beforeSize = {
+                width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
+                height: this.getSnapshotRowHeight(this.initialRowHeights, row)
+            };
+            const afterSize = {
+                width: this.getColumnWidth(col),
+                height: this.getRowHeight(row)
+            };
+            const baseChanges = (!beforeEmpty && !afterEmpty) ? this.compareCellData(before, after) : [];
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            const combinedChanges = baseChanges.concat(sizeChanges);
+
+            entries.push({
+                coord,
+                row,
+                col,
+                address: this.getCellAddress(row, col),
+                changeType,
+                before: beforeEmpty ? null : this.cloneCellRecord(before),
+                after: afterEmpty ? null : this.cloneCellRecord(after),
+                beforeSize,
+                afterSize,
+                changes: combinedChanges
+            });
+        });
+
+        const entryMap = new Map(entries.map(entry => [entry.coord, entry]));
+        const extraEntries = [];
+
+        this.getChangedColumns().forEach(col => {
+            const coordKey = `0,${col}`;
+            const beforeSize = {
+                width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
+                height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
+            };
+            const afterSize = {
+                width: this.getColumnWidth(col),
+                height: this.getRowHeight(0)
+            };
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            if (!sizeChanges.length) return;
+            const hasCoordinate = entryMap.has(coordKey);
+            const existing = hasCoordinate ? entryMap.get(coordKey) : null;
+            if (existing) {
+                existing.beforeSize = existing.beforeSize || beforeSize;
+                existing.afterSize = existing.afterSize || afterSize;
+                existing.changes = Array.isArray(existing.changes) ? existing.changes : [];
+                sizeChanges.forEach(change => {
+                    if (!existing.changes.includes(change)) existing.changes.push(change);
+                });
+            } else if (!hasCoordinate) {
+                total += 1;
+                if (entries.length + extraEntries.length < maxEntries) {
+                    const entry = {
+                        coord: coordKey,
+                        row: 0,
+                        col,
+                        address: this.getCellAddress(0, col),
+                        changeType: 'modified',
+                        before: null,
+                        after: null,
+                        beforeSize,
+                        afterSize,
+                        changes: sizeChanges
+                    };
+                    extraEntries.push(entry);
+                    entryMap.set(coordKey, entry);
+                } else {
+                    truncated = true;
+                    entryMap.set(coordKey, null);
+                }
+            }
+        });
+
+        this.getChangedRows().forEach(row => {
+            const coordKey = `${row},0`;
+            const beforeSize = {
+                width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
+                height: this.getSnapshotRowHeight(this.initialRowHeights, row)
+            };
+            const afterSize = {
+                width: this.getColumnWidth(0),
+                height: this.getRowHeight(row)
+            };
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            if (!sizeChanges.length) return;
+            const hasCoordinate = entryMap.has(coordKey);
+            const existing = hasCoordinate ? entryMap.get(coordKey) : null;
+            if (existing) {
+                existing.beforeSize = existing.beforeSize || beforeSize;
+                existing.afterSize = existing.afterSize || afterSize;
+                existing.changes = Array.isArray(existing.changes) ? existing.changes : [];
+                sizeChanges.forEach(change => {
+                    if (!existing.changes.includes(change)) existing.changes.push(change);
+                });
+            } else if (!hasCoordinate) {
+                total += 1;
+                if (entries.length + extraEntries.length < maxEntries) {
+                    const entry = {
+                        coord: coordKey,
+                        row,
+                        col: 0,
+                        address: this.getCellAddress(row, 0),
+                        changeType: 'modified',
+                        before: null,
+                        after: null,
+                        beforeSize,
+                        afterSize,
+                        changes: sizeChanges
+                    };
+                    extraEntries.push(entry);
+                    entryMap.set(coordKey, entry);
+                } else {
+                    truncated = true;
+                    entryMap.set(coordKey, null);
+                }
+            }
+        });
+
+        extraEntries.forEach(entry => {
+            entries.push(entry);
+        });
+
+        return { entries, total, truncated };
+    }
+
+    cloneCellRecord(record) {
+        if (!record || typeof record !== 'object') {
+            return record ?? null;
+        }
+        try {
+            return JSON.parse(JSON.stringify(record));
+        } catch (error) {
+            console.warn('Unable to clone cell record', error);
+            return record;
+        }
+    }
+
+    scheduleDirtyStateUpdate() {
+        if (this.dirtyUpdateScheduled) return;
+        this.dirtyUpdateScheduled = true;
+        const run = () => {
+            this.dirtyUpdateScheduled = false;
+            this.updateDirtyState();
+        };
+        if (typeof queueMicrotask === 'function') {
+            queueMicrotask(run);
+        } else {
+            Promise.resolve().then(run);
+        }
+    }
+
+    updateDirtyState({ persist = true } = {}) {
+        const { entries, total, truncated } = this.collectDiffEntries(250);
+        this.latestDiffEntries = entries;
+        this.latestDiffTotal = total;
+        this.latestDiffTruncated = truncated;
+        const isDirty = entries.length > 0;
+        if (this.unsavedChanges !== isDirty) {
+            this.unsavedChanges = isDirty;
+            this.updateSaveIndicator(isDirty);
+        }
+
+        if (persist) {
+            if (isDirty) {
+                this.scheduleDraftPersistence();
+            } else {
+                this.clearPersistedDraft();
+            }
+        }
+
+        if (this.saveModal && !this.saveModal.classList.contains('hidden')) {
+            this.renderSaveModalDiff();
+        }
+    }
+
+    updateSaveIndicator(isDirty) {
+        if (this.saveButtonBadge) {
+            this.saveButtonBadge.classList.toggle('hidden', !isDirty);
+        }
+        if (this.saveButton) {
+            this.saveButton.classList.toggle('toolbar-btn--dirty', Boolean(isDirty));
+            this.saveButton.setAttribute('data-dirty', isDirty ? 'true' : 'false');
+        }
+    }
+
+    scheduleDraftPersistence() {
+        if (this.draftSaveTimer) {
+            clearTimeout(this.draftSaveTimer);
+        }
+        this.draftSaveTimer = setTimeout(() => {
+            this.draftSaveTimer = null;
+            this.persistDraft();
+        }, this.persistDelayMs);
+    }
+
+    persistDraft() {
+        if (!this.unsavedChanges) {
+            this.clearPersistedDraft();
+            return;
+        }
+        if (typeof window === 'undefined' || !window.localStorage) {
+            return;
+        }
+        try {
+            const payload = {
+                version: 1,
+                timestamp: Date.now(),
+                cellData: this.serializeMap(this.cellData),
+                rowHeights: this.serializeMap(this.rowHeights),
+                columnWidths: this.serializeMap(this.columnWidths),
+                persistedRange: { ...this.persistedRange }
+            };
+            window.localStorage.setItem(this.localDraftKey, JSON.stringify(payload));
+        } catch (error) {
+            console.error('Unable to persist draft', error);
+        }
+    }
+
+    clearPersistedDraft() {
+        if (this.draftSaveTimer) {
+            clearTimeout(this.draftSaveTimer);
+            this.draftSaveTimer = null;
+        }
+        if (typeof window === 'undefined' || !window.localStorage) {
+            return;
+        }
+        try {
+            window.localStorage.removeItem(this.localDraftKey);
+        } catch (error) {
+            console.warn('Unable to clear draft', error);
+        }
+    }
+
+    serializeMap(map) {
+        if (!(map instanceof Map)) return [];
+        const entries = [];
+        map.forEach((value, key) => {
+            entries.push([key, this.cloneCellRecord(value)]);
+        });
+        return entries;
+    }
+
+    deserializeMap(entries) {
+        const map = new Map();
+        if (!Array.isArray(entries)) return map;
+        entries.forEach(pair => {
+            if (!Array.isArray(pair) || pair.length < 2) return;
+            const [key, value] = pair;
+            map.set(key, this.cloneCellRecord(value));
+        });
+        return map;
+    }
+
+    restoreDraftIfAvailable() {
+        if (typeof window === 'undefined' || !window.localStorage) {
+            return;
+        }
+        try {
+            const raw = window.localStorage.getItem(this.localDraftKey);
+            if (!raw) return;
+            const payload = JSON.parse(raw);
+            if (!payload || payload.version !== 1) return;
+            if (payload.cellData) {
+                this.cellData = this.deserializeMap(payload.cellData);
+            }
+            if (payload.rowHeights) {
+                this.rowHeights = this.deserializeMap(payload.rowHeights);
+            }
+            if (payload.columnWidths) {
+                this.columnWidths = this.deserializeMap(payload.columnWidths);
+            }
+            if (payload.persistedRange && typeof payload.persistedRange === 'object') {
+                this.persistedRange = {
+                    ...this.persistedRange,
+                    ...payload.persistedRange
+                };
+            }
+            this.updateGridSize();
+            this.repositionCells();
+            this.updateHeaderPositions();
+            this.refreshAllVisibleCells();
+        } catch (error) {
+            console.error('Unable to restore draft', error);
+        }
+    }
+
+    markChangesPersisted() {
+        this.initialCellData = this.cloneCellData(this.cellData);
+        this.initialRowHeights = new Map(this.rowHeights);
+        this.initialColumnWidths = new Map(this.columnWidths);
+        this.initialPersistedRange = { ...this.persistedRange };
+        this.latestDiffEntries = [];
+        this.latestDiffTotal = 0;
+        this.latestDiffTruncated = false;
+        this.unsavedChanges = false;
+        this.updateSaveIndicator(false);
+        this.clearPersistedDraft();
+    }
+
+    setSaveModalBusy(isBusy) {
+        this.isSaveModalBusy = isBusy;
+        if (this.saveButton) {
+            this.saveButton.disabled = isBusy;
+            this.saveButton.classList.toggle('toolbar-btn--busy', Boolean(isBusy));
+        }
+        if (!this.saveModal) return;
+        this.saveModal.classList.toggle('save-modal--busy', Boolean(isBusy));
+        const actionButtons = this.saveModal.querySelectorAll('[data-save-action]');
+        actionButtons.forEach(btn => {
+            btn.disabled = Boolean(isBusy);
+        });
+        const closeBtn = this.saveModal.querySelector('.save-modal__close');
+        if (closeBtn) {
+            closeBtn.disabled = Boolean(isBusy);
+        }
+    }
+
+    async handleDiscardLocalChanges() {
+        if (!this.unsavedChanges) {
+            this.updateSaveModalStatus('No local changes to discard.');
+            return;
+        }
+
+        let confirmed = true;
+        if (typeof window !== 'undefined' && window.confirm) {
+            confirmed = window.confirm('Discard all local changes? Autosaved edits will be permanently removed.');
+        }
+        if (!confirmed) return;
+
+        this.setSaveModalBusy(true);
+        try {
+            this.discardLocalChanges();
+            this.updateSaveModalStatus('Local changes discarded.');
+        } finally {
+            this.setSaveModalBusy(false);
+            this.renderSaveModalDiff();
+        }
+    }
+
+    discardLocalChanges() {
+        this.cellData = this.cloneCellData(this.initialCellData);
+        this.rowHeights = new Map(this.initialRowHeights || []);
+        this.columnWidths = new Map(this.initialColumnWidths || []);
+        this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
+        this.undoStack = [];
+        this.redoStack = [];
+        this.updateUndoRedoButtons();
+        this.updateGridSize();
+        this.repositionCells();
+        this.updateHeaderPositions();
+        this.refreshAllVisibleCells();
+        this.markChangesPersisted();
+    }
+
+    renderSaveModalDiff() {
+        const container = document.getElementById('saveModalDiff');
+        if (!container) return;
+
+        if (!this.unsavedChanges || !this.latestDiffEntries.length) {
+            container.innerHTML = '<div class="save-modal__diff-empty">No local changes detected.</div>';
+            return;
+        }
+
+        const maxEntries = 20;
+        const entries = this.latestDiffEntries.slice(0, maxEntries);
+        const total = this.latestDiffTotal ?? entries.length;
+        const showMore = total > entries.length;
+
+        let html = [
+            '<div class="save-modal__diff-header">',
+            `  <div class="save-modal__diff-title">Local changes (${total})</div>`,
+            '  <button type="button" class="btn save-modal__discard-btn" data-save-action="discard">Discard local changes</button>',
+            '</div>'
+        ].join('');
+        html += '<div class="save-modal__diff-list">';
+        entries.forEach(entry => {
+            html += this.renderDiffEntry(entry);
+        });
+        html += '</div>';
+
+        if (showMore) {
+            const remaining = total - entries.length;
+            html += `<div class="save-modal__diff-more">Showing first ${entries.length} cells. ${remaining} more cell${remaining === 1 ? '' : 's'} changed.</div>`;
+        }
+
+        container.innerHTML = html;
+    }
+
+    renderDiffEntry(entry) {
+        const beforeCell = this.renderDiffCell(entry.before, entry.row, entry.col, this.initialCellData, entry.beforeSize);
+        const afterCell = this.renderDiffCell(entry.after, entry.row, entry.col, this.cellData, entry.afterSize);
+        const label = this.getChangeLabel(entry.changeType);
+        const tagClass = `save-modal__diff-tag--${entry.changeType}`;
+        const changes = Array.isArray(entry.changes) && entry.changes.length
+            ? `<ul class="save-modal__diff-changes">${entry.changes.slice(0, 4).map(change => `<li>${escapeHTML(change)}</li>`).join('')}</ul>`
+            : '';
+
+        const noChangesMessage = !changes && (!entry.before || !entry.after)
+            ? `<div class="save-modal__diff-note">${entry.changeType === 'added' ? 'Previously empty cell.' : 'Cell cleared.'}</div>`
+            : '';
+
+        return [
+            '<div class="save-modal__diff-item">',
+            '  <div class="save-modal__diff-item-header">',
+            `    <span class="save-modal__diff-address">${escapeHTML(entry.address)}</span>`,
+            `    <span class="save-modal__diff-tag ${tagClass}">${label}</span>`,
+            '  </div>',
+            '  <div class="save-modal__diff-columns">',
+            '    <div class="save-modal__diff-column">',
+            '      <div class="save-modal__diff-column-title">Before</div>',
+            `      ${beforeCell}`,
+            '    </div>',
+            '    <div class="save-modal__diff-column">',
+            '      <div class="save-modal__diff-column-title">After</div>',
+            `      ${afterCell}`,
+            '    </div>',
+            '  </div>',
+            changes || noChangesMessage,
+            '</div>'
+        ].join('\n');
+    }
+
+    renderDiffCell(cellRecord, row, col, snapshotMap, sizeInfo) {
+        const baseClass = 'save-modal__diff-cell';
+        const isEmpty = !cellRecord;
+        const styleParts = [];
+        if (sizeInfo) {
+            const width = Number.isFinite(sizeInfo.width) ? Math.max(16, Math.round(sizeInfo.width)) : this.config.cellWidth;
+            const height = Number.isFinite(sizeInfo.height) ? Math.max(12, Math.round(sizeInfo.height)) : this.config.cellHeight;
+            styleParts.push('box-sizing:border-box');
+            styleParts.push(`width:${width}px`);
+            styleParts.push(`min-width:${width}px`);
+            styleParts.push(`max-width:${width}px`);
+            styleParts.push(`height:${height}px`);
+            styleParts.push(`min-height:${height}px`);
+        }
+        let content;
+        if (isEmpty) {
+            content = '<span class="save-modal__diff-placeholder">Empty</span>';
+        } else {
+            if (cellRecord.backgroundColor) styleParts.push(`background:${cellRecord.backgroundColor}`);
+            if (cellRecord.fontColor) styleParts.push(`color:${cellRecord.fontColor}`);
+            if (cellRecord.fontSize) styleParts.push(`font-size:${cellRecord.fontSize}px`);
+            if (cellRecord.bold) styleParts.push('font-weight:bold');
+            if (cellRecord.italic) styleParts.push('font-style:italic');
+            const decorations = [];
+            if (cellRecord.underline) decorations.push('underline');
+            if (cellRecord.strikethrough) decorations.push('line-through');
+            if (decorations.length) styleParts.push(`text-decoration:${decorations.join(' ')}`);
+            if (cellRecord.textAlign) styleParts.push(`text-align:${cellRecord.textAlign}`);
+            if (cellRecord.verticalAlign) {
+                const alignMap = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+                styleParts.push(`align-items:${alignMap[cellRecord.verticalAlign] || 'flex-end'}`);
+            }
+
+            const borderStyles = this.collectDiffBorderStyles(row, col, cellRecord, snapshotMap);
+            if (borderStyles.length) {
+                styleParts.push(...borderStyles);
+            }
+
+            const displayText = this.getDisplayTextFromSnapshot(snapshotMap, row, col, cellRecord);
+            if (displayText && displayText.includes('\n')) {
+                styleParts.push('white-space:pre-wrap');
+            }
+
+            content = displayText ? escapeHTML(displayText).replace(/\n/g, '<br>') : '<span class="save-modal__diff-placeholder">Empty</span>';
+            if (cellRecord.linkUrl) {
+                const href = escapeAttribute(cellRecord.linkUrl);
+                content = `<a href="${href}" target="_blank" rel="noopener">${content}</a>`;
+            }
+        }
+
+        const styleAttr = styleParts.length ? ` style="${styleParts.join(';')}"` : '';
+        const classes = [baseClass, isEmpty && 'save-modal__diff-cell--empty'].filter(Boolean).join(' ');
+        return `<div class="${classes}"${styleAttr}><div class="save-modal__diff-cell-content">${content}</div></div>`;
+    }
+
+    getDisplayTextFromSnapshot(snapshotMap, row, col, cellRecord) {
+        if (!cellRecord || !cellRecord.value) {
+            return '';
+        }
+        if (!cellRecord.value.startsWith('=')) {
+            if (cellRecord.value.startsWith("'")) {
+                return cellRecord.value.substring(1);
+            }
+            return cellRecord.value;
+        }
+
+        const originalMap = this.cellData;
+        if (snapshotMap === this.cellData) {
+            return this.getDisplayTextForCell(row, col, cellRecord);
+        }
+
+        this.cellData = snapshotMap || this.cellData;
+        try {
+            return this.getDisplayTextForCell(row, col, cellRecord);
+        } finally {
+            this.cellData = originalMap;
+        }
+    }
+
+    getChangeLabel(changeType) {
+        switch (changeType) {
+            case 'added':
+                return 'Added';
+            case 'removed':
+                return 'Removed';
+            default:
+                return 'Updated';
+        }
+    }
+
+    getSnapshotColumnWidth(mapLike, col) {
+        return this.getValueFromMapLike(mapLike, col, this.config.cellWidth);
+    }
+
+    getSnapshotRowHeight(mapLike, row) {
+        return this.getValueFromMapLike(mapLike, row, this.config.cellHeight);
+    }
+
+    getValueFromMapLike(mapLike, key, fallback) {
+        if (!mapLike) return fallback;
+        if (mapLike instanceof Map) {
+            if (mapLike.has(key)) {
+                const value = Number(mapLike.get(key));
+                if (Number.isFinite(value) && value > 0) return value;
+            }
+            const strKey = String(key);
+            if (mapLike.has(strKey)) {
+                const value = Number(mapLike.get(strKey));
+                if (Number.isFinite(value) && value > 0) return value;
+            }
+            return fallback;
+        }
+        if (Array.isArray(mapLike)) {
+            for (let i = 0; i < mapLike.length; i++) {
+                const [entryKey, entryValue] = mapLike[i] || [];
+                if (entryKey === key || entryKey === String(key)) {
+                    const value = Number(entryValue);
+                    if (Number.isFinite(value) && value > 0) return value;
+                }
+            }
+            return fallback;
+        }
+        const strKey = String(key);
+        if (Object.prototype.hasOwnProperty.call(mapLike, key)) {
+            const value = Number(mapLike[key]);
+            if (Number.isFinite(value) && value > 0) return value;
+        }
+        if (Object.prototype.hasOwnProperty.call(mapLike, strKey)) {
+            const value = Number(mapLike[strKey]);
+            if (Number.isFinite(value) && value > 0) return value;
+        }
+        return fallback;
+    }
+
+    describeSizeDifferences(beforeSize, afterSize) {
+        const changes = [];
+        if (!beforeSize || !afterSize) return changes;
+        const beforeWidth = Number.isFinite(beforeSize.width) ? beforeSize.width : null;
+        const afterWidth = Number.isFinite(afterSize.width) ? afterSize.width : null;
+        if (beforeWidth !== null && afterWidth !== null && beforeWidth !== afterWidth) {
+            changes.push(`column width: ${Math.round(beforeWidth)}px → ${Math.round(afterWidth)}px`);
+        }
+        const beforeHeight = Number.isFinite(beforeSize.height) ? beforeSize.height : null;
+        const afterHeight = Number.isFinite(afterSize.height) ? afterSize.height : null;
+        if (beforeHeight !== null && afterHeight !== null && beforeHeight !== afterHeight) {
+            changes.push(`row height: ${Math.round(beforeHeight)}px → ${Math.round(afterHeight)}px`);
+        }
+        return changes;
+    }
+
+    getChangedColumns() {
+        const columns = new Set();
+        const collectKeys = (source) => {
+            if (!source) return;
+            if (source instanceof Map) {
+                source.forEach((_, key) => {
+                    const col = Number(key);
+                    if (Number.isInteger(col)) columns.add(col);
+                });
+            } else if (Array.isArray(source)) {
+                source.forEach(entry => {
+                    if (!entry) return;
+                    const col = Number(entry[0]);
+                    if (Number.isInteger(col)) columns.add(col);
+                });
+            } else {
+                Object.keys(source).forEach(key => {
+                    const col = Number(key);
+                    if (Number.isInteger(col)) columns.add(col);
+                });
+            }
+        };
+
+        collectKeys(this.initialColumnWidths);
+        collectKeys(this.columnWidths);
+
+        return Array.from(columns).filter(col => {
+            const beforeWidth = this.getSnapshotColumnWidth(this.initialColumnWidths, col);
+            const afterWidth = this.getColumnWidth(col);
+            return Math.abs(beforeWidth - afterWidth) >= 0.1;
+        }).sort((a, b) => a - b);
+    }
+
+    getChangedRows() {
+        const rows = new Set();
+        const collectKeys = (source) => {
+            if (!source) return;
+            if (source instanceof Map) {
+                source.forEach((_, key) => {
+                    const row = Number(key);
+                    if (Number.isInteger(row)) rows.add(row);
+                });
+            } else if (Array.isArray(source)) {
+                source.forEach(entry => {
+                    if (!entry) return;
+                    const row = Number(entry[0]);
+                    if (Number.isInteger(row)) rows.add(row);
+                });
+            } else {
+                Object.keys(source).forEach(key => {
+                    const row = Number(key);
+                    if (Number.isInteger(row)) rows.add(row);
+                });
+            }
+        };
+
+        collectKeys(this.initialRowHeights);
+        collectKeys(this.rowHeights);
+
+        return Array.from(rows).filter(row => {
+            const beforeHeight = this.getSnapshotRowHeight(this.initialRowHeights, row);
+            const afterHeight = this.getRowHeight(row);
+            return Math.abs(beforeHeight - afterHeight) >= 0.1;
+        }).sort((a, b) => a - b);
+    }
+
+    collectDiffBorderStyles(row, col, cellRecord, snapshotMap) {
+        const map = snapshotMap instanceof Map ? snapshotMap : new Map();
+        const getCell = (r, c) => map.get(`${r},${c}`) || null;
+        const sides = ['top', 'right', 'bottom', 'left'];
+        const opposite = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+        const styles = [];
+        let initialized = false;
+
+        const formatBorder = (border) => {
+            if (!border) return '';
+            const match = border.match(/^(\d+(?:\.\d+)?)px\s+(.+)$/);
+            if (match) {
+                const halfWidth = parseFloat(match[1]) / 2;
+                return `${halfWidth}px ${match[2]}`;
+            }
+            return border;
+        };
+
+        sides.forEach(side => {
+            const ownBorder = cellRecord?.borders?.[side];
+            let effective = ownBorder;
+            if (!effective) {
+                let neighbor;
+                switch (side) {
+                    case 'top':
+                        neighbor = getCell(row - 1, col);
+                        break;
+                    case 'bottom':
+                        neighbor = getCell(row + 1, col);
+                        break;
+                    case 'left':
+                        neighbor = getCell(row, col - 1);
+                        break;
+                    case 'right':
+                        neighbor = getCell(row, col + 1);
+                        break;
+                }
+                effective = neighbor?.borders?.[opposite[side]] || '';
+            }
+            if (effective) {
+                if (!initialized) {
+                    styles.push('border: 1px solid transparent');
+                    initialized = true;
+                }
+                styles.push(`border-${side}:${formatBorder(effective)}`);
+            }
+        });
+
+        return styles;
+    }
+
     gatherSaveArtifacts() {
         const range = this.getUsedRange();
         this.persistedRange = { maxRow: range.maxRow, maxCol: range.maxCol };
@@ -634,6 +1377,9 @@ class SpreadsheetApp {
                     case 'pull-request':
                         this.handlePullRequestOption();
                         break;
+                    case 'discard':
+                        this.handleDiscardLocalChanges();
+                        break;
                     default:
                         break;
                 }
@@ -643,7 +1389,10 @@ class SpreadsheetApp {
 
     showSaveOptionsModal() {
         this.ensureSaveOptionsModal();
+        this.updateDirtyState({ persist: false });
+        this.renderSaveModalDiff();
         this.updateSaveModalStatus('');
+        this.setSaveModalBusy(false);
         this.saveModal?.classList.remove('hidden');
         this.refreshOAuthInfo();
     }
@@ -692,16 +1441,20 @@ class SpreadsheetApp {
     }
 
     handleDownloadOption() {
+        this.setSaveModalBusy(true);
         try {
             this.updateSaveModalStatus('Preparing download…');
             const artifacts = this.gatherSaveArtifacts();
             this.downloadHTML(artifacts.fullHTML);
-            this.initialCellData = this.cloneCellData(this.cellData);
+            this.markChangesPersisted();
+            this.renderSaveModalDiff();
             this.updateSaveModalStatus('Downloaded index.html.');
         } catch (error) {
             console.error('Download failed', error);
             this.updateSaveModalStatus('Download failed. See console for details.', true);
             return;
+        } finally {
+            this.setSaveModalBusy(false);
         }
 
         setTimeout(() => this.hideSaveOptionsModal(), 800);
@@ -709,26 +1462,24 @@ class SpreadsheetApp {
 
     async handleIssueOption() {
         const artifacts = this.gatherSaveArtifacts();
+        this.setSaveModalBusy(true);
         try {
             this.updateSaveModalStatus('Preparing issue summary…');
             await this.submitIssueRequest(artifacts);
-            this.initialCellData = this.cloneCellData(this.cellData);
+            this.markChangesPersisted();
+            this.renderSaveModalDiff();
             this.updateSaveModalStatus('Issue draft opened in a new tab.');
             setTimeout(() => this.hideSaveOptionsModal(), 800);
         } catch (error) {
             console.error('Unable to open issue', error);
             this.updateSaveModalStatus(error.message || 'Unable to open issue.', true);
-            try {
-                this.downloadHTML(artifacts.fullHTML);
-                this.initialCellData = this.cloneCellData(this.cellData);
-            } catch (downloadError) {
-                console.error('Fallback download failed', downloadError);
-            }
+        } finally {
+            this.setSaveModalBusy(false);
         }
     }
 
     async submitIssueRequest(artifacts) {
-        const { fullHTML, diffText, diffTruncated } = artifacts;
+        const { diffText, diffTruncated } = artifacts;
         const repo = await this.resolveCodebergRepo();
         if (!repo) {
             throw new Error('Repository could not be detected.');
@@ -738,11 +1489,10 @@ class SpreadsheetApp {
         if (typeof window !== 'undefined' && window.open) {
             window.open(issueUrl, '_blank', 'noopener');
         }
-
-        this.downloadHTML(fullHTML);
     }
 
     async handlePullRequestOption(resumeFromOAuth = false) {
+        this.setSaveModalBusy(true);
         try {
             if (!resumeFromOAuth) {
                 this.updateSaveModalStatus('Gathering changes for pull request…');
@@ -755,9 +1505,7 @@ class SpreadsheetApp {
             const artifacts = this.gatherSaveArtifacts();
             const repo = await this.resolveCodebergRepo();
             if (!repo) {
-                this.updateSaveModalStatus('Repository could not be detected. Downloading HTML instead.', true);
-                this.downloadHTML(artifacts.fullHTML);
-                this.initialCellData = this.cloneCellData(this.cellData);
+                this.updateSaveModalStatus('Repository could not be detected. Use download to save your work.', true);
                 return;
             }
 
@@ -773,9 +1521,9 @@ class SpreadsheetApp {
 
             this.updateSaveModalStatus('Submitting pull request…');
             const prUrl = await this.submitPullRequest(repo, artifacts, token);
-            this.initialCellData = this.cloneCellData(this.cellData);
+            this.markChangesPersisted();
+            this.renderSaveModalDiff();
             this.updateSaveModalStatus('Pull request created successfully.');
-            this.downloadHTML(artifacts.fullHTML);
             if (prUrl && typeof window !== 'undefined') {
                 window.open(prUrl, '_blank', 'noopener');
             }
@@ -793,6 +1541,8 @@ class SpreadsheetApp {
                 this.clearOAuthSession();
                 this.updateSaveModalStatus('Authentication failed. Please authorize again.', true);
             }
+        } finally {
+            this.setSaveModalBusy(false);
         }
     }
 
@@ -1332,6 +2082,18 @@ class SpreadsheetApp {
         const fallbackTable = this.gridContent.querySelector('table[data-spreadsheet-export]');
         if (!fallbackTable) return;
 
+        this.columnWidths = new Map();
+        this.rowHeights = new Map();
+
+        const headerCells = fallbackTable.querySelectorAll('thead th[data-col]');
+        headerCells.forEach(th => {
+            const colAttr = parseInt(th.getAttribute('data-col'), 10);
+            const widthAttr = parseFloat(th.getAttribute('data-width'));
+            if (!Number.isInteger(colAttr) || !Number.isFinite(widthAttr) || widthAttr <= 0) return;
+            if (Math.abs(widthAttr - this.config.cellWidth) < 0.001) return;
+            this.columnWidths.set(colAttr, widthAttr);
+        });
+
         const bodyRows = fallbackTable.querySelectorAll('tbody tr');
         let detectedMaxRow = -1;
         let detectedMaxCol = -1;
@@ -1340,6 +2102,10 @@ class SpreadsheetApp {
             const rowAttr = parseInt(tr.getAttribute('data-row'), 10);
             const row = Number.isInteger(rowAttr) ? rowAttr : rowIndex;
             detectedMaxRow = Math.max(detectedMaxRow, row);
+            const rowHeightAttr = parseFloat(tr.getAttribute('data-height'));
+            if (Number.isFinite(rowHeightAttr) && rowHeightAttr > 0 && Math.abs(rowHeightAttr - this.config.cellHeight) >= 0.001) {
+                this.rowHeights.set(row, rowHeightAttr);
+            }
 
             const cells = tr.querySelectorAll('td');
             cells.forEach((td, colIndex) => {
@@ -1399,6 +2165,7 @@ class SpreadsheetApp {
         if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
         this.redoStack = [];
         this.updateUndoRedoButtons();
+        this.scheduleDirtyStateUpdate();
     }
 
     undo() {
@@ -1411,6 +2178,7 @@ class SpreadsheetApp {
         // Refresh both color palettes to update "colors in use"
         this.refreshColorPalette();
         this.refreshFontColorPalette();
+        this.updateDirtyState();
     }
 
     redo() {
@@ -1423,6 +2191,7 @@ class SpreadsheetApp {
         // Refresh both color palettes to update "colors in use"
         this.refreshColorPalette();
         this.refreshFontColorPalette();
+        this.updateDirtyState();
     }
 
     updateUndoRedoButtons() {
@@ -1645,8 +2414,8 @@ class SpreadsheetApp {
         return cell;
     }
     
-    getRowHeight(row) { return this.rowHeights.get(row) || this.config.cellHeight; }
-    getColumnWidth(col) { return this.columnWidths.get(col) || this.config.cellWidth; }
+    getRowHeight(row) { return this.getValueFromMapLike(this.rowHeights, row, this.config.cellHeight); }
+    getColumnWidth(col) { return this.getValueFromMapLike(this.columnWidths, col, this.config.cellWidth); }
 
     _sum(count, getFn) {
         let total = 0;
@@ -1719,6 +2488,16 @@ class SpreadsheetApp {
         [['top','Top'], ['middle','Middle'], ['bottom','Bottom']].forEach(([a, n]) => 
             document.getElementById(`align${n}Btn`)?.addEventListener('click', () => this.setVerticalAlign(a))
         );
+
+        if (typeof window !== 'undefined') {
+            window.addEventListener('beforeunload', () => {
+                if (this.draftSaveTimer) {
+                    clearTimeout(this.draftSaveTimer);
+                    this.draftSaveTimer = null;
+                }
+                this.persistDraft();
+            });
+        }
     }
     
     activateFormatPainter() {
@@ -4961,6 +5740,19 @@ class SpreadsheetApp {
             if (col > maxCol) maxCol = col;
         });
 
+        if (this.rowHeights instanceof Map) {
+            this.rowHeights.forEach((_, key) => {
+                const row = Number(key);
+                if (Number.isInteger(row) && row > maxRow) maxRow = row;
+            });
+        }
+        if (this.columnWidths instanceof Map) {
+            this.columnWidths.forEach((_, key) => {
+                const col = Number(key);
+                if (Number.isInteger(col) && col > maxCol) maxCol = col;
+            });
+        }
+
         if (maxRow < minRow) maxRow = minRow;
         if (maxCol < minCol) maxCol = minCol;
 
@@ -4975,14 +5767,16 @@ class SpreadsheetApp {
         rows.push('                            <tr>');
         rows.push('                                <th scope="col"></th>');
         for (let col = minCol; col <= maxCol; col++) {
-            rows.push(`                                <th scope="col">${this.getColumnName(col)}</th>`);
+            const colWidth = this.getColumnWidth(col);
+            rows.push(`                                <th scope="col" data-col="${col}" data-width="${colWidth}">${this.getColumnName(col)}</th>`);
         }
         rows.push('                            </tr>');
         rows.push('                        </thead>');
         rows.push('                        <tbody>');
 
         for (let row = minRow; row <= maxRow; row++) {
-            rows.push(`                            <tr data-row="${row}">`);
+            const rowHeight = this.getRowHeight(row);
+            rows.push(`                            <tr data-row="${row}" data-height="${rowHeight}">`);
             rows.push(`                                <th scope="row">${row + 1}</th>`);
             for (let col = minCol; col <= maxCol; col++) {
                 const coordKey = `${row},${col}`;
