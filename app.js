@@ -403,6 +403,11 @@ class SpreadsheetApp {
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
 
+        // Edge scrolling state
+        this.edgeScrolling = false;
+        this.edgeScrollInterval = null;
+        this.edgeScrollSpeed = { x: 0, y: 0 };
+
         // Resize state
         this.isResizing = false;
         this.resizeType = null; // 'row' or 'column'
@@ -3285,6 +3290,9 @@ class SpreadsheetApp {
     handleMouseMove(event) {
         if (!this.isDragging || !this.dragStartCell) return;
 
+        // Handle edge scrolling
+        this.handleEdgeScrolling(event);
+
         const cell = event.target.closest('.cell');
         if (!cell) return;
 
@@ -3303,17 +3311,15 @@ class SpreadsheetApp {
     }
 
     handleMouseUp(event) {
+        // Stop edge scrolling
+        this.stopEdgeScrolling();
+        
         if (this.isResizing) {
-            const completedType = this.resizeType;
-            const completedIndex = this.resizeIndex;
-            const previousSize = this.resizeStartSize;
-            const resizeConfig = this.resizeConfig;
             this.isResizing = false;
             this.resizeType = null;
             this.resizeIndex = null;
             this.resizeStartPos = null;
             this.resizeStartSize = null;
-            this.resizeConfig = null;
             document.body.style.cursor = '';
             
             // Cancel any pending animation frame
@@ -3321,26 +3327,12 @@ class SpreadsheetApp {
                 cancelAnimationFrame(this.resizeAnimationFrame);
                 this.resizeAnimationFrame = null;
             }
-
+            
             // Set flag to prevent click event from firing
             this.justResized = true;
             setTimeout(() => {
                 this.justResized = false;
             }, 10);
-
-            let sizeChanged = false;
-            if (resizeConfig && typeof completedIndex === 'number' && Number.isFinite(previousSize)) {
-                const currentSize = resizeConfig.getSizeFn.call(this, completedIndex);
-                if (Number.isFinite(currentSize) && Math.abs(currentSize - previousSize) >= 0.1) {
-                    sizeChanged = true;
-                }
-            }
-
-            if (sizeChanged) {
-                this.userMadeChanges = true;
-                this.hasAutoPersistedBaseline = false;
-                this.scheduleDirtyStateUpdate();
-            }
             
             return;
         }
@@ -5905,6 +5897,71 @@ class SpreadsheetApp {
         return { minRow, maxRow, minCol, maxCol };
     }
 
+    handleEdgeScrolling(event) {
+        if (!this.isDragging) return;
+        
+        const rect = this.mainGrid.getBoundingClientRect();
+        const threshold = 50; // pixels from edge to start scrolling
+        const maxSpeed = 20; // max pixels per frame
+        
+        // Calculate distance from edges
+        const distanceFromLeft = event.clientX - rect.left;
+        const distanceFromRight = rect.right - event.clientX;
+        const distanceFromTop = event.clientY - rect.top;
+        const distanceFromBottom = rect.bottom - event.clientY;
+        
+        // Calculate scroll speeds based on proximity to edges
+        let scrollX = 0;
+        let scrollY = 0;
+        
+        if (distanceFromLeft < threshold && distanceFromLeft > 0) {
+            scrollX = -Math.min(maxSpeed, (threshold - distanceFromLeft) / threshold * maxSpeed);
+        } else if (distanceFromRight < threshold && distanceFromRight > 0) {
+            scrollX = Math.min(maxSpeed, (threshold - distanceFromRight) / threshold * maxSpeed);
+        }
+        
+        if (distanceFromTop < threshold && distanceFromTop > 0) {
+            scrollY = -Math.min(maxSpeed, (threshold - distanceFromTop) / threshold * maxSpeed);
+        } else if (distanceFromBottom < threshold && distanceFromBottom > 0) {
+            scrollY = Math.min(maxSpeed, (threshold - distanceFromBottom) / threshold * maxSpeed);
+        }
+        
+        this.edgeScrollSpeed = { x: scrollX, y: scrollY };
+        
+        // Start scrolling if near edge
+        if ((scrollX !== 0 || scrollY !== 0) && !this.edgeScrolling) {
+            this.startEdgeScrolling();
+        } else if (scrollX === 0 && scrollY === 0 && this.edgeScrolling) {
+            this.stopEdgeScrolling();
+        }
+    }
+
+    startEdgeScrolling() {
+        this.edgeScrolling = true;
+        
+        const scroll = () => {
+            if (!this.edgeScrolling) return;
+            
+            if (this.edgeScrollSpeed.x !== 0 || this.edgeScrollSpeed.y !== 0) {
+                this.mainGrid.scrollLeft += this.edgeScrollSpeed.x;
+                this.mainGrid.scrollTop += this.edgeScrollSpeed.y;
+            }
+            
+            this.edgeScrollInterval = requestAnimationFrame(scroll);
+        };
+        
+        scroll();
+    }
+
+    stopEdgeScrolling() {
+        this.edgeScrolling = false;
+        if (this.edgeScrollInterval) {
+            cancelAnimationFrame(this.edgeScrollInterval);
+            this.edgeScrollInterval = null;
+        }
+        this.edgeScrollSpeed = { x: 0, y: 0 };
+    }
+    
     generateStaticTableHTML(range) {
         const { minRow, maxRow, minCol, maxCol } = range;
         const rows = [];
