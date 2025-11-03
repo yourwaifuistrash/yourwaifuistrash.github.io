@@ -1939,6 +1939,8 @@ class SpreadsheetApp {
             throw error;
         }
         const defaultBranch = repoInfo.default_branch || 'main';
+        const configuredBaseBranch = (repo?.branch ?? repo?.prBaseBranch ?? '').trim();
+        const baseBranch = configuredBaseBranch || defaultBranch;
         const permissions = repoInfo.permissions || {};
         let user;
         try {
@@ -1986,7 +1988,7 @@ class SpreadsheetApp {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     new_branch_name: branchName,
-                    old_branch_name: defaultBranch
+                    old_branch_name: baseBranch
                 })
             });
         } catch (error) {
@@ -1999,7 +2001,7 @@ class SpreadsheetApp {
         try {
             fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(branchName)}`, token);
         } catch (error) {
-            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(defaultBranch)}`, token);
+            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(baseBranch)}`, token);
         }
         const encodedContent = this.encodeContentToBase64(artifacts.fullHTML);
 
@@ -2024,7 +2026,7 @@ class SpreadsheetApp {
                 title: prTitle,
                 body: prBody,
                 head: `${targetOwner}:${branchName}`,
-                base: defaultBranch
+                base: baseBranch
             })
         });
 
@@ -5638,16 +5640,16 @@ class SpreadsheetApp {
     async resolveCodebergRepo() {
         if (this.codebergRepo) return this.codebergRepo;
 
-        const detected = this.detectRepoFromHostname();
-        if (detected) {
-            this.codebergRepo = detected;
-            return detected;
-        }
-
         const fromConfig = await this.loadRepoConfig();
         if (fromConfig) {
             this.codebergRepo = fromConfig;
             return fromConfig;
+        }
+
+        const detected = this.detectRepoFromHostname();
+        if (detected) {
+            this.codebergRepo = detected;
+            return detected;
         }
 
         return null;
@@ -5714,6 +5716,14 @@ class SpreadsheetApp {
                         owner: String(data.owner).trim(),
                         repo: String(data.repo).trim()
                     };
+
+                    const preferredBranch = data.branch ?? data.prBaseBranch;
+                    if (preferredBranch) {
+                        const branch = String(preferredBranch).trim();
+                        if (branch.length) {
+                            normalized.branch = branch;
+                        }
+                    }
 
                     if (data.oauth && data.oauth.clientId) {
                         normalized.oauth = {
