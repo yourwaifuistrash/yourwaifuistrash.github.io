@@ -463,6 +463,9 @@ class SpreadsheetApp {
         this.latestDiffTruncated = false;
         this.unsavedChanges = false;
         this.persistDelayMs = 400;
+        this.hasRestoredDraft = false;
+        this.hasAutoPersistedBaseline = false;
+        this.userMadeChanges = false;
         this.restoreDraftIfAvailable();
         this.updateSaveIndicator(false);
         this.updateDirtyState({ persist: false });
@@ -538,6 +541,17 @@ class SpreadsheetApp {
             }
         });
         return clone;
+    }
+
+    updateCellDataEntry(coord, mutator) {
+        const existing = this.cellData.get(coord) || {};
+        mutator(existing);
+        if (this.isCellEffectivelyEmpty(existing)) {
+            this.cellData.delete(coord);
+            return null;
+        }
+        this.cellData.set(coord, existing);
+        return existing;
     }
 
     generateDiffText(maxLines = 120, maxChars = 3200) {
@@ -638,12 +652,6 @@ class SpreadsheetApp {
                 return;
             }
 
-            total += 1;
-            if (entries.length >= maxEntries) {
-                truncated = true;
-                return;
-            }
-
             const { row, col } = this.getCoordPos(coord);
             const changeType = beforeEmpty ? 'added' : afterEmpty ? 'removed' : 'modified';
             const beforeSize = {
@@ -658,6 +666,17 @@ class SpreadsheetApp {
             const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
             const combinedChanges = baseChanges.concat(sizeChanges);
 
+            const includeEntry = changeType !== 'modified' || combinedChanges.length > 0;
+            if (!includeEntry) {
+                return;
+            }
+
+            total += 1;
+            if (entries.length >= maxEntries) {
+                truncated = true;
+                return;
+            }
+
             entries.push({
                 coord,
                 row,
@@ -668,7 +687,8 @@ class SpreadsheetApp {
                 after: afterEmpty ? null : this.cloneCellRecord(after),
                 beforeSize,
                 afterSize,
-                changes: combinedChanges
+                changes: combinedChanges,
+                meta: null
             });
         });
 
@@ -676,7 +696,7 @@ class SpreadsheetApp {
         const extraEntries = [];
 
         this.getChangedColumns().forEach(col => {
-            const coordKey = `0,${col}`;
+            const coordKey = `column:${col}`;
             const beforeSize = {
                 width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
                 height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
@@ -696,7 +716,7 @@ class SpreadsheetApp {
                 sizeChanges.forEach(change => {
                     if (!existing.changes.includes(change)) existing.changes.push(change);
                 });
-            } else if (!hasCoordinate) {
+            } else {
                 total += 1;
                 if (entries.length + extraEntries.length < maxEntries) {
                     const entry = {
@@ -709,7 +729,8 @@ class SpreadsheetApp {
                         after: null,
                         beforeSize,
                         afterSize,
-                        changes: sizeChanges
+                        changes: sizeChanges,
+                        meta: { kind: 'column', index: col }
                     };
                     extraEntries.push(entry);
                     entryMap.set(coordKey, entry);
@@ -721,7 +742,7 @@ class SpreadsheetApp {
         });
 
         this.getChangedRows().forEach(row => {
-            const coordKey = `${row},0`;
+            const coordKey = `row:${row}`;
             const beforeSize = {
                 width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
                 height: this.getSnapshotRowHeight(this.initialRowHeights, row)
@@ -741,7 +762,7 @@ class SpreadsheetApp {
                 sizeChanges.forEach(change => {
                     if (!existing.changes.includes(change)) existing.changes.push(change);
                 });
-            } else if (!hasCoordinate) {
+            } else {
                 total += 1;
                 if (entries.length + extraEntries.length < maxEntries) {
                     const entry = {
@@ -754,7 +775,8 @@ class SpreadsheetApp {
                         after: null,
                         beforeSize,
                         afterSize,
-                        changes: sizeChanges
+                        changes: sizeChanges,
+                        meta: { kind: 'row', index: row }
                     };
                     extraEntries.push(entry);
                     entryMap.set(coordKey, entry);
@@ -770,6 +792,18 @@ class SpreadsheetApp {
         });
 
         return { entries, total, truncated };
+    }
+
+    hasLocalChangesComparedToBaseline() {
+        const { entries } = this.collectDiffEntries(1);
+        return entries.length > 0;
+    }
+
+    restoreBaselineState() {
+        this.cellData = this.cloneCellData(this.initialCellData);
+        this.rowHeights = new Map(this.initialRowHeights || []);
+        this.columnWidths = new Map(this.initialColumnWidths || []);
+        this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
     }
 
     cloneCellRecord(record) {
@@ -804,9 +838,25 @@ class SpreadsheetApp {
         this.latestDiffTotal = total;
         this.latestDiffTruncated = truncated;
         const isDirty = entries.length > 0;
+
+        if (isDirty && this.undoStack.length === 0 && !this.hasRestoredDraft && !this.userMadeChanges) {
+            if (!this.hasAutoPersistedBaseline) {
+                this.hasAutoPersistedBaseline = true;
+                this.markChangesPersisted();
+                if (this.saveModal && !this.saveModal.classList.contains('hidden')) {
+                    this.renderSaveModalDiff();
+                }
+                return;
+            }
+        }
+
         if (this.unsavedChanges !== isDirty) {
             this.unsavedChanges = isDirty;
             this.updateSaveIndicator(isDirty);
+        }
+
+        if (!isDirty) {
+            this.hasAutoPersistedBaseline = false;
         }
 
         if (persist) {
@@ -904,6 +954,8 @@ class SpreadsheetApp {
         if (typeof window === 'undefined' || !window.localStorage) {
             return;
         }
+        let restored = false;
+        let needsRefresh = false;
         try {
             const raw = window.localStorage.getItem(this.localDraftKey);
             if (!raw) return;
@@ -911,25 +963,49 @@ class SpreadsheetApp {
             if (!payload || payload.version !== 1) return;
             if (payload.cellData) {
                 this.cellData = this.deserializeMap(payload.cellData);
+                restored = true;
+                needsRefresh = true;
             }
             if (payload.rowHeights) {
                 this.rowHeights = this.deserializeMap(payload.rowHeights);
+                restored = true;
+                needsRefresh = true;
             }
             if (payload.columnWidths) {
                 this.columnWidths = this.deserializeMap(payload.columnWidths);
+                restored = true;
+                needsRefresh = true;
             }
             if (payload.persistedRange && typeof payload.persistedRange === 'object') {
                 this.persistedRange = {
                     ...this.persistedRange,
                     ...payload.persistedRange
                 };
+                restored = true;
+                needsRefresh = true;
             }
-            this.updateGridSize();
-            this.repositionCells();
-            this.updateHeaderPositions();
-            this.refreshAllVisibleCells();
         } catch (error) {
             console.error('Unable to restore draft', error);
+        } finally {
+            if (restored && !this.hasLocalChangesComparedToBaseline()) {
+                this.restoreBaselineState();
+                this.clearPersistedDraft();
+                restored = false;
+                needsRefresh = true;
+            }
+            this.hasRestoredDraft = restored;
+            if (restored) {
+                this.userMadeChanges = true;
+                this.hasAutoPersistedBaseline = false;
+            } else {
+                this.userMadeChanges = false;
+            }
+            if (needsRefresh) {
+                this.updateGridSize();
+                this.repositionCells();
+                this.updateHeaderPositions();
+                this.refreshAllVisibleCells();
+            }
         }
     }
 
@@ -944,6 +1020,9 @@ class SpreadsheetApp {
         this.unsavedChanges = false;
         this.updateSaveIndicator(false);
         this.clearPersistedDraft();
+        this.hasRestoredDraft = false;
+        this.hasAutoPersistedBaseline = false;
+        this.userMadeChanges = false;
     }
 
     setSaveModalBusy(isBusy) {
@@ -987,10 +1066,7 @@ class SpreadsheetApp {
     }
 
     discardLocalChanges() {
-        this.cellData = this.cloneCellData(this.initialCellData);
-        this.rowHeights = new Map(this.initialRowHeights || []);
-        this.columnWidths = new Map(this.initialColumnWidths || []);
-        this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
+        this.restoreBaselineState();
         this.undoStack = [];
         this.redoStack = [];
         this.updateUndoRedoButtons();
@@ -1044,14 +1120,21 @@ class SpreadsheetApp {
             ? `<ul class="save-modal__diff-changes">${entry.changes.slice(0, 4).map(change => `<li>${escapeHTML(change)}</li>`).join('')}</ul>`
             : '';
 
-        const noChangesMessage = !changes && (!entry.before || !entry.after)
+        const noChangesMessage = !entry.meta && !changes && (!entry.before || !entry.after)
             ? `<div class="save-modal__diff-note">${entry.changeType === 'added' ? 'Previously empty cell.' : 'Cell cleared.'}</div>`
             : '';
+
+        let heading = escapeHTML(entry.address);
+        if (entry.meta?.kind === 'column') {
+            heading = `Column ${this.getColumnName(entry.col)}`;
+        } else if (entry.meta?.kind === 'row') {
+            heading = `Row ${entry.row + 1}`;
+        }
 
         return [
             '<div class="save-modal__diff-item">',
             '  <div class="save-modal__diff-item-header">',
-            `    <span class="save-modal__diff-address">${escapeHTML(entry.address)}</span>`,
+            `    <span class="save-modal__diff-address">${heading}</span>`,
             `    <span class="save-modal__diff-tag ${tagClass}">${label}</span>`,
             '  </div>',
             '  <div class="save-modal__diff-columns">',
@@ -2161,6 +2244,8 @@ class SpreadsheetApp {
 
     // Undo/Redo Methods
     saveState(action) {
+        this.userMadeChanges = true;
+        this.hasAutoPersistedBaseline = false;
         this.undoStack.push({ action, cellData: new Map(this.cellData), timestamp: Date.now() });
         if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
         this.redoStack = [];
@@ -2601,20 +2686,14 @@ class SpreadsheetApp {
         // Save state
         this.saveState('Apply painted format');
         
-        // Get or create cell data
-        if (!this.cellData.has(cellKey)) {
-            this.cellData.set(cellKey, {});
-        }
-        
-        const cellData = this.cellData.get(cellKey);
-        
-        // Apply format properties
-        Object.keys(this.formatPainter.format).forEach(key => {
-            cellData[key] = this.formatPainter.format[key];
+        const cellData = this.updateCellDataEntry(cellKey, data => {
+            Object.keys(this.formatPainter.format).forEach(key => {
+                data[key] = this.formatPainter.format[key];
+            });
         });
         
         // Update cell display
-        this.updateCellDisplay(cell, cellData);
+        this.updateCellDisplay(cell, cellData || {});
         
         this.log(`Applied format to cell ${cell.dataset.address}`);
     }
@@ -2645,16 +2724,10 @@ class SpreadsheetApp {
                 const format = this.formatPainter.formats.get(patternKey);
                 
                 if (format) {
-                    // Get or create cell data
-                    if (!this.cellData.has(coordKey)) {
-                        this.cellData.set(coordKey, {});
-                    }
-                    
-                    const cellData = this.cellData.get(coordKey);
-                    
-                    // Apply format properties (borders are already stored at full width)
-                    Object.keys(format).forEach(key => {
-                        cellData[key] = format[key];
+                    this.updateCellDataEntry(coordKey, data => {
+                        Object.keys(format).forEach(key => {
+                            data[key] = format[key];
+                        });
                     });
                 }
             }
@@ -2664,7 +2737,7 @@ class SpreadsheetApp {
         this.selectedCells.forEach(cell => {
             const cellKey = this.getCoord(cell);
             const cellData = this.cellData.get(cellKey);
-            this.updateCellDisplay(cell, cellData);
+            this.updateCellDisplay(cell, cellData || {});
         });
         
         // IMPORTANT: Also update adjacent cells to show overlapping borders
@@ -2719,9 +2792,13 @@ class SpreadsheetApp {
         this.saveState(`${isToggle ? 'Toggle' : 'Set'} ${type}`);
         
         this.selectedCellCoords.forEach(coord => {
-            const data = this.cellData.get(coord) || {};
-            remove ? delete data[type] : data[type] = isToggle ? true : value;
-            this.cellData.set(coord, data);
+            this.updateCellDataEntry(coord, data => {
+                if (remove) {
+                    delete data[type];
+                } else {
+                    data[type] = isToggle ? true : value;
+                }
+            });
         });
         
         this.selectedCells.forEach(cell => {
@@ -2904,9 +2981,13 @@ class SpreadsheetApp {
         
         // Update data model
         this.selectedCellCoords.forEach(coord => {
-            const data = this.cellData.get(coord) || {};
-            fontSize ? data.fontSize = fontSize : delete data.fontSize;
-            this.cellData.set(coord, data);
+            this.updateCellDataEntry(coord, data => {
+                if (fontSize) {
+                    data.fontSize = fontSize;
+                } else {
+                    delete data.fontSize;
+                }
+            });
         });
 
         // Update DOM
@@ -3577,10 +3658,13 @@ class SpreadsheetApp {
             this.saveState(`Edit cell ${this.currentEditingCell.dataset.address}`);
         }
         
-        if (!this.cellData.has(cellKey)) {
-            this.cellData.set(cellKey, {});
-        }
-        this.cellData.get(cellKey).value = newValue;
+        const updatedData = this.updateCellDataEntry(cellKey, data => {
+            if (newValue) {
+                data.value = newValue;
+            } else {
+                delete data.value;
+            }
+        });
 
         // Update formula bar to show the formula, not the result
         this.formulaInput.value = newValue;
@@ -3593,8 +3677,7 @@ class SpreadsheetApp {
         }
         
         // Refresh the cell display to apply overflow logic
-        const cellData = this.cellData.get(cellKey) || {};
-        this.updateCellDisplay(this.currentEditingCell, cellData);
+        this.updateCellDisplay(this.currentEditingCell, updatedData || {});
         
         // IMPORTANT: Refresh cells in BOTH directions that might have overflowing text
         // affected by this cell's new content
@@ -3794,14 +3877,19 @@ class SpreadsheetApp {
         this.saveState(`Clear content of ${this.selectedCellCoords.size} cells`);
         
         this.selectedCellCoords.forEach(coordKey => {
-            if (this.cellData.has(coordKey)) {
-                this.cellData.get(coordKey).value = '';
-            }
+            this.updateCellDataEntry(coordKey, data => {
+                delete data.value;
+                delete data.linkUrl;
+            });
         });
 
         this.selectedCells.forEach(cell => {
-            cell.textContent = '';
+            const cellKey = this.getCoord(cell);
+            const data = this.cellData.get(cellKey) || {};
+            this.updateCellDisplay(cell, data);
         });
+
+        this._updateCellsAndAdjacent(this.selectedCells);
 
         this.updateFormulaBar();
         this.log(`Cleared content of ${this.selectedCellCoords.size} cells`);
@@ -4038,10 +4126,7 @@ class SpreadsheetApp {
                 if (Object.keys(newCellData).length > 0) {
                     this.cellData.set(newKey, newCellData);
                 } else {
-                    // Ensure the cell exists in cellData even if empty
-                    if (!this.cellData.has(newKey)) {
-                        this.cellData.set(newKey, {});
-                    }
+                    this.cellData.delete(newKey);
                 }
 
                 // Update the cell if it's visible
@@ -4126,14 +4211,10 @@ class SpreadsheetApp {
         
         this.saveState(`Edit link in ${this.primaryCell.dataset.address}`);
         
-        // Store both URL and display text
-        if (!this.cellData.has(cellKey)) {
-            this.cellData.set(cellKey, {});
-        }
-        
-        const cellData = this.cellData.get(cellKey);
-        cellData.value = text || url; // Display text (or URL if no text provided)
-        cellData.linkUrl = url; // Store the actual URL separately
+        const cellData = this.updateCellDataEntry(cellKey, data => {
+            data.value = text || url; // Display text (or URL if no text provided)
+            data.linkUrl = url; // Store the actual URL separately
+        }) || {};
         
         // Refresh the cell display
         this.updateCellDisplay(this.primaryCell, cellData);
@@ -4479,8 +4560,7 @@ class SpreadsheetApp {
         this.saveState(`Clear formatting from ${this.selectedCellCoords.size} cells`);
         
         this.selectedCellCoords.forEach(coordKey => {
-            if (this.cellData.has(coordKey)) {
-                const data = this.cellData.get(coordKey);
+            this.updateCellDataEntry(coordKey, data => {
                 delete data.backgroundColor;
                 delete data.bold;
                 delete data.italic;
@@ -4491,7 +4571,7 @@ class SpreadsheetApp {
                 delete data.textAlign;
                 delete data.verticalAlign;
                 delete data.borders;
-            }
+            });
         });
 
         this.selectedCells.forEach(cell => {
@@ -4506,6 +4586,8 @@ class SpreadsheetApp {
             cell.classList.remove('align-left', 'align-center', 'align-right',
                     'align-top', 'align-middle', 'align-bottom');
         });
+
+        this._updateCellsAndAdjacent(this.selectedCells);
 
         this.updateUI();
         
@@ -4912,9 +4994,13 @@ class SpreadsheetApp {
         this.saveState(`Apply ${prop}`);
         
         this.selectedCellCoords.forEach(c => {
-            const d = this.cellData.get(c) || {};
-            color ? d[prop] = color : delete d[prop];
-            this.cellData.set(c, d);
+            this.updateCellDataEntry(c, data => {
+                if (color) {
+                    data[prop] = color;
+                } else {
+                    delete data[prop];
+                }
+            });
         });
         
         this.selectedCells.forEach(el => el.style[styleProp] = color || '');
@@ -5189,13 +5275,22 @@ class SpreadsheetApp {
         
         this.selectedCellCoords.forEach(coord => {
             const { row, col } = this.getCoordPos(coord);
-            const data = this.cellData.get(coord) || {};
-            if (action === 'clear') delete data.borders;
-            else {
+            this.updateCellDataEntry(coord, data => {
+                if (action === 'clear') {
+                    delete data.borders;
+                    return;
+                }
+
+                const sides = rules[action](row, col) || [];
+                if (!sides.length) {
+                    return;
+                }
+
                 if (!data.borders) data.borders = {};
-                rules[action](row, col)?.forEach(side => data.borders[side] = borderVal);
-            }
-            this.cellData.set(coord, data);
+                sides.forEach(side => {
+                    data.borders[side] = borderVal;
+                });
+            });
         });
         
         this._updateCellsAndAdjacent(this.selectedCells);
@@ -5288,23 +5383,15 @@ class SpreadsheetApp {
         const cellKey = this.getCoord(cell);
         const { row, col } = this.getCellPos(cell);
         
-        if (!this.cellData.has(cellKey)) {
-            this.cellData.set(cellKey, {});
-        }
-        this.cellData.get(cellKey).value = value;
-        
-        // Handle escaped formulas (starting with ')
-        if (value.startsWith("'")) {
-            // Display without the leading apostrophe
-            cell.textContent = value.substring(1);
-        }
-        // If it's a formula, evaluate and display the result
-        else if (value.startsWith('=')) {
-            const result = this.parseFormula(value, row, col);
-            cell.textContent = result;
-        } else {
-            cell.textContent = value;
-        }
+        const cellData = this.updateCellDataEntry(cellKey, data => {
+            if (value) {
+                data.value = value;
+            } else {
+                delete data.value;
+            }
+        }) || {};
+
+        this.updateCellDisplay(cell, cellData);
     }
 
     handleFormulaFocus() {
