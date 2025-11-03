@@ -598,6 +598,36 @@ class SpreadsheetApp {
             }
         });
 
+        this.getChangedColumns().forEach(col => {
+            const beforeSize = {
+                width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
+                height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
+            };
+            const afterSize = {
+                width: this.getColumnWidth(col),
+                height: this.getRowHeight(0)
+            };
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            sizeChanges.forEach(change => {
+                allLines.push(`~ Column ${this.getColumnName(col)} ${change}`);
+            });
+        });
+
+        this.getChangedRows().forEach(row => {
+            const beforeSize = {
+                width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
+                height: this.getSnapshotRowHeight(this.initialRowHeights, row)
+            };
+            const afterSize = {
+                width: this.getColumnWidth(0),
+                height: this.getRowHeight(row)
+            };
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            sizeChanges.forEach(change => {
+                allLines.push(`~ Row ${row + 1} ${change}`);
+            });
+        });
+
         if (!allLines.length) {
             return { text: '', truncated: false };
         }
@@ -3272,11 +3302,16 @@ class SpreadsheetApp {
 
     handleMouseUp(event) {
         if (this.isResizing) {
+            const completedType = this.resizeType;
+            const completedIndex = this.resizeIndex;
+            const previousSize = this.resizeStartSize;
+            const resizeConfig = this.resizeConfig;
             this.isResizing = false;
             this.resizeType = null;
             this.resizeIndex = null;
             this.resizeStartPos = null;
             this.resizeStartSize = null;
+            this.resizeConfig = null;
             document.body.style.cursor = '';
             
             // Cancel any pending animation frame
@@ -3284,12 +3319,26 @@ class SpreadsheetApp {
                 cancelAnimationFrame(this.resizeAnimationFrame);
                 this.resizeAnimationFrame = null;
             }
-            
+
             // Set flag to prevent click event from firing
             this.justResized = true;
             setTimeout(() => {
                 this.justResized = false;
             }, 10);
+
+            let sizeChanged = false;
+            if (resizeConfig && typeof completedIndex === 'number' && Number.isFinite(previousSize)) {
+                const currentSize = resizeConfig.getSizeFn.call(this, completedIndex);
+                if (Number.isFinite(currentSize) && Math.abs(currentSize - previousSize) >= 0.1) {
+                    sizeChanged = true;
+                }
+            }
+
+            if (sizeChanged) {
+                this.userMadeChanges = true;
+                this.hasAutoPersistedBaseline = false;
+                this.scheduleDirtyStateUpdate();
+            }
             
             return;
         }
