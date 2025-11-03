@@ -1505,14 +1505,36 @@ class SpreadsheetApp {
         });
     }
 
+    _toggleDialog(dialogElement, showFn) {
+        if (!dialogElement.classList.contains('hidden')) {
+            dialogElement.classList.add('hidden');
+            return;
+        }
+        showFn.call(this);
+    }
+
+    showColorPalette() { 
+        this._toggleDialog(this.colorPalette, () => this._managePalette('show', 'color')); 
+    }
+
+    showFontColorPalette() { 
+        this._toggleDialog(this.fontColorPalette, () => this._managePalette('show', 'fontColor')); 
+    }
+
+    showBorderMenu() { 
+        this._toggleDialog(this.borderMenu, () => this._managePalette('show', 'border')); 
+    }
+
     showSaveOptionsModal() {
-        this.ensureSaveOptionsModal();
-        this.updateDirtyState({ persist: false });
-        this.renderSaveModalDiff();
-        this.updateSaveModalStatus('');
-        this.setSaveModalBusy(false);
-        this.saveModal?.classList.remove('hidden');
-        this.refreshOAuthInfo();
+        this._toggleDialog(this.saveModal, () => {
+            this.ensureSaveOptionsModal();
+            this.updateDirtyState({ persist: false });
+            this.renderSaveModalDiff();
+            this.updateSaveModalStatus('');
+            this.setSaveModalBusy(false);
+            this.saveModal?.classList.remove('hidden');
+            this.refreshOAuthInfo();
+        });
     }
 
     hideSaveOptionsModal() {
@@ -4751,12 +4773,8 @@ class SpreadsheetApp {
         }
     }
 
-    // Replace all 8 methods with these 6 one-liners:
-    showColorPalette() { this._managePalette('show', 'color'); }
     hideColorPalette() { this._managePalette('hide', 'color'); }
-    showFontColorPalette() { this._managePalette('show', 'fontColor'); }
     hideFontColorPalette() { this._managePalette('hide', 'fontColor'); }
-    showBorderMenu() { this._managePalette('show', 'border'); }
     hideBorderMenu() { this._managePalette('hide', 'border'); }
 
     _hidePalette(paletteElement) {
