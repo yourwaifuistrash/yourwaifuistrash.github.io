@@ -3567,6 +3567,301 @@ class SpreadsheetApp {
         return -1;
     }
 
+    insertRowsAtSelection() {
+        const { index, count } = this.getSelectionExtent('row');
+        this.applyInsertion('row', index, count);
+    }
+
+    insertColumnsAtSelection() {
+        const { index, count } = this.getSelectionExtent('col');
+        this.applyInsertion('col', index, count);
+    }
+
+    deleteRowsAtSelection() {
+        const { index, count } = this.getSelectionExtent('row');
+        this.applyDeletion('row', index, count);
+    }
+
+    deleteColumnsAtSelection() {
+        const { index, count } = this.getSelectionExtent('col');
+        this.applyDeletion('col', index, count);
+    }
+
+    getSelectionExtent(axis) {
+        const isRow = axis === 'row';
+        const limit = isRow ? this.config.maxRows : this.config.maxCols;
+        const bounds = this.getSelectionBounds();
+
+        let index;
+        let count;
+
+        if (bounds) {
+            index = isRow ? bounds.minRow : bounds.minCol;
+            count = (isRow ? bounds.maxRow - bounds.minRow : bounds.maxCol - bounds.minCol) + 1;
+        } else if (this.primaryCellCoord) {
+            const pos = this.getCoordPos(this.primaryCellCoord);
+            index = isRow ? pos.row : pos.col;
+            count = 1;
+        } else {
+            index = 0;
+            count = 1;
+        }
+
+        index = Math.max(0, Math.min(index, limit - 1));
+        count = Math.max(1, Math.min(count, limit - index));
+
+        return { index, count };
+    }
+
+    applyInsertion(axis, startIndex, count) {
+        if (!Number.isInteger(startIndex) || !Number.isInteger(count) || count <= 0) return;
+
+        const isRow = axis === 'row';
+        const limit = isRow ? this.config.maxRows : this.config.maxCols;
+        const available = limit - startIndex;
+        if (available <= 0) return;
+
+        const effectiveCount = Math.min(count, available);
+        if (effectiveCount <= 0) return;
+
+        if (this.currentEditingCell) this.stopEditingCell(true);
+
+        const referenceLabel = isRow ? `row ${startIndex + 1}` : `column ${this.getColumnName(startIndex)}`;
+        const plural = effectiveCount > 1 ? 's' : '';
+        this.saveState(`Insert ${isRow ? 'row' : 'column'}${plural} at ${referenceLabel}`);
+
+        this.shiftCellDataForInsertion(axis, startIndex, effectiveCount);
+
+        if (isRow) {
+            this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, effectiveCount, limit);
+        } else {
+            this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, effectiveCount, limit);
+        }
+
+        if (this.clipboard?.sourceCells instanceof Set) {
+            this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'insert');
+        }
+
+        const currentPos = this.primaryCellCoord ? this.getCoordPos(this.primaryCellCoord) : { row: 0, col: 0 };
+        const targetRow = isRow ? startIndex : currentPos.row;
+        const targetCol = isRow ? currentPos.col : startIndex;
+
+        this.setSelectionToSingleCell(targetRow, targetCol);
+
+        const minRow = isRow ? startIndex + effectiveCount - 1 : null;
+        const minCol = isRow ? null : startIndex + effectiveCount - 1;
+        this.recalculatePersistedRange(minRow, minCol);
+
+        this.refreshStructureAfterMutation();
+        this.updateUI();
+
+        this.log(`Inserted ${effectiveCount} ${isRow ? 'row' : 'column'}${plural} at ${referenceLabel}`);
+    }
+
+    applyDeletion(axis, startIndex, count) {
+        if (!Number.isInteger(startIndex) || !Number.isInteger(count) || count <= 0) return;
+
+        const isRow = axis === 'row';
+        const limit = isRow ? this.config.maxRows : this.config.maxCols;
+        if (startIndex >= limit) return;
+
+        const effectiveCount = Math.min(count, limit - startIndex);
+        if (effectiveCount <= 0) return;
+
+        if (this.currentEditingCell) this.stopEditingCell(true);
+
+        const referenceLabel = isRow ? `row ${startIndex + 1}` : `column ${this.getColumnName(startIndex)}`;
+        const plural = effectiveCount > 1 ? 's' : '';
+        this.saveState(`Delete ${isRow ? 'row' : 'column'}${plural} at ${referenceLabel}`);
+
+        this.shiftCellDataForDeletion(axis, startIndex, effectiveCount);
+
+        if (isRow) {
+            this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, -effectiveCount, limit, effectiveCount);
+        } else {
+            this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, -effectiveCount, limit, effectiveCount);
+        }
+
+        if (this.clipboard?.sourceCells instanceof Set) {
+            this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'delete');
+        }
+
+        const currentPos = this.primaryCellCoord ? this.getCoordPos(this.primaryCellCoord) : { row: 0, col: 0 };
+        const maxRow = this.config.maxRows - 1;
+        const maxCol = this.config.maxCols - 1;
+        const targetRow = Math.max(0, Math.min(isRow ? startIndex : currentPos.row, maxRow));
+        const targetCol = Math.max(0, Math.min(isRow ? currentPos.col : startIndex, maxCol));
+
+        this.setSelectionToSingleCell(targetRow, targetCol);
+
+        this.recalculatePersistedRange();
+
+        this.refreshStructureAfterMutation();
+        this.updateUI();
+
+        this.log(`Deleted ${effectiveCount} ${isRow ? 'row' : 'column'}${plural} starting at ${referenceLabel}`);
+    }
+
+    shiftCellDataForInsertion(axis, startIndex, count) {
+        const limitRow = this.config.maxRows;
+        const limitCol = this.config.maxCols;
+        const isRow = axis === 'row';
+        const updated = new Map();
+
+        this.cellData.forEach((value, key) => {
+            const { row, col } = this.getCoordPos(key);
+            const newRow = isRow && row >= startIndex ? row + count : row;
+            const newCol = !isRow && col >= startIndex ? col + count : col;
+
+            if (newRow < limitRow && newCol < limitCol) {
+                updated.set(`${newRow},${newCol}`, value);
+            }
+        });
+
+        this.cellData = updated;
+    }
+
+    shiftCellDataForDeletion(axis, startIndex, count) {
+        const isRow = axis === 'row';
+        const removalEnd = startIndex + count - 1;
+        const updated = new Map();
+
+        this.cellData.forEach((value, key) => {
+            const { row, col } = this.getCoordPos(key);
+
+            if (isRow) {
+                if (row < startIndex) {
+                    updated.set(key, value);
+                } else if (row > removalEnd) {
+                    updated.set(`${row - count},${col}`, value);
+                }
+            } else {
+                if (col < startIndex) {
+                    updated.set(key, value);
+                } else if (col > removalEnd) {
+                    updated.set(`${row},${col - count}`, value);
+                }
+            }
+        });
+
+        this.cellData = updated;
+    }
+
+    shiftIndexedMap(map, startIndex, delta, limit, removeCount = 0) {
+        if (!(map instanceof Map)) return map;
+
+        const result = new Map();
+        const removalEnd = removeCount > 0 ? startIndex + removeCount - 1 : startIndex - 1;
+
+        map.forEach((value, key) => {
+            const numericKey = Number(key);
+            if (!Number.isFinite(numericKey)) return;
+
+            if (removeCount > 0 && numericKey >= startIndex && numericKey <= removalEnd) {
+                return;
+            }
+
+            let newIndex = numericKey;
+            if (numericKey >= startIndex) {
+                newIndex = numericKey + delta;
+            }
+
+            if (newIndex >= 0 && newIndex < limit) {
+                result.set(newIndex, value);
+            }
+        });
+
+        return result;
+    }
+
+    setSelectionToSingleCell(row, col) {
+        const clampedRow = Math.max(0, Math.min(row, this.config.maxRows - 1));
+        const clampedCol = Math.max(0, Math.min(col, this.config.maxCols - 1));
+
+        this.clearSelectionVisuals();
+
+        const coord = `${clampedRow},${clampedCol}`;
+        this.selectedCellCoords.add(coord);
+        this.primaryCellCoord = coord;
+        this.primaryCell = null;
+    }
+
+    recalculatePersistedRange(minRow = null, minCol = null) {
+        const baselineRow = this.initialPersistedRange?.maxRow ?? 0;
+        const baselineCol = this.initialPersistedRange?.maxCol ?? 0;
+
+        let maxRow = baselineRow;
+        let maxCol = baselineCol;
+
+        this.cellData.forEach((_, key) => {
+            const { row, col } = this.getCoordPos(key);
+            if (row > maxRow) maxRow = row;
+            if (col > maxCol) maxCol = col;
+        });
+
+        if (typeof minRow === 'number') {
+            maxRow = Math.max(maxRow, minRow);
+        }
+        if (typeof minCol === 'number') {
+            maxCol = Math.max(maxCol, minCol);
+        }
+
+        this.persistedRange.maxRow = Math.min(this.config.maxRows - 1, Math.max(0, maxRow));
+        this.persistedRange.maxCol = Math.min(this.config.maxCols - 1, Math.max(0, maxCol));
+    }
+
+    refreshStructureAfterMutation() {
+        this.primaryCell = null;
+        this.dragStartCell = null;
+        this.isDragging = false;
+        this.isCtrlDragging = false;
+        this.ctrlDragAction = null;
+        this.ctrlDragProcessedCells.clear();
+
+        this.gridContent.innerHTML = '';
+        this.selectedCells = new Set();
+
+        this.updateGridSize();
+        this.generateHeaders();
+        this.updateVisibleCells();
+    }
+
+    shiftCoordSetForStructureChange(coordSet, axis, startIndex, count, type) {
+        if (!(coordSet instanceof Set) || coordSet.size === 0) return;
+
+        const isRow = axis === 'row';
+        const removalEnd = startIndex + count - 1;
+        const updated = new Set();
+
+        coordSet.forEach(coord => {
+            const { row, col } = this.getCoordPos(coord);
+
+            if (type === 'insert') {
+                const newRow = isRow && row >= startIndex ? row + count : row;
+                const newCol = !isRow && col >= startIndex ? col + count : col;
+                if (newRow < this.config.maxRows && newCol < this.config.maxCols) {
+                    updated.add(`${newRow},${newCol}`);
+                }
+            } else if (type === 'delete') {
+                if ((isRow && row >= startIndex && row <= removalEnd) ||
+                    (!isRow && col >= startIndex && col <= removalEnd)) {
+                    return;
+                }
+
+                if (isRow) {
+                    const newRow = row > removalEnd ? row - count : row;
+                    if (newRow >= 0) updated.add(`${newRow},${col}`);
+                } else {
+                    const newCol = col > removalEnd ? col - count : col;
+                    if (newCol >= 0) updated.add(`${row},${newCol}`);
+                }
+            }
+        });
+
+        coordSet.clear();
+        updated.forEach(coord => coordSet.add(coord));
+    }
+
     selectCells(cells, isPrimary = false) {
         cells.forEach((cell, index) => {
             const coordKey = this.getCoord(cell);
@@ -4135,6 +4430,18 @@ class SpreadsheetApp {
                 break;
             case 'clearFormat':
                 this.clearCellFormatting();
+                break;
+            case 'insertRow':
+                this.insertRowsAtSelection();
+                break;
+            case 'insertCol':
+                this.insertColumnsAtSelection();
+                break;
+            case 'deleteRow':
+                this.deleteRowsAtSelection();
+                break;
+            case 'deleteCol':
+                this.deleteColumnsAtSelection();
                 break;
         }
     }
