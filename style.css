@@ -437,22 +437,6 @@ body { margin: 0; padding: 0; }
 
 .context-menu-icon { width: 16px; text-align: center; }
 
-.color-input-container {
-  display: flex;
-  align-items: center;
-  gap: var(--space-8);
-  padding: var(--space-8) var(--space-16);
-}
-
-.color-input-container input[type="color"] {
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  padding: 0;
-}
-
 .color-palette, .font-color-palette {
   position: fixed;
   z-index: 1001;

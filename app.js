@@ -181,11 +181,6 @@ const CONTEXT_MENU_HTML = `
             <span>Delete Column</span>
         </div>
         <div class="context-menu-separator"></div>
-        <div class="color-input-container">
-            <span>Color:</span>
-            <input type="color" id="contextColorPicker" value="#ffeb3b">
-        </div>
-        <div class="context-menu-separator"></div>
         <div class="context-menu-item" data-action="clearContent">
             <span class="context-menu-icon">🗑️</span>
             <span>Clear Content</span>
@@ -2605,7 +2600,6 @@ class SpreadsheetApp {
             [this.formulaInput, 'input', e => this.handleFormulaInput(e)],
             [this.cellReference, 'keydown', e => this.handleCellReferenceKeyDown(e)],
             [this.contextMenu, 'click', e => this.handleContextMenuClick(e)],
-            ['#contextColorPicker', 'input', e => this.applyBackgroundColor(e.target.value)],
             ['#linkSaveBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.saveLinkEdit(); }],
             ['#linkCancelBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.hideLinkEditor(); }],
             ['.corner-cell', 'click', e => this.handleCornerCellClick(e)],
