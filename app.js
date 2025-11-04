@@ -87,6 +87,9 @@ const TOOLBAR_AND_FORMULA_HTML = `
                 <button class="btn btn--sm toolbar-btn" id="zoomResetBtn" title="Reset Zoom">
                     <span>⊙</span>
                 </button>
+                <button class="btn btn--sm toolbar-btn toolbar-btn--theme" id="themeToggleBtn" title="Toggle theme">
+                    <span id="themeToggleIcon">🌙</span>
+                </button>
             </div>
         </div>
 
@@ -432,6 +435,10 @@ class SpreadsheetApp {
         this.zoomStep = 0.1;  // 10% increments
         this.zoomEditing = false;
         this.zoomDisplayInput = null;
+        this.theme = 'dark';
+        this.themeKey = 'verbosecell-theme';
+        this.themeMediaQuery = null;
+        this.handleSystemThemeChange = (event) => this.onSystemThemeChange(event);
 
         // Undo/Redo system
         this.undoStack = [];
@@ -522,6 +529,7 @@ class SpreadsheetApp {
 
     init() {
         this.setupEventListeners();
+        this.initializeTheme();
         this.generateHeaders();
         this.generateInitialGrid();
         this.setupColorPalette();
@@ -2649,7 +2657,8 @@ class SpreadsheetApp {
                     e.preventDefault();
                     this.beginZoomEdit();
                 }
-            }]
+            }],
+            ['#themeToggleBtn', 'click', () => this.toggleTheme()]
         ];
         
         events.forEach(([sel, evt, fn]) => {
@@ -6780,6 +6789,102 @@ class SpreadsheetApp {
         this.updateZoomDisplay();
     }
 
+    initializeTheme() {
+        let theme = this.getThemeFromUrl();
+        if (!theme) {
+            theme = this.getStoredTheme();
+        }
+        const prefersDark = (typeof window !== 'undefined' && window.matchMedia)
+            ? window.matchMedia('(prefers-color-scheme: dark)')
+            : null;
+
+        if (!theme) {
+            theme = 'dark';
+        }
+
+        this.setTheme(theme, { persist: false });
+
+        if (prefersDark) {
+            this.themeMediaQuery = prefersDark;
+            try {
+                prefersDark.addEventListener('change', this.handleSystemThemeChange);
+            } catch (error) {
+                // Some browsers use older API
+                prefersDark.addListener(this.handleSystemThemeChange);
+            }
+        }
+    }
+
+    setTheme(theme, { persist = true } = {}) {
+        const normalized = theme === 'dark' ? 'dark' : 'light';
+        const previous = this.theme;
+        this.theme = normalized;
+        document.documentElement.setAttribute('data-theme', normalized);
+        this.updateThemeToggle();
+
+        if (persist) {
+            this.storeTheme(normalized);
+        }
+
+        if (previous !== normalized) {
+            this.log(`Theme set to ${normalized}`);
+        }
+    }
+
+    onSystemThemeChange(event) {
+        if (this.getStoredTheme()) return;
+        this.setTheme(event.matches ? 'dark' : 'light', { persist: false });
+    }
+
+    getThemeFromUrl() {
+        if (typeof window === 'undefined' || !window.location) return null;
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('dark')) return 'dark';
+        if (params.has('light')) return 'light';
+        return null;
+    }
+
+    getStoredTheme() {
+        if (typeof document === 'undefined') return null;
+        const cookie = document.cookie || '';
+        const name = `${this.themeKey}=`;
+        const parts = cookie.split(';');
+        for (let part of parts) {
+            const trimmed = part.trim();
+            if (trimmed.startsWith(name)) {
+                const value = decodeURIComponent(trimmed.substring(name.length));
+                return value === 'dark' ? 'dark' : value === 'light' ? 'light' : null;
+            }
+        }
+        return null;
+    }
+
+    storeTheme(theme) {
+        if (typeof document === 'undefined') return;
+        const maxAge = 60 * 60 * 24 * 365; // 1 year
+        const value = encodeURIComponent(theme);
+        document.cookie = `${this.themeKey}=${value}; path=/; max-age=${maxAge}; SameSite=Lax`;
+    }
+
+    toggleTheme() {
+        const next = this.theme === 'dark' ? 'light' : 'dark';
+        this.setTheme(next);
+    }
+
+    updateThemeToggle() {
+        const toggleBtn = document.getElementById('themeToggleBtn');
+        const icon = document.getElementById('themeToggleIcon');
+        if (!toggleBtn || !icon) return;
+
+        const isDark = this.theme === 'dark';
+        toggleBtn.classList.toggle('active', isDark);
+        toggleBtn.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+        const title = isDark ? 'Switch to light mode' : 'Switch to OLED dark mode';
+        toggleBtn.setAttribute('title', title);
+        toggleBtn.setAttribute('aria-label', title);
+        icon.textContent = isDark ? '☀️' : '🌙';
+    }
+    
     log(message, data = null) {
         const timestamp = new Date().toLocaleTimeString();
         console.log(`[${timestamp}] ${message}`, data || '');
