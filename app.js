@@ -75,6 +75,19 @@ const TOOLBAR_AND_FORMULA_HTML = `
                     <span>⬇</span>
                 </button>
             </div>
+            
+            <div class="toolbar-section" style="margin-left: auto;">
+                <button class="btn btn--sm toolbar-btn" id="zoomOutBtn" title="Zoom Out">
+                    <span>−</span>
+                </button>
+                <span id="zoomDisplay" style="min-width: 50px; text-align: center; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);">100%</span>
+                <button class="btn btn--sm toolbar-btn" id="zoomInBtn" title="Zoom In">
+                    <span>+</span>
+                </button>
+                <button class="btn btn--sm toolbar-btn" id="zoomResetBtn" title="Reset Zoom">
+                    <span>⊙</span>
+                </button>
+            </div>
         </div>
 
         <div class="formula-bar">
@@ -412,6 +425,14 @@ class SpreadsheetApp {
         this.justResized = false;
         this.resizeAnimationFrame = null;
 
+        // Zoom state
+        this.zoomLevel = 1.0; // 100%
+        this.minZoom = 0.5;   // 50%
+        this.maxZoom = 2.0;   // 200%
+        this.zoomStep = 0.1;  // 10% increments
+        this.zoomEditing = false;
+        this.zoomDisplayInput = null;
+
         // Undo/Redo system
         this.undoStack = [];
         this.redoStack = [];
@@ -429,10 +450,22 @@ class SpreadsheetApp {
         this.visibleCols = { start: 0, end: 20 };
 
         // DOM elements
+        this.gridContainer = this.container.querySelector('.grid-container');
+        if (!this.gridContainer) {
+            throw new Error('Grid container not found');
+        }
+
         this.mainGrid = document.getElementById('mainGrid');
         this.gridContent = document.getElementById('gridContent');
         this.columnHeaders = document.getElementById('columnHeaderContent');
         this.rowHeaders = document.getElementById('rowHeaderContent');
+        this.cornerCell = this.container.querySelector('.corner-cell');
+        this.zoomDisplay = document.getElementById('zoomDisplay');
+        if (this.zoomDisplay) {
+            this.zoomDisplay.setAttribute('role', 'button');
+            this.zoomDisplay.setAttribute('title', 'Click to set zoom');
+            this.zoomDisplay.setAttribute('tabindex', '0');
+        }
         this.cellReference = document.getElementById('cellReference');
         this.formulaInput = document.getElementById('formulaInput');
         this.contextMenu = document.getElementById('contextMenu');
@@ -494,6 +527,7 @@ class SpreadsheetApp {
         this.setupColorPalette();
         this.setupFontColorPalette();
         this.updateUndoRedoButtons();
+        this.updateZoomDisplay();
         this.log('Spreadsheet initialized');
     }
     
@@ -2454,8 +2488,9 @@ class SpreadsheetApp {
         this.updateGridSize();
 
         // Calculate initial visible area based on viewport
-        const viewportCols = Math.ceil(this.mainGrid.clientWidth / this.config.cellWidth) + 10;
-        const viewportRows = Math.ceil(this.mainGrid.clientHeight / this.config.cellHeight) + 10;
+        const zoom = this.zoomLevel || 1;
+        const viewportCols = Math.ceil((this.mainGrid.clientWidth / zoom) / this.config.cellWidth) + 10;
+        const viewportRows = Math.ceil((this.mainGrid.clientHeight / zoom) / this.config.cellHeight) + 10;
         
         this.visibleCols = {
             start: 0,
@@ -2600,10 +2635,21 @@ class SpreadsheetApp {
             [this.formulaInput, 'input', e => this.handleFormulaInput(e)],
             [this.cellReference, 'keydown', e => this.handleCellReferenceKeyDown(e)],
             [this.contextMenu, 'click', e => this.handleContextMenuClick(e)],
+            ['#contextColorPicker', 'input', e => this.applyBackgroundColor(e.target.value)],
             ['#linkSaveBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.saveLinkEdit(); }],
             ['#linkCancelBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.hideLinkEditor(); }],
             ['.corner-cell', 'click', e => this.handleCornerCellClick(e)],
-            ['#formatPainterBtn', 'click', () => this.activateFormatPainter()]
+            ['#formatPainterBtn', 'click', () => this.activateFormatPainter()],
+            ['#zoomInBtn', 'click', () => this.zoomIn()],
+            ['#zoomOutBtn', 'click', () => this.zoomOut()],
+            ['#zoomResetBtn', 'click', () => this.resetZoom()],
+            [this.zoomDisplay, 'click', () => this.beginZoomEdit()],
+            [this.zoomDisplay, 'keydown', e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.beginZoomEdit();
+                }
+            }]
         ];
         
         events.forEach(([sel, evt, fn]) => {
@@ -2965,7 +3011,8 @@ class SpreadsheetApp {
             this.resizeAnimationFrame = null;
             
             const { axis, minSize, sizeMap } = this.resizeConfig;
-            const delta = event[axis] - this.resizeStartPos;
+            const zoom = this.zoomLevel || 1;
+            const delta = (event[axis] - this.resizeStartPos) / zoom;
             const newSize = Math.max(minSize, this.resizeStartSize + delta);
             
             sizeMap.set(this.resizeIndex, newSize);
@@ -2991,7 +3038,15 @@ class SpreadsheetApp {
         }
         
         // Update grid and cells
-        this.gridContent.style[prop] = getTotal.call(this) + 'px';
+        const totalSize = getTotal.call(this);
+        this.gridContent.style[prop] = totalSize + 'px';
+
+        if (isCol && this.columnHeaders) {
+            this.columnHeaders.style.width = totalSize + 'px';
+        } else if (!isCol && this.rowHeaders) {
+            this.rowHeaders.style.height = totalSize + 'px';
+        }
+
         this.gridContent.querySelectorAll('.cell').forEach(cell => {
             const i = parseInt(cell.dataset[attr]);
             cell.style[i === idx ? prop : i > idx && pos] = 
@@ -3000,8 +3055,19 @@ class SpreadsheetApp {
     }
 
     updateGridSize() {
-        this.gridContent.style.width = this.getTotalGridWidth() + 'px';
-        this.gridContent.style.height = this.getTotalGridHeight() + 'px';
+        const totalWidth = this.getTotalGridWidth();
+        const totalHeight = this.getTotalGridHeight();
+
+        this.gridContent.style.width = totalWidth + 'px';
+        this.gridContent.style.height = totalHeight + 'px';
+
+        if (this.columnHeaders) {
+            this.columnHeaders.style.width = totalWidth + 'px';
+        }
+
+        if (this.rowHeaders) {
+            this.rowHeaders.style.height = totalHeight + 'px';
+        }
     }
 
     repositionCells() {
@@ -3214,38 +3280,46 @@ class SpreadsheetApp {
     }
 
     handleScroll() {
+        if (!this.mainGrid) return;
+        this.updateHeaderTransforms();
+        if (this.recalculateVisibleViewport()) this.updateVisibleCells();
+    }
+
+    recalculateVisibleViewport(forceUpdate = false) {
+        if (!this.mainGrid) return false;
+
+        const zoom = this.zoomLevel || 1;
         const scrollLeft = this.mainGrid.scrollLeft;
         const scrollTop = this.mainGrid.scrollTop;
-        
-        // Update header positions
-        this.columnHeaders.style.transform = `translateX(-${scrollLeft}px)`;
-        this.rowHeaders.style.transform = `translateY(-${scrollTop}px)`;
+        const viewportWidth = this.mainGrid.clientWidth;
+        const viewportHeight = this.mainGrid.clientHeight;
 
-        // Calculate visible ranges using the helper
         const newVisibleCols = this.findVisibleRange(
-            scrollLeft,
-            this.mainGrid.clientWidth,
+            scrollLeft / zoom,
+            viewportWidth / zoom,
             this.config.maxCols,
             this.getColumnWidth
         );
-        
+
         const newVisibleRows = this.findVisibleRange(
-            scrollTop,
-            this.mainGrid.clientHeight,
+            scrollTop / zoom,
+            viewportHeight / zoom,
             this.config.maxRows,
             this.getRowHeight
         );
 
-        // Update if visible area changed
-        if (newVisibleCols.start !== this.visibleCols.start || 
-            newVisibleCols.end !== this.visibleCols.end ||
-            newVisibleRows.start !== this.visibleRows.start || 
-            newVisibleRows.end !== this.visibleRows.end) {
-            
+        const colsChanged = newVisibleCols.start !== this.visibleCols.start ||
+            newVisibleCols.end !== this.visibleCols.end;
+        const rowsChanged = newVisibleRows.start !== this.visibleRows.start ||
+            newVisibleRows.end !== this.visibleRows.end;
+
+        if (colsChanged || rowsChanged || forceUpdate) {
             this.visibleCols = newVisibleCols;
             this.visibleRows = newVisibleRows;
-            this.updateVisibleCells();
+            return true;
         }
+
+        return false;
     }
 
     handleMouseDown(event) {
@@ -3527,8 +3601,11 @@ class SpreadsheetApp {
 
     getCellFromClientPoint(clientX, clientY) {
         const gridRect = this.mainGrid.getBoundingClientRect();
-        const x = clientX - gridRect.left + this.mainGrid.scrollLeft;
-        const y = clientY - gridRect.top + this.mainGrid.scrollTop;
+        const zoom = this.zoomLevel || 1;
+        const offsetX = (clientX - gridRect.left) / zoom;
+        const offsetY = (clientY - gridRect.top) / zoom;
+        const x = offsetX + this.mainGrid.scrollLeft;
+        const y = offsetY + this.mainGrid.scrollTop;
 
         if (x < 0 || y < 0) {
             return null;
@@ -6550,6 +6627,157 @@ class SpreadsheetApp {
             return result === undefined || result === null ? '' : String(result);
         }
         return cellData.value;
+    }
+    
+    zoomIn() {
+        const newZoom = Math.min(this.maxZoom, this.zoomLevel + this.zoomStep);
+        this.setZoom(newZoom);
+    }
+
+    zoomOut() {
+        const newZoom = Math.max(this.minZoom, this.zoomLevel - this.zoomStep);
+        this.setZoom(newZoom);
+    }
+
+    resetZoom() {
+        this.setZoom(1.0);
+    }
+
+    setZoom(level) {
+        const clamped = Math.max(this.minZoom, Math.min(this.maxZoom, level));
+        if (Math.abs(clamped - this.zoomLevel) < 0.0001) {
+            return;
+        }
+
+        this.zoomLevel = clamped;
+        this.applyZoomStyles();
+        this.recalculateVisibleViewport(true);
+        this.updateVisibleCells();
+
+        this.updateZoomDisplay();
+
+        this.log(`Zoom set to ${Math.round(clamped * 100)}%`);
+    }
+
+    applyZoomStyles() {
+        const zoom = this.zoomLevel || 1;
+        const baseWidth = this.getTotalGridWidth();
+        const baseHeight = this.getTotalGridHeight();
+
+        if (this.gridContainer) {
+            const headerHeight = this.config.headerHeight * zoom;
+            const rowHeaderWidth = this.config.rowHeaderWidth * zoom;
+            this.gridContainer.style.gridTemplateRows = `${headerHeight}px 1fr`;
+            this.gridContainer.style.gridTemplateColumns = `${rowHeaderWidth}px 1fr`;
+        }
+
+        if (this.gridContent) {
+            this.gridContent.style.transform = `scale(${zoom})`;
+            this.gridContent.style.transformOrigin = 'top left';
+            this.gridContent.style.width = baseWidth + 'px';
+            this.gridContent.style.height = baseHeight + 'px';
+        }
+
+        if (this.columnHeaders) {
+            this.columnHeaders.style.width = baseWidth + 'px';
+        }
+
+        if (this.rowHeaders) {
+            this.rowHeaders.style.height = baseHeight + 'px';
+        }
+
+        this.updateHeaderTransforms();
+        this.updateZoomDisplay();
+    }
+
+    updateHeaderTransforms() {
+        const zoom = this.zoomLevel || 1;
+        const scrollLeft = this.mainGrid ? this.mainGrid.scrollLeft : 0;
+        const scrollTop = this.mainGrid ? this.mainGrid.scrollTop : 0;
+
+        if (this.columnHeaders) {
+            this.columnHeaders.style.transformOrigin = 'top left';
+            this.columnHeaders.style.transform = `translate(${-scrollLeft}px, 0) scale(${zoom})`;
+        }
+
+        if (this.rowHeaders) {
+            this.rowHeaders.style.transformOrigin = 'top left';
+            this.rowHeaders.style.transform = `translate(0, ${-scrollTop}px) scale(${zoom})`;
+        }
+    }
+
+    updateZoomDisplay() {
+        if (!this.zoomDisplay) {
+            this.zoomDisplay = document.getElementById('zoomDisplay');
+        }
+        if (!this.zoomDisplay || this.zoomEditing) return;
+        this.zoomDisplay.textContent = `${Math.round(this.zoomLevel * 100)}%`;
+    }
+
+    beginZoomEdit() {
+        if (!this.zoomDisplay || this.zoomEditing) return;
+        this.zoomEditing = true;
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.className = 'zoom-display-input';
+        input.value = Math.round(this.zoomLevel * 100);
+        input.min = Math.round(this.minZoom * 100);
+        input.max = Math.round(this.maxZoom * 100);
+        input.setAttribute('aria-label', 'Zoom percentage');
+
+        input.addEventListener('keydown', e => this.handleZoomInputKeydown(e));
+        input.addEventListener('blur', () => this.finishZoomEdit(true));
+
+        this.zoomDisplay.textContent = '';
+        this.zoomDisplay.appendChild(input);
+        this.zoomDisplay.classList.add('zoom-display--editing');
+        this.zoomDisplayInput = input;
+
+        requestAnimationFrame(() => {
+            input.focus();
+            input.select();
+        });
+    }
+
+    handleZoomInputKeydown(event) {
+        if (!this.zoomEditing) return;
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            this.finishZoomEdit(true);
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            this.finishZoomEdit(false);
+        }
+    }
+
+    finishZoomEdit(applyValue) {
+        if (!this.zoomEditing) return;
+
+        const input = this.zoomDisplayInput;
+        const rawValue = input ? input.value : '';
+
+        this.zoomEditing = false;
+        this.zoomDisplayInput = null;
+
+        if (input) {
+            input.remove();
+        }
+
+        if (this.zoomDisplay) {
+            this.zoomDisplay.classList.remove('zoom-display--editing');
+        }
+
+        if (applyValue) {
+            const value = parseFloat(rawValue);
+            if (!isNaN(value)) {
+                const normalized = value / 100;
+                const clamped = Math.max(this.minZoom, Math.min(this.maxZoom, normalized));
+                this.setZoom(clamped);
+            }
+        }
+
+        this.updateZoomDisplay();
     }
 
     log(message, data = null) {
