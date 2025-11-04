@@ -36,6 +36,7 @@
   /* Typography */
   --font-family-base: "FKGroteskNeue", "Geist", "Inter", -apple-system, sans-serif;
   --font-family-mono: "Berkeley Mono", ui-monospace, Consolas, monospace;
+  --font-family-italic: "Inter", "FKGroteskNeue", "Geist", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --font-size-xs: 11px;
   --font-size-sm: 12px;
   --font-size-base: 14px;
@@ -344,6 +345,14 @@ body { margin: 0; padding: 0; }
   z-index: 3;
   cursor: pointer;
   transition: background var(--duration-fast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.corner-cell::before {
+  content: '🗻';
 }
 
 .corner-cell:hover { background: var(--color-bg-2); }
@@ -616,11 +625,17 @@ body { margin: 0; padding: 0; }
 
 .cell.bold { font-weight: var(--font-weight-bold); }
 .cell.italic {
+  font-family: var(--font-family-italic);
   font-style: italic;
-  font-family: var(--font-family-base);
+  font-synthesis: style;
 }
-@supports (font-style: oblique) {
+@supports (font-style: oblique 12deg) {
   .cell.italic { font-style: oblique 12deg; }
+}
+.cell.italic .cell-text-wrapper,
+.cell.italic .cell-text-wrapper span {
+  font-style: inherit;
+  font-family: inherit;
 }
 .cell.underline { text-decoration-line: underline; }
 .cell.strikethrough { text-decoration-line: line-through; }

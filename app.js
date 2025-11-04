@@ -6680,6 +6680,11 @@ class SpreadsheetApp {
             this.gridContainer.style.gridTemplateColumns = `${rowHeaderWidth}px 1fr`;
         }
 
+        // Scale the corner cell emoji
+        if (this.cornerCell) {
+            this.cornerCell.style.fontSize = `${20 * zoom}px`;
+        }
+
         if (this.gridContent) {
             this.gridContent.style.transform = `scale(${zoom})`;
             this.gridContent.style.transformOrigin = 'top left';
