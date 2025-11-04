@@ -5316,45 +5316,115 @@ class SpreadsheetApp {
         if (!this.hasSelection()) return;
         this.saveState(`Apply ${action} border`);
         
-        const bounds = this.getSelectionBounds();
-        if (!bounds) return;
-        const { minRow: minR, maxRow: maxR, minCol: minC, maxCol: maxC } = bounds;
-        
         const borderVal = action === 'clear' ? '' : `${width} ${style} ${color}`;
-        const rules = {
-            all: () => ['top', 'right', 'bottom', 'left'],
-            outer: (r, c) => [[r === minR, 'top'], [r === maxR, 'bottom'], [c === minC, 'left'], [c === maxC, 'right']].filter(x => x[0]).map(x => x[1]),
-            inner: (r, c) => [[r > minR, 'top'], [r < maxR, 'bottom'], [c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
-            horizontal: r => [[r > minR, 'top'], [r < maxR, 'bottom']].filter(x => x[0]).map(x => x[1]),
-            vertical: (r, c) => [[c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
-            left: (r, c) => c === minC ? ['left'] : [],
-            right: (r, c) => c === maxC ? ['right'] : [],
-            top: r => r === minR ? ['top'] : [],
-            bottom: r => r === maxR ? ['bottom'] : [],
-            clear: () => null
-        };
         
-        this.selectedCellCoords.forEach(coord => {
-            const { row, col } = this.getCoordPos(coord);
-            this.updateCellDataEntry(coord, data => {
-                if (action === 'clear') {
-                    delete data.borders;
-                    return;
-                }
+        // Find all contiguous regions in the selection
+        const regions = this.findContiguousRegions();
+        
+        // Apply borders to each region independently
+        regions.forEach(region => {
+            const { minRow: minR, maxRow: maxR, minCol: minC, maxCol: maxC, cells } = region;
+            
+            const rules = {
+                all: () => ['top', 'right', 'bottom', 'left'],
+                outer: (r, c) => [[r === minR, 'top'], [r === maxR, 'bottom'], [c === minC, 'left'], [c === maxC, 'right']].filter(x => x[0]).map(x => x[1]),
+                inner: (r, c) => [[r > minR, 'top'], [r < maxR, 'bottom'], [c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
+                horizontal: r => [[r > minR, 'top'], [r < maxR, 'bottom']].filter(x => x[0]).map(x => x[1]),
+                vertical: (r, c) => [[c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
+                left: (r, c) => c === minC ? ['left'] : [],
+                right: (r, c) => c === maxC ? ['right'] : [],
+                top: r => r === minR ? ['top'] : [],
+                bottom: r => r === maxR ? ['bottom'] : [],
+                clear: () => null
+            };
+            
+            cells.forEach(coord => {
+                const { row, col } = this.getCoordPos(coord);
+                this.updateCellDataEntry(coord, data => {
+                    if (action === 'clear') {
+                        delete data.borders;
+                        return;
+                    }
 
-                const sides = rules[action](row, col) || [];
-                if (!sides.length) {
-                    return;
-                }
+                    const sides = rules[action](row, col) || [];
+                    if (!sides.length) {
+                        return;
+                    }
 
-                if (!data.borders) data.borders = {};
-                sides.forEach(side => {
-                    data.borders[side] = borderVal;
+                    if (!data.borders) data.borders = {};
+                    sides.forEach(side => {
+                        data.borders[side] = borderVal;
+                    });
                 });
             });
         });
         
         this._updateCellsAndAdjacent(this.selectedCells);
+    }
+    
+    findContiguousRegions() {
+        // Convert selected coordinates to a Set for O(1) lookup
+        const selectedSet = new Set(this.selectedCellCoords);
+        const visited = new Set();
+        const regions = [];
+        
+        // Helper to check if a cell is selected and not visited
+        const isAvailable = (row, col) => {
+            const coord = `${row},${col}`;
+            return selectedSet.has(coord) && !visited.has(coord);
+        };
+        
+        // Flood fill to find a contiguous region
+        const floodFill = (startRow, startCol) => {
+            const regionCells = [];
+            const queue = [[startRow, startCol]];
+            let minRow = startRow, maxRow = startRow;
+            let minCol = startCol, maxCol = startCol;
+            
+            while (queue.length > 0) {
+                const [row, col] = queue.shift();
+                const coord = `${row},${col}`;
+                
+                if (visited.has(coord)) continue;
+                if (!selectedSet.has(coord)) continue;
+                
+                visited.add(coord);
+                regionCells.push(coord);
+                
+                // Update bounds
+                minRow = Math.min(minRow, row);
+                maxRow = Math.max(maxRow, row);
+                minCol = Math.min(minCol, col);
+                maxCol = Math.max(maxCol, col);
+                
+                // Check 4 adjacent cells
+                const adjacent = [
+                    [row - 1, col], // up
+                    [row + 1, col], // down
+                    [row, col - 1], // left
+                    [row, col + 1]  // right
+                ];
+                
+                adjacent.forEach(([r, c]) => {
+                    if (isAvailable(r, c)) {
+                        queue.push([r, c]);
+                    }
+                });
+            }
+            
+            return { minRow, maxRow, minCol, maxCol, cells: regionCells };
+        };
+        
+        // Find all regions
+        this.selectedCellCoords.forEach(coord => {
+            if (!visited.has(coord)) {
+                const { row, col } = this.getCoordPos(coord);
+                const region = floodFill(row, col);
+                regions.push(region);
+            }
+        });
+        
+        return regions;
     }
 
     // Extract adjacent cell update logic (reusable)
