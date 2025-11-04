@@ -6813,6 +6813,8 @@ class SpreadsheetApp {
                 prefersDark.addListener(this.handleSystemThemeChange);
             }
         }
+
+        this.applyUrlCustomization();
     }
 
     setTheme(theme, { persist = true } = {}) {
@@ -6842,6 +6844,36 @@ class SpreadsheetApp {
         if (params.has('dark')) return 'dark';
         if (params.has('light')) return 'light';
         return null;
+    }
+
+    applyUrlCustomization() {
+        if (typeof window === 'undefined' || !window.location) return;
+        const params = new URLSearchParams(window.location.search);
+
+        const selHex = params.get('selcol');
+        if (selHex && this.isValidHexColor(selHex)) {
+            const color = `#${selHex.replace('#', '')}`;
+            const translucent = this.hexToRgba(color, 0.25);
+            document.documentElement.style.setProperty('--selection-outline', color);
+            document.documentElement.style.setProperty('--selection-fill', translucent);
+        } else {
+            document.documentElement.style.removeProperty('--selection-outline');
+            document.documentElement.style.removeProperty('--selection-fill');
+        }
+    }
+
+    isValidHexColor(value) {
+        const hex = value.startsWith('#') ? value.slice(1) : value;
+        return /^[0-9a-fA-F]{6}$/.test(hex);
+    }
+
+    hexToRgba(hex, alpha = 1) {
+        const value = hex.startsWith('#') ? hex.slice(1) : hex;
+        const bigint = parseInt(value, 16);
+        const r = (bigint >> 16) & 255;
+        const g = (bigint >> 8) & 255;
+        const b = bigint & 255;
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
     getStoredTheme() {

@@ -472,7 +472,7 @@ body { margin: 0; padding: 0; }
 }
 
 .cell.selected {
-  outline: 1px solid var(--color-primary);
+  outline: 1px solid var(--selection-outline, var(--color-primary));
   outline-offset: -1px;
   z-index: 1;
 }
@@ -481,26 +481,26 @@ body { margin: 0; padding: 0; }
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(33, 128, 141, 0.1);
+  background: var(--selection-fill, rgba(33, 128, 141, 0.1));
   pointer-events: none;
 }
 
 .cell.primary-selected {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid var(--selection-outline, var(--color-primary));
   outline-offset: -2px;
   z-index: 2;
 }
 
 :root[data-theme='dark'] .cell.selected {
-  outline: 1px solid rgba(255, 82, 82, 0.8);
+  outline: 1px solid var(--selection-outline, rgba(255, 82, 82, 0.8));
 }
 
 :root[data-theme='dark'] .cell.selected::after {
-  background: rgba(255, 82, 82, 0.25);
+  background: var(--selection-fill, rgba(255, 82, 82, 0.25));
 }
 
 :root[data-theme='dark'] .cell.primary-selected {
-  outline: 2px solid #ff5252;
+  outline: 2px solid var(--selection-outline, #ff5252);
 }
 
 .cell.editing { 
