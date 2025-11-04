@@ -3255,8 +3255,9 @@ class SpreadsheetApp {
     }
 
     handleMouseDown(event) {
-        const cell = event.target.closest('.cell');
-        if (!cell || event.target.classList.contains('cell-editor')) return;
+        if (event.target.classList.contains('cell-editor')) return;
+        const cell = this.resolveCellFromEvent(event);
+        if (!cell) return;
 
         // Handle format painter - start selection mode
         if (this.formatPainter.active) {
@@ -3315,7 +3316,7 @@ class SpreadsheetApp {
         // Handle edge scrolling
         this.handleEdgeScrolling(event);
 
-        const cell = event.target.closest('.cell');
+        const cell = this.resolveCellFromEvent(event);
         if (!cell) return;
 
         if (this.isCtrlDragging) {
@@ -3437,7 +3438,7 @@ class SpreadsheetApp {
     }
 
     handleDoubleClick(event) {
-        const cell = event.target.closest('.cell');
+        const cell = this.resolveCellFromEvent(event);
         if (!cell || event.target.classList.contains('cell-editor')) return;
         event.preventDefault();
         this.startEditingCell(cell);
@@ -3509,6 +3510,61 @@ class SpreadsheetApp {
 
     getCellAt(row, col) {
         return this.gridContent.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+    }
+
+    resolveCellFromEvent(event) {
+        const directCell = event.target.closest('.cell');
+        if (!directCell) {
+            return null;
+        }
+
+        const { clientX, clientY } = event;
+        const rect = directCell.getBoundingClientRect();
+        const insideDirectBounds = clientX >= rect.left && clientX <= rect.right &&
+            clientY >= rect.top && clientY <= rect.bottom;
+
+        if (insideDirectBounds) {
+            return directCell;
+        }
+
+        const mappedCell = this.getCellFromClientPoint(clientX, clientY);
+        return mappedCell || directCell;
+    }
+
+    getCellFromClientPoint(clientX, clientY) {
+        const gridRect = this.mainGrid.getBoundingClientRect();
+        const x = clientX - gridRect.left + this.mainGrid.scrollLeft;
+        const y = clientY - gridRect.top + this.mainGrid.scrollTop;
+
+        if (x < 0 || y < 0) {
+            return null;
+        }
+
+        const col = this.getIndexAtCoordinate(x, this.getColumnWidth, this.config.maxCols);
+        const row = this.getIndexAtCoordinate(y, this.getRowHeight, this.config.maxRows);
+
+        if (row === -1 || col === -1) {
+            return null;
+        }
+
+        return this.getCellAt(row, col);
+    }
+
+    getIndexAtCoordinate(coord, sizeFn, limit) {
+        if (coord < 0) {
+            return -1;
+        }
+
+        let position = 0;
+        for (let index = 0; index < limit; index++) {
+            const size = sizeFn.call(this, index);
+            if (coord < position + size) {
+                return index;
+            }
+            position += size;
+        }
+
+        return -1;
     }
 
     selectCells(cells, isPrimary = false) {
@@ -3961,11 +4017,11 @@ class SpreadsheetApp {
     }
 
     handleContextMenu(event) {
-        const cell = event.target.closest('.cell');
-        
         if (this.currentEditingCell && event.target.classList.contains('cell-editor')) {
             return;
         }
+
+        const cell = this.resolveCellFromEvent(event);
 
         if (cell && !event.target.classList.contains('cell-editor')) {
             event.preventDefault();
