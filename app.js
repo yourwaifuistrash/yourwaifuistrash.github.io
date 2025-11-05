@@ -434,6 +434,8 @@ class SpreadsheetApp {
         this.resizeStartSize = null;
         this.justResized = false;
         this.resizeAnimationFrame = null;
+        this.resizeIndicator = null;
+        this.resizeGuide = null;
 
         // Zoom state
         this.zoomLevel = 1.0; // 100%
@@ -3233,6 +3235,82 @@ class SpreadsheetApp {
         this.resizeStartSize = config.getSizeFn.call(this, this.resizeIndex);
         
         document.body.style.cursor = config.cursor;
+        
+        // Create resize indicator
+        this.createResizeIndicator();
+        this.createResizeGuide();
+    }
+    
+    createResizeIndicator() {
+        this.resizeIndicator = document.createElement('div');
+        this.resizeIndicator.className = 'resize-indicator';
+        document.body.appendChild(this.resizeIndicator);
+    }
+
+    createResizeGuide() {
+        this.resizeGuide = document.createElement('div');
+        this.resizeGuide.className = `resize-guide resize-guide--${this.resizeType === 'column' ? 'vertical' : 'horizontal'}`;
+        document.body.appendChild(this.resizeGuide);
+    }
+
+    updateResizeIndicator(newSize, event) {
+        if (!this.resizeIndicator) return;
+        
+        const isColumn = this.resizeType === 'column';
+        const label = isColumn 
+            ? `Col ${this.getColumnName(this.resizeIndex)}` 
+            : `Row ${this.resizeIndex + 1}`;
+        
+        this.resizeIndicator.textContent = `${label}: ${Math.round(newSize)}px`;
+        
+        // Position the indicator near the cursor
+        const offset = 20;
+        if (isColumn) {
+            this.resizeIndicator.style.left = (event.clientX + offset) + 'px';
+            this.resizeIndicator.style.top = (event.clientY - offset) + 'px';
+        } else {
+            this.resizeIndicator.style.left = (event.clientX + offset) + 'px';
+            this.resizeIndicator.style.top = (event.clientY + offset) + 'px';
+        }
+    }
+
+    updateResizeGuide() {
+        if (!this.resizeGuide) return;
+        
+        const isColumn = this.resizeType === 'column';
+        
+        if (isColumn) {
+            const headerRect = this.columnHeaders.getBoundingClientRect();
+            const headers = this.columnHeaders.querySelectorAll('.column-header');
+            const header = headers[this.resizeIndex];
+            if (header) {
+                const left = parseFloat(header.style.left) || 0;
+                const width = parseFloat(header.style.width) || this.config.cellWidth;
+                const zoom = this.zoomLevel || 1;
+                this.resizeGuide.style.left = (headerRect.left + (left + width) * zoom) + 'px';
+            }
+        } else {
+            const headerRect = this.rowHeaders.getBoundingClientRect();
+            const headers = this.rowHeaders.querySelectorAll('.row-header');
+            const header = headers[this.resizeIndex];
+            if (header) {
+                const top = parseFloat(header.style.top) || 0;
+                const height = parseFloat(header.style.height) || this.config.cellHeight;
+                const zoom = this.zoomLevel || 1;
+                this.resizeGuide.style.top = (headerRect.top + (top + height) * zoom) + 'px';
+            }
+        }
+    }
+
+    removeResizeIndicator() {
+        if (this.resizeIndicator) {
+            this.resizeIndicator.remove();
+            this.resizeIndicator = null;
+        }
+        if (this.resizeGuide) {
+            this.resizeGuide.remove();
+            this.resizeGuide = null;
+        }
     }
 
     handleDocumentMouseMove(event) {
@@ -3248,6 +3326,8 @@ class SpreadsheetApp {
             
             sizeMap.set(this.resizeIndex, newSize);
             this.updateLayout(this.resizeIndex, this.resizeType);
+            this.updateResizeIndicator(newSize, event);
+            this.updateResizeGuide();
         });
     }
     
@@ -3670,6 +3750,9 @@ class SpreadsheetApp {
                 cancelAnimationFrame(this.resizeAnimationFrame);
                 this.resizeAnimationFrame = null;
             }
+            
+            // Remove resize indicators
+            this.removeResizeIndicator();
             
             // Set flag to prevent click event from firing
             this.justResized = true;
