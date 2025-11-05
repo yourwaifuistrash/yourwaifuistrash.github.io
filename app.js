@@ -6325,14 +6325,15 @@ class SpreadsheetApp {
 
         try {
             let expression = formula.substring(1).trim();
+            const context = { cellRow, cellCol };
             
             // Replace functions FIRST (before cell refs are replaced)
-            expression = this.replaceFunctions(expression);
+            expression = this.replaceFunctions(expression, context);
             
             // Then replace individual cell references
             expression = this.replaceCellReferences(expression, cellRow, cellCol);
             
-            const result = this.evaluateExpression(expression);
+            const result = this.evaluateExpression(expression, context);
             return result;
         } catch (error) {
             return '#ERROR!';
@@ -6376,9 +6377,11 @@ class SpreadsheetApp {
         return false;
     }
 
-    evaluateExpression(expression) {
+    evaluateExpression(expression, context = {}, options = {}) {
         // Handle basic functions
-        expression = this.replaceFunctions(expression);
+        if (!options.skipFunctionReplacement) {
+            expression = this.replaceFunctions(expression, context);
+        }
         
         try {
             // Use Function constructor for safe evaluation
@@ -6397,19 +6400,190 @@ class SpreadsheetApp {
         }
     }
 
-    replaceFunctions(expr) {
+    replaceFunctions(expr, context = {}) {
+        if (!expr || typeof expr !== 'string') return expr;
+        
         const ops = {
-            SUM: v => v.reduce((a,b) => a+b, 0),
-            AVG: v => v.reduce((a,b) => a+b, 0) / v.length,
-            COUNT: v => v.length,
-            MIN: v => Math.min(...v),
-            MAX: v => Math.max(...v),
-            MEDIAN: v => {const s=[...v].sort((a,b)=>a-b), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2}
+            SUM: values => values.reduce((a, b) => a + b, 0),
+            AVG: values => values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0,
+            COUNT: values => values.length,
+            MIN: values => values.length ? Math.min(...values) : 0,
+            MAX: values => values.length ? Math.max(...values) : 0,
+            MEDIAN: values => {
+                if (!values.length) return 0;
+                const sorted = [...values].sort((a, b) => a - b);
+                const mid = sorted.length >> 1;
+                return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            }
         };
         
-        return expr.replace(/(\w+)\(\s*([$]?[A-Z]+[$]?\d+)\s*:\s*([$]?[A-Z]+[$]?\d+)\s*\)/gi, 
-            (_, fn, s, e) => (v => v.length ? (ops[fn.toUpperCase()]?.(v) ?? 0) : 0)(this.getRangeValues(s, e))
-        );
+        let result = '';
+        let index = 0;
+        const length = expr.length;
+        
+        while (index < length) {
+            const char = expr[index];
+            if (/[A-Za-z]/.test(char)) {
+                let nameEnd = index;
+                while (nameEnd < length && /[A-Za-z0-9_]/.test(expr[nameEnd])) {
+                    nameEnd++;
+                }
+                
+                let lookAhead = nameEnd;
+                while (lookAhead < length && /\s/.test(expr[lookAhead])) {
+                    lookAhead++;
+                }
+                
+                if (expr[lookAhead] === '(') {
+                    const fnName = expr.slice(index, nameEnd);
+                    const { content, endIndex } = this.extractParenthesizedContent(expr, lookAhead);
+                    
+                    if (endIndex !== -1) {
+                        const op = ops[fnName.toUpperCase()];
+                        if (op) {
+                            const args = this.splitFunctionArguments(content);
+                            const collectedValues = [];
+                            
+                            args.forEach(arg => {
+                                const values = this.evaluateFunctionArgument(arg, context);
+                                collectedValues.push(...values);
+                            });
+                            
+                            const numericValues = collectedValues
+                                .map(v => (typeof v === 'number') ? v : parseFloat(v))
+                                .filter(v => !isNaN(v));
+                            
+                            const computed = op(numericValues);
+                            result += String(isNaN(computed) ? 0 : computed);
+                            index = endIndex + 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            
+            result += char;
+            index++;
+        }
+        
+        return result;
+    }
+
+    extractParenthesizedContent(expr, startIndex) {
+        let depth = 0;
+        let endIndex = -1;
+        for (let i = startIndex; i < expr.length; i++) {
+            const ch = expr[i];
+            if (ch === '(') {
+                if (depth === 0) {
+                    startIndex = i;
+                }
+                depth++;
+            } else if (ch === ')') {
+                depth--;
+                if (depth === 0) {
+                    endIndex = i;
+                    break;
+                }
+            }
+        }
+        const content = endIndex !== -1 ? expr.slice(startIndex + 1, endIndex) : '';
+        return { content, endIndex };
+    }
+
+    splitFunctionArguments(argsString) {
+        const args = [];
+        let current = '';
+        let depth = 0;
+        let quoteChar = null;
+        
+        for (let i = 0; i < argsString.length; i++) {
+            const ch = argsString[i];
+            
+            if (quoteChar) {
+                current += ch;
+                if (ch === quoteChar && argsString[i - 1] !== '\\') {
+                    quoteChar = null;
+                }
+                continue;
+            }
+            
+            if (ch === '"' || ch === "'") {
+                quoteChar = ch;
+                current += ch;
+                continue;
+            }
+            
+            if (ch === '(') {
+                depth++;
+                current += ch;
+                continue;
+            }
+            
+            if (ch === ')') {
+                depth = Math.max(0, depth - 1);
+                current += ch;
+                continue;
+            }
+            
+            if (ch === ',' && depth === 0) {
+                args.push(current.trim());
+                current = '';
+                continue;
+            }
+            
+            current += ch;
+        }
+        
+        if (current.trim()) {
+            args.push(current.trim());
+        }
+        
+        return args;
+    }
+
+    evaluateFunctionArgument(argument, context = {}) {
+        const trimmed = argument.trim();
+        if (!trimmed) return [];
+        
+        const rangeMatch = trimmed.match(/^([$]?[A-Z]+[$]?\d+)\s*:\s*([$]?[A-Z]+[$]?\d+)$/i);
+        if (rangeMatch) {
+            return this.getRangeValues(rangeMatch[1], rangeMatch[2]);
+        }
+        
+        const value = this.evaluateSubExpression(trimmed, context);
+        if (value === '#ERROR!' || value === undefined || value === null || value === '') {
+            return [];
+        }
+        
+        if (Array.isArray(value)) {
+            return value
+                .map(v => (typeof v === 'number') ? v : parseFloat(v))
+                .filter(v => !isNaN(v));
+        }
+        
+        if (typeof value === 'number') {
+            return [value];
+        }
+        
+        if (this.isNumeric(value)) {
+            return [parseFloat(value)];
+        }
+        
+        return [];
+    }
+
+    evaluateSubExpression(expression, context = {}) {
+        const trimmed = expression.trim();
+        if (!trimmed) return 0;
+        
+        let inner = this.replaceFunctions(trimmed, context);
+        const { cellRow, cellCol } = context;
+        if (typeof cellRow === 'number' && typeof cellCol === 'number') {
+            inner = this.replaceCellReferences(inner, cellRow, cellCol);
+        }
+        
+        return this.evaluateExpression(inner, context, { skipFunctionReplacement: true });
     }
 
     getRangeValues(startRef, endRef) {
