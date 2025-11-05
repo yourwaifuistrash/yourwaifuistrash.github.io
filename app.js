@@ -520,7 +520,8 @@ class SpreadsheetApp {
         this.clipboard = {
             data: null,
             mode: null, // 'copy' or 'cut'
-            sourceCells: null // Store original cell coordinates for cut
+            sourceCells: null, // Store original cell coordinates for cut
+            origin: null // Top-left source cell for relative formula adjustments
         };
 
         // Format painter
@@ -4717,10 +4718,12 @@ class SpreadsheetApp {
         this.clipboard = {
             data: new Map(),
             mode: isCut ? 'cut' : 'copy',
-            sourceCells: isCut ? new Set(this.selectedCellCoords) : null
+            sourceCells: isCut ? new Set(this.selectedCellCoords) : null,
+            origin: null
         };
 
         const { minRow, minCol } = this._getRelativeCoords();
+        this.clipboard.origin = { row: minRow, col: minCol };
 
         this.selectedCellCoords.forEach(coordKey => {
             const { row, col } = this.getCoordPos(coordKey);
@@ -4813,6 +4816,7 @@ class SpreadsheetApp {
         }
 
         const { row: targetRow, col: targetCol } = this.getCellPos(this.primaryCell);
+        const origin = this.clipboard.origin;
 
         // Save state before pasting
         this.saveState(`Paste ${this.clipboard.data.size} cells`);
@@ -4857,13 +4861,18 @@ class SpreadsheetApp {
                 
                 // Copy cell data
                 const newCellData = { ...cellData };
+
+                const sourceRow = origin ? origin.row + relRow : null;
+                const sourceCol = origin ? origin.col + relCol : null;
+                const rowDelta = origin && sourceRow !== null ? newRow - sourceRow : relRow;
+                const colDelta = origin && sourceCol !== null ? newCol - sourceCol : relCol;
                 
                 // Adjust formula references if the value is a formula
                 if (newCellData.value && newCellData.value.startsWith('=')) {
                     newCellData.value = this.adjustFormulaReferences(
                         newCellData.value, 
-                        relRow, 
-                        relCol
+                        rowDelta, 
+                        colDelta
                     );
                 }
                 
@@ -6214,6 +6223,8 @@ class SpreadsheetApp {
         // Match cell references like A1, $A1, A$1, $A$1
         const cellRefRegex = /(\$?)([A-Z]+)(\$?)(\d+)/g;
         
+        // rowOffset/colOffset represent how far the destination cell moved relative to the source cell.
+        // Absolute markers ($) freeze the corresponding axis so those offsets are ignored when present.
         return formula.replace(cellRefRegex, (match, colAbs, colName, rowAbs, rowNum) => {
             let targetCol = this.getColumnIndex(colName);
             let targetRow = parseInt(rowNum) - 1;
