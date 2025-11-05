@@ -459,6 +459,8 @@ class SpreadsheetApp {
         this.columnWidths = new Map(); // Store custom column widths
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
+        this.defaultCellStyle = {};
+        this.fullSheetSelection = false;
 
         // DOM elements
         this.gridContainer = this.container.querySelector('.grid-container');
@@ -609,6 +611,27 @@ class SpreadsheetApp {
         const minimum = Math.max(base, required);
         const batches = Math.ceil(minimum / batchSize) || 1;
         return batches * batchSize;
+    }
+
+    isFullGridSelection() {
+        if (!this.hasSelection()) return false;
+        if (this.fullSheetSelection) return true;
+        const total = this.config.maxRows * this.config.maxCols;
+        return total > 0 && this.selectedCellCoords.size >= total;
+    }
+
+    setDefaultCellProperty(prop, value) {
+        if (value === null || value === undefined || value === '') {
+            delete this.defaultCellStyle[prop];
+        } else {
+            this.defaultCellStyle[prop] = value;
+        }
+    }
+
+    getDefaultCellProperty(prop, fallback = null) {
+        return this.defaultCellStyle.hasOwnProperty(prop)
+            ? this.defaultCellStyle[prop]
+            : fallback;
     }
 
     createColumnHeader(col) {
@@ -2996,9 +3019,30 @@ class SpreadsheetApp {
         const [classes, prefix] = configs[type];
         const isToggle = typeof value === 'boolean';
         const remove = isToggle && this.checkIfAllCellsHaveFormat(type);
-        
+        const applyToAll = this.isFullGridSelection();
+
         this.saveState(`${isToggle ? 'Toggle' : 'Set'} ${type}`);
-        
+
+        if (applyToAll) {
+            if (isToggle) {
+                this.setDefaultCellProperty(type, remove ? null : true);
+            } else {
+                this.setDefaultCellProperty(type, remove ? null : value);
+            }
+
+            const keysToDelete = [];
+            this.cellData.forEach((data, coord) => {
+                delete data[type];
+                if (this.isCellEffectivelyEmpty(data)) {
+                    keysToDelete.push(coord);
+                }
+            });
+            keysToDelete.forEach(coord => this.cellData.delete(coord));
+            this.refreshAllVisibleCells();
+            (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
+            return;
+        }
+
         this.selectedCellCoords.forEach(coord => {
             this.updateCellDataEntry(coord, data => {
                 if (remove) {
@@ -3062,7 +3106,15 @@ class SpreadsheetApp {
             let common = null, allSame = true;
             
             for (const coord of this.selectedCellCoords) {
-                const val = this.cellData.get(coord)?.[prop] || config.default;
+                const data = this.cellData.get(coord);
+                let val;
+                if (data && Object.prototype.hasOwnProperty.call(data, prop)) {
+                    val = data[prop];
+                } else if (Object.prototype.hasOwnProperty.call(this.defaultCellStyle, prop)) {
+                    val = this.defaultCellStyle[prop];
+                } else {
+                    val = config.default;
+                }
                 if (common === null) common = val;
                 else if (common !== val) { allSame = false; break; }
             }
@@ -3204,8 +3256,21 @@ class SpreadsheetApp {
 
     applyFontSize(fontSize) {
         if (!this.hasSelection()) return;
-        
+        const applyToAll = this.isFullGridSelection();
         this.saveState(`Apply font size ${fontSize}px`);
+
+        if (applyToAll) {
+            this.setDefaultCellProperty('fontSize', fontSize || null);
+            const keysToDelete = [];
+            this.cellData.forEach((data, coord) => {
+                delete data.fontSize;
+                if (this.isCellEffectivelyEmpty(data)) keysToDelete.push(coord);
+            });
+            keysToDelete.forEach(coord => this.cellData.delete(coord));
+            this.refreshAllVisibleCells();
+            this.updateFontSizeInput();
+            return;
+        }
         
         // Update data model
         this.selectedCellCoords.forEach(coord => {
@@ -3237,7 +3302,10 @@ class SpreadsheetApp {
         // Get the primary cell's font size or default
         if (this.primaryCellCoord) {
             const cellData = this.cellData.get(this.primaryCellCoord);
-            const fontSize = cellData?.fontSize;
+            let fontSize = cellData?.fontSize;
+            if (fontSize === undefined || fontSize === null) {
+                fontSize = this.defaultCellStyle.fontSize;
+            }
             
             if (fontSize) {
                 fontSizeInput.value = fontSize;
@@ -4048,6 +4116,8 @@ class SpreadsheetApp {
     }
 
     selectCells(cells, isPrimary = false) {
+        if (!cells || !cells.length) return;
+        this.fullSheetSelection = false;
         cells.forEach((cell, index) => {
             const coordKey = this.getCoord(cell);
             
@@ -4071,6 +4141,7 @@ class SpreadsheetApp {
         this.clearSelectionVisuals();
         this.primaryCell = null;
         this.primaryCellCoord = null;
+        this.fullSheetSelection = false;
         this.updateUI();
         this.log('Cleared all selections');
     }
@@ -4470,6 +4541,7 @@ class SpreadsheetApp {
         });
         
         this.updateUI();
+        this.fullSheetSelection = true;
         this.log(`Selected all cells: ${this.config.maxRows * this.config.maxCols} cells`);
     }
 
@@ -4921,17 +4993,23 @@ class SpreadsheetApp {
         // Handle text overflow into adjacent cells
         this.handleCellOverflow(cell, displayText, d);
         
+        const effective = { ...this.defaultCellStyle, ...d };
+        
         cell.className = ['cell',
-            d.bold && 'bold', d.italic && 'italic', d.underline && 'underline', d.strikethrough && 'strikethrough',
-            d.textAlign && `align-${d.textAlign}`, d.verticalAlign && `align-${d.verticalAlign}`,
+            effective.bold && 'bold',
+            effective.italic && 'italic',
+            effective.underline && 'underline',
+            effective.strikethrough && 'strikethrough',
+            effective.textAlign && `align-${effective.textAlign}`,
+            effective.verticalAlign && `align-${effective.verticalAlign}`,
             this.selectedCellCoords.has(coord) && 'selected',
             this.primaryCellCoord === coord && 'primary-selected',
             isLink && 'cell-link'
         ].filter(Boolean).join(' ');
         
-        cell.style.backgroundColor = d.backgroundColor || '';
-        cell.style.color = d.fontColor || '';
-        cell.style.fontSize = d.fontSize ? d.fontSize + 'px' : '';
+        cell.style.backgroundColor = effective.backgroundColor || '';
+        cell.style.color = effective.fontColor || '';
+        cell.style.fontSize = effective.fontSize ? effective.fontSize + 'px' : '';
         
         // Apply borders from this cell's data (borders are stored at full width, applied at half width)
         let topBorder = d.borders?.top || '';
@@ -5030,8 +5108,8 @@ class SpreadsheetApp {
         }
         
         // Text doesn't fit - calculate available overflow space based on alignment
-        const textAlign = cellData.textAlign || 'left';
-        const verticalAlign = cellData.verticalAlign || 'bottom';
+        const textAlign = cellData.textAlign ?? this.defaultCellStyle.textAlign ?? 'left';
+        const verticalAlign = cellData.verticalAlign ?? this.defaultCellStyle.verticalAlign ?? 'bottom';
         
         // Helper function to check if a cell has content
         const cellHasContent = (r, c) => {
@@ -5308,7 +5386,10 @@ class SpreadsheetApp {
         
         for (const coordKey of this.selectedCellCoords) {
             const cellData = this.cellData.get(coordKey);
-            if (!cellData || !cellData[format]) {
+            const value = (cellData && Object.prototype.hasOwnProperty.call(cellData, format))
+                ? cellData[format]
+                : this.defaultCellStyle[format];
+            if (!value) {
                 allHaveFormat = false;
                 break;
             }
@@ -5643,6 +5724,10 @@ class SpreadsheetApp {
                 colors.add(data[prop].toUpperCase());
             }
         });
+        const defaultValue = this.defaultCellStyle[prop];
+        if (defaultValue) {
+            colors.add(String(defaultValue).toUpperCase());
+        }
         return Array.from(colors).sort();
     }
 
@@ -5660,8 +5745,24 @@ class SpreadsheetApp {
 
     _applyColor(prop, styleProp, color, updateFn) {
         if (!this.hasSelection()) return;
-        this.saveState(`Apply ${prop}`);
-        
+        const applyToAll = this.isFullGridSelection();
+        this.saveState(`Apply ${prop}${applyToAll ? ' (all cells)' : ''}`);
+
+        if (applyToAll) {
+            this.setDefaultCellProperty(prop, color || null);
+            const keysToDelete = [];
+            this.cellData.forEach((data, coord) => {
+                delete data[prop];
+                if (this.isCellEffectivelyEmpty(data)) {
+                    keysToDelete.push(coord);
+                }
+            });
+            keysToDelete.forEach(coord => this.cellData.delete(coord));
+            this.refreshAllVisibleCells();
+            updateFn.call(this);
+            return;
+        }
+
         this.selectedCellCoords.forEach(c => {
             this.updateCellDataEntry(c, data => {
                 if (color) {
@@ -5688,20 +5789,30 @@ class SpreadsheetApp {
     _getCommonCellProperty(property) {
         if (!this.hasSelection()) return { hasValue: false, value: null, allSame: false };
         
-        let commonValue = null;
+        let commonValue;
+        let initialized = false;
         let allSame = true;
         
         for (const coord of this.selectedCellCoords) {
-            const value = this.cellData.get(coord)?.[property] || null;
-            
-            if (commonValue === null) {
+            const data = this.cellData.get(coord);
+            let value;
+            if (data && Object.prototype.hasOwnProperty.call(data, property)) {
+                value = data[property];
+            } else if (Object.prototype.hasOwnProperty.call(this.defaultCellStyle, property)) {
+                value = this.defaultCellStyle[property];
+            } else {
+                value = null;
+            }
+            if (!initialized) {
                 commonValue = value;
+                initialized = true;
             } else if (commonValue !== value) {
                 allSame = false;
                 break;
             }
         }
         
+        if (!initialized) return { hasValue: false, value: null, allSame: false };
         return { hasValue: true, value: commonValue, allSame };
     }
 
