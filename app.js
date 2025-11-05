@@ -98,7 +98,10 @@ const TOOLBAR_AND_FORMULA_HTML = `
                 <input type="text" id="cellReference" class="form-control" placeholder="A1">
             </div>
             <div class="formula-bar-label">fx</div>
-            <input type="text" id="formulaInput" class="form-control formula-input" placeholder="Enter formula or value...">
+            <div class="formula-input-wrapper">
+                <input type="text" id="formulaInput" class="form-control formula-input" placeholder="Enter formula or value...">
+                <div id="formulaSuggestions" class="formula-suggestions hidden" aria-live="polite"></div>
+            </div>
         </div>
 `;
 
@@ -530,6 +533,67 @@ class SpreadsheetApp {
             formats: null,
             patternWidth: null,
             patternHeight: null
+        };
+
+        this.formulaFunctions = [
+            {
+                name: 'SUM',
+                signature: 'SUM(value1, [value2, ...])',
+                parameters: ['value1', '[value2, ...]'],
+                description: 'Adds all of the numbers in a range of cells.',
+                evaluate: values => values.reduce((total, value) => total + value, 0)
+            },
+            {
+                name: 'AVG',
+                signature: 'AVG(value1, [value2, ...])',
+                parameters: ['value1', '[value2, ...]'],
+                description: 'Returns the average of its arguments.',
+                evaluate: values => values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0
+            },
+            {
+                name: 'COUNT',
+                signature: 'COUNT(value1, [value2, ...])',
+                parameters: ['value1', '[value2, ...]'],
+                description: 'Counts how many numbers are in the list of arguments.',
+                evaluate: values => values.length
+            },
+            {
+                name: 'MIN',
+                signature: 'MIN(value1, [value2, ...])',
+                parameters: ['value1', '[value2, ...]'],
+                description: 'Returns the smallest number in a set of values.',
+                evaluate: values => values.length ? Math.min(...values) : 0
+            },
+            {
+                name: 'MAX',
+                signature: 'MAX(value1, [value2, ...])',
+                parameters: ['value1', '[value2, ...]'],
+                description: 'Returns the largest number in a set of values.',
+                evaluate: values => values.length ? Math.max(...values) : 0
+            },
+            {
+                name: 'MEDIAN',
+                signature: 'MEDIAN(value1, [value2, ...])',
+                parameters: ['value1', '[value2, ...]'],
+                description: 'Returns the median (middle value) of the given numbers.',
+                evaluate: values => {
+                    if (!values.length) return 0;
+                    const sorted = [...values].sort((a, b) => a - b);
+                    const mid = sorted.length >> 1;
+                    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+                }
+            }
+        ];
+        this.formulaFunctionsMap = new Map(this.formulaFunctions.map(fn => [fn.name, fn]));
+        this.formulaFunctionOps = Object.fromEntries(this.formulaFunctions.map(fn => [fn.name, fn.evaluate]));
+
+        this.formulaSuggestionsPanel = document.getElementById('formulaSuggestions');
+        this.formulaSuggestionState = {
+            items: [],
+            activeIndex: -1,
+            token: null,
+            hint: null,
+            visible: false
         };
 
         this.init();
@@ -2767,6 +2831,9 @@ class SpreadsheetApp {
             [this.formulaInput, 'keydown', e => this.handleFormulaKeyDown(e)],
             [this.formulaInput, 'focus', e => this.handleFormulaFocus(e)],
             [this.formulaInput, 'input', e => this.handleFormulaInput(e)],
+            [this.formulaInput, 'blur', () => this.handleFormulaBlur()],
+            [this.formulaSuggestionsPanel, 'mousedown', e => this.handleFormulaSuggestionMouseDown(e)],
+            [this.formulaSuggestionsPanel, 'click', e => this.handleFormulaSuggestionClick(e)],
             [this.cellReference, 'keydown', e => this.handleCellReferenceKeyDown(e)],
             [this.contextMenu, 'click', e => this.handleContextMenuClick(e)],
             ['#contextColorPicker', 'input', e => this.applyBackgroundColor(e.target.value)],
@@ -4146,6 +4213,7 @@ class SpreadsheetApp {
         this.primaryCellCoord = null;
         this.fullSheetSelection = false;
         this.updateUI();
+        this.hideFormulaSuggestions();
         this.log('Cleared all selections');
     }
 
@@ -4207,6 +4275,11 @@ class SpreadsheetApp {
             this.formulaInput.value = cellData ? (cellData.value || '') : '';
         } else {
             this.formulaInput.value = '';
+        }
+        if (document.activeElement === this.formulaInput) {
+            this.updateFormulaSuggestions();
+        } else {
+            this.hideFormulaSuggestions();
         }
     }
 
@@ -5415,6 +5488,9 @@ class SpreadsheetApp {
             !event.target.closest('#linkCancelBtn')) {
             this.hideLinkEditor();
         }
+        if (!event.target.closest('.formula-input-wrapper') && !event.target.closest('#formulaSuggestions')) {
+            this.hideFormulaSuggestions();
+        }
         if (!event.target.closest('.spreadsheet-container') && 
             !event.target.closest('#contextMenu') && 
             !event.target.closest('#colorPalette') &&
@@ -6217,6 +6293,45 @@ class SpreadsheetApp {
     }
 
     handleFormulaKeyDown(event) {
+        const state = this.formulaSuggestionState || {};
+        const hasSuggestions = state.visible && Array.isArray(state.items) && state.items.length > 0;
+        const hasHintOnly = state.visible && !hasSuggestions && !!state.hint;
+
+        if (state.visible) {
+            if (event.key === 'ArrowDown' && hasSuggestions) {
+                event.preventDefault();
+                this.moveFormulaSuggestion(1);
+                return;
+            }
+            if (event.key === 'ArrowUp' && hasSuggestions) {
+                event.preventDefault();
+                this.moveFormulaSuggestion(-1);
+                return;
+            }
+            if (event.key === 'Tab') {
+                if (hasSuggestions) {
+                    event.preventDefault();
+                    this.applyActiveSuggestion();
+                } else {
+                    this.hideFormulaSuggestions();
+                }
+                return;
+            }
+            if (event.key === 'Enter' && hasSuggestions && state.activeIndex >= 0) {
+                event.preventDefault();
+                this.applyActiveSuggestion();
+                return;
+            }
+            if (event.key === 'Escape') {
+                this.hideFormulaSuggestions();
+                return;
+            }
+        }
+
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Backspace', 'Delete'].includes(event.key)) {
+            setTimeout(() => this.updateFormulaSuggestions(), 0);
+        }
+
         if (event.key === 'Enter') {
             event.preventDefault();
             if (this.primaryCell) {
@@ -6230,7 +6345,11 @@ class SpreadsheetApp {
                 this.updateCellValue(this.primaryCell, newValue);
                 this.log(`Updated cell ${this.primaryCell.dataset.address} via formula bar: "${newValue}"`);
             }
+            this.hideFormulaSuggestions();
             this.formulaInput.blur();
+        } else if (hasHintOnly) {
+            // Keep hint responsive to caret changes.
+            setTimeout(() => this.updateFormulaSuggestions(), 0);
         }
     }
 
@@ -6239,6 +6358,269 @@ class SpreadsheetApp {
             const newValue = this.formulaInput.value;
             this.updateCellValue(this.primaryCell, newValue);
         }
+        this.updateFormulaSuggestions();
+    }
+    
+    handleFormulaBlur() {
+        setTimeout(() => {
+            if (this.formulaInput && this.formulaInput.matches(':focus')) return;
+            this.hideFormulaSuggestions();
+        }, 50);
+    }
+
+    handleFormulaSuggestionMouseDown(event) {
+        event.preventDefault();
+    }
+
+    handleFormulaSuggestionClick(event) {
+        const item = event.target.closest('.formula-suggestion-item');
+        if (!item) return;
+        const index = parseInt(item.dataset.index, 10);
+        if (Number.isNaN(index)) return;
+        this.applyFormulaSuggestion(index);
+    }
+
+    updateFormulaSuggestions() {
+        if (!this.formulaSuggestionsPanel || !this.formulaInput) return;
+        const isFocused = document.activeElement === this.formulaInput;
+        const value = this.formulaInput.value || '';
+        const caret = this.formulaInput.selectionStart ?? value.length;
+
+        if (!isFocused || !value.startsWith('=') || caret === 0) {
+            this.hideFormulaSuggestions();
+            return;
+        }
+
+        const previousState = this.formulaSuggestionState || {};
+        const tokenInfo = this.getFormulaFunctionToken(value, caret);
+        const functionHint = this.getActiveFunctionContext(value, caret);
+
+        let suggestions = [];
+        if (tokenInfo && tokenInfo.shouldSuggest) {
+            suggestions = this.getFunctionSuggestions(tokenInfo.word);
+            if (!suggestions.length && tokenInfo.word.length === 0) {
+                suggestions = [...this.formulaFunctions];
+            }
+        }
+
+        if (!suggestions.length && !functionHint) {
+            this.hideFormulaSuggestions();
+            return;
+        }
+
+        let activeIndex = -1;
+        if (suggestions.length) {
+            const prevActiveItem = (previousState.items || [])[previousState.activeIndex ?? -1];
+            if (prevActiveItem) {
+                const idx = suggestions.findIndex(item => item.name === prevActiveItem.name);
+                activeIndex = idx >= 0 ? idx : 0;
+            } else {
+                activeIndex = 0;
+            }
+        }
+
+        this.formulaSuggestionState = {
+            items: suggestions,
+            activeIndex,
+            token: tokenInfo ? { start: tokenInfo.start, end: tokenInfo.end, word: tokenInfo.word } : null,
+            hint: functionHint,
+            visible: true
+        };
+
+        this.renderFormulaSuggestions();
+    }
+
+    getFunctionSuggestions(fragment = '') {
+        const upper = fragment.toUpperCase();
+        let matches = this.formulaFunctions.filter(fn => fn.name.startsWith(upper));
+        if (!matches.length && upper) {
+            matches = this.formulaFunctions.filter(fn => fn.name.includes(upper));
+        }
+        return matches;
+    }
+
+    renderFormulaSuggestions() {
+        if (!this.formulaSuggestionsPanel) return;
+        const state = this.formulaSuggestionState;
+        if (!state.visible) {
+            this.hideFormulaSuggestions();
+            return;
+        }
+
+        let html = '';
+
+        if (state.hint) {
+            const { metadata, argumentIndex } = state.hint;
+            html += '<div class="formula-suggestion-hint">';
+            html += `<span class="formula-suggestion-hint-name">${escapeHTML(metadata.signature)}</span>`;
+            if (metadata.parameters && metadata.parameters.length) {
+                const params = metadata.parameters;
+                const activeIndex = Math.min(argumentIndex ?? 0, params.length - 1);
+                const paramsHtml = params.map((param, idx) => {
+                    const classes = ['formula-suggestion-param'];
+                    if (idx === activeIndex) classes.push('is-active');
+                    return `<span class="${classes.join(' ')}">${escapeHTML(param)}</span>`;
+                }).join('<span class="formula-suggestion-param-separator">, </span>');
+                html += `<div class="formula-suggestion-params">${paramsHtml}</div>`;
+            }
+            if (metadata.description) {
+                html += `<div class="formula-suggestion-description">${escapeHTML(metadata.description)}</div>`;
+            }
+            html += '</div>';
+        }
+
+        if (state.items.length) {
+            html += '<div class="formula-suggestion-list">';
+            state.items.forEach((item, index) => {
+                const classes = ['formula-suggestion-item'];
+                if (index === state.activeIndex) classes.push('is-active');
+                html += `<div class="${classes.join(' ')}" data-index="${index}">`;
+                html += `<div class="formula-suggestion-name">${escapeHTML(item.name)}</div>`;
+                if (item.description) {
+                    html += `<div class="formula-suggestion-description">${escapeHTML(item.description)}</div>`;
+                }
+                html += '</div>';
+            });
+            html += '</div>';
+        }
+
+        this.formulaSuggestionsPanel.innerHTML = html;
+        this.formulaSuggestionsPanel.classList.remove('hidden');
+        this.ensureActiveSuggestionVisible();
+    }
+
+    ensureActiveSuggestionVisible() {
+        if (!this.formulaSuggestionsPanel) return;
+        const activeItem = this.formulaSuggestionsPanel.querySelector('.formula-suggestion-item.is-active');
+        if (!activeItem) return;
+        const panelRect = this.formulaSuggestionsPanel.getBoundingClientRect();
+        const itemRect = activeItem.getBoundingClientRect();
+        if (itemRect.top < panelRect.top) {
+            activeItem.scrollIntoView({ block: 'nearest' });
+        } else if (itemRect.bottom > panelRect.bottom) {
+            activeItem.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    hideFormulaSuggestions() {
+        if (!this.formulaSuggestionsPanel) return;
+        this.formulaSuggestionState = {
+            items: [],
+            activeIndex: -1,
+            token: null,
+            hint: null,
+            visible: false
+        };
+        this.formulaSuggestionsPanel.classList.add('hidden');
+        this.formulaSuggestionsPanel.innerHTML = '';
+    }
+
+    moveFormulaSuggestion(offset) {
+        const state = this.formulaSuggestionState;
+        if (!state.items.length) return;
+        let nextIndex = state.activeIndex + offset;
+        if (nextIndex < 0) nextIndex = state.items.length - 1;
+        if (nextIndex >= state.items.length) nextIndex = 0;
+        state.activeIndex = nextIndex;
+        this.renderFormulaSuggestions();
+    }
+
+    applyActiveSuggestion() {
+        if (this.formulaSuggestionState.activeIndex < 0) return;
+        this.applyFormulaSuggestion(this.formulaSuggestionState.activeIndex);
+    }
+
+    applyFormulaSuggestion(index) {
+        const state = this.formulaSuggestionState;
+        const token = state.token;
+        const item = state.items[index];
+        if (!this.formulaInput || !item) return;
+
+        const value = this.formulaInput.value || '';
+        const caret = this.formulaInput.selectionStart ?? value.length;
+
+        const start = token ? token.start : caret;
+        const end = token ? token.end : caret;
+
+        const before = value.slice(0, start);
+        const after = value.slice(end);
+
+        let insertion = item.name;
+        let newCaret;
+        if (!after.startsWith('(')) {
+            insertion += '(';
+            newCaret = start + insertion.length;
+        } else {
+            newCaret = start + insertion.length + 1;
+        }
+
+        const newValue = before + insertion + after;
+        this.formulaInput.value = newValue;
+        this.formulaInput.focus();
+        this.formulaInput.setSelectionRange(newCaret, newCaret);
+
+        this.handleFormulaInput();
+        this.updateFormulaSuggestions();
+    }
+
+    getFormulaFunctionToken(value, caret) {
+        let pos = Math.min(Math.max(caret, 0), value.length);
+        let start = pos;
+        while (start > 0 && /[A-Za-z]/.test(value[start - 1])) {
+            start--;
+        }
+        const word = value.slice(start, pos);
+        const precedingChar = start > 0 ? value[start - 1] : '';
+        const allowedPrev = start <= 1 || /[=+\-*/,(^]/.test(precedingChar) || /\s/.test(precedingChar);
+        const shouldSuggest = allowedPrev;
+        return { start, end: pos, word, shouldSuggest };
+    }
+
+    getActiveFunctionContext(value, caret) {
+        const stack = [];
+        for (let i = 0; i < caret; i++) {
+            const ch = value[i];
+            if (ch === '(') {
+                let j = i - 1;
+                let name = '';
+                while (j >= 0 && /[A-Za-z]/.test(value[j])) {
+                    name = value[j] + name;
+                    j--;
+                }
+                stack.push({ name: name.toUpperCase(), index: i });
+            } else if (ch === ')') {
+                if (stack.length) stack.pop();
+            }
+        }
+
+        while (stack.length) {
+            const ctx = stack.pop();
+            if (!ctx || !ctx.name) continue;
+            const metadata = this.formulaFunctionsMap.get(ctx.name);
+            if (metadata) {
+                const argumentIndex = this.getActiveArgumentIndex(value, ctx.index, caret);
+                return { metadata, argumentIndex };
+            }
+        }
+
+        return null;
+    }
+
+    getActiveArgumentIndex(value, openParenIndex, caret) {
+        let depth = 0;
+        let argumentIndex = 0;
+        for (let i = openParenIndex + 1; i < caret; i++) {
+            const ch = value[i];
+            if (ch === '(') {
+                depth++;
+            } else if (ch === ')') {
+                if (depth === 0) break;
+                depth = Math.max(0, depth - 1);
+            } else if (ch === ',' && depth === 0) {
+                argumentIndex++;
+            }
+        }
+        return argumentIndex;
     }
     
     adjustFormulaReferences(formula, rowOffset, colOffset) {
@@ -6298,6 +6680,7 @@ class SpreadsheetApp {
             const cellData = this.cellData.get(cellKey);
             this.formulaInput.value = cellData ? (cellData.value || '') : '';
         }
+        this.updateFormulaSuggestions();
     }
 
     handleCellReferenceKeyDown(event) {
@@ -6427,19 +6810,7 @@ class SpreadsheetApp {
     replaceFunctions(expr, context = {}) {
         if (!expr || typeof expr !== 'string') return expr;
         
-        const ops = {
-            SUM: values => values.reduce((a, b) => a + b, 0),
-            AVG: values => values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0,
-            COUNT: values => values.length,
-            MIN: values => values.length ? Math.min(...values) : 0,
-            MAX: values => values.length ? Math.max(...values) : 0,
-            MEDIAN: values => {
-                if (!values.length) return 0;
-                const sorted = [...values].sort((a, b) => a - b);
-                const mid = sorted.length >> 1;
-                return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-            }
-        };
+        const ops = this.formulaFunctionOps || {};
         
         let result = '';
         let index = 0;
@@ -6463,8 +6834,9 @@ class SpreadsheetApp {
                     const { content, endIndex } = this.extractParenthesizedContent(expr, lookAhead);
                     
                     if (endIndex !== -1) {
-                        const op = ops[fnName.toUpperCase()];
-                        if (op) {
+                        const fnKey = fnName.toUpperCase();
+                        const op = ops[fnKey];
+                        if (typeof op === 'function') {
                             const args = this.splitFunctionArguments(content);
                             const collectedValues = [];
                             
@@ -6478,7 +6850,11 @@ class SpreadsheetApp {
                                 .filter(v => !isNaN(v));
                             
                             const computed = op(numericValues);
-                            result += String(isNaN(computed) ? 0 : computed);
+                            result += String(Number.isFinite(computed) ? computed : 0);
+                            index = endIndex + 1;
+                            continue;
+                        } else {
+                            result += '0';
                             index = endIndex + 1;
                             continue;
                         }

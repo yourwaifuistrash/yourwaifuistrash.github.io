@@ -330,6 +330,113 @@ body { margin: 0; padding: 0; }
   font-size: var(--font-size-sm);
 }
 
+.formula-input-wrapper {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.formula-input-wrapper .formula-input {
+  flex: 1;
+  width: 100%;
+}
+
+.formula-suggestions {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  left: 0;
+  right: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-8) 0;
+  z-index: 40;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.formula-suggestion-hint {
+  padding: var(--space-8) var(--space-12);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.formula-suggestion-hint-name {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  display: block;
+}
+
+.formula-suggestion-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.formula-suggestion-param {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.formula-suggestion-param.is-active {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.formula-suggestion-param-separator {
+  color: var(--color-text-secondary);
+}
+
+.formula-suggestion-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.formula-suggestion-item {
+  padding: var(--space-6) var(--space-12);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transition: background var(--duration-fast);
+}
+
+.formula-suggestion-item:hover,
+.formula-suggestion-item.is-active {
+  background: rgba(46, 105, 255, 0.08);
+}
+
+:root[data-theme='dark'] .formula-suggestion-item:hover,
+:root[data-theme='dark'] .formula-suggestion-item.is-active {
+  background: rgba(46, 105, 255, 0.16);
+}
+
+.formula-suggestion-name {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.formula-suggestion-description {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+:root[data-theme='dark'] .formula-suggestions {
+  background: var(--color-surface-alt);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme='dark'] .formula-suggestion-hint {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
 .grid-container {
   flex: 1;
   display: grid;
