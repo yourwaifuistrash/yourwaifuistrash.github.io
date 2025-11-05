@@ -4985,6 +4985,12 @@ class SpreadsheetApp {
                 displayText = d.value;
             }
         }
+
+        if (displayText === undefined || displayText === null) {
+            displayText = '';
+        } else if (typeof displayText !== 'string') {
+            displayText = String(displayText);
+        }
         
         isLink = !!(d.linkUrl || this.isHyperlink(displayText));
         
@@ -5067,6 +5073,7 @@ class SpreadsheetApp {
     
     handleCellOverflow(cell, displayText, cellData) {
         const { row, col } = this.getCellPos(cell);
+        const normalizedText = (displayText === undefined || displayText === null) ? '' : String(displayText);
         
         // Remove any existing overflow styling and wrapper
         cell.style.overflow = '';
@@ -5082,7 +5089,7 @@ class SpreadsheetApp {
         }
         
         // If cell has no content, use default overflow behavior
-        if (!displayText || displayText.trim() === '') {
+        if (!normalizedText || normalizedText.trim() === '') {
             cell.style.overflow = 'hidden';
             cell.style.textOverflow = 'ellipsis';
             cell.style.whiteSpace = 'nowrap';
@@ -5090,13 +5097,13 @@ class SpreadsheetApp {
         }
         
         // If this cell has content, it should render on top of overflow from adjacent cells
-        if (displayText.trim() !== '') {
+        if (normalizedText.trim() !== '') {
             cell.style.zIndex = '6';
         }
         
         // Check if text fits within the cell
         const cellWidth = this.getColumnWidth(col);
-        const textWidth = this.measureTextWidth(displayText, cell);
+        const textWidth = this.measureTextWidth(normalizedText, cell);
         const padding = 16;
         
         if (textWidth <= cellWidth - padding) {
@@ -5115,7 +5122,11 @@ class SpreadsheetApp {
         const cellHasContent = (r, c) => {
             const coordKey = `${r},${c}`;
             const data = this.cellData.get(coordKey);
-            return data && data.value && data.value.trim() !== '';
+            if (!data || data.value === undefined || data.value === null) {
+                return false;
+            }
+            const rawValue = typeof data.value === 'string' ? data.value : String(data.value);
+            return rawValue.trim() !== '';
         };
         
         // Calculate the TOTAL theoretical space (as if nothing is blocking)
@@ -5263,7 +5274,7 @@ class SpreadsheetApp {
         textSpan.style.overflow = 'hidden';
         textSpan.style.whiteSpace = 'nowrap';
         textSpan.style.maxWidth = (wrapperWidth - padding) + 'px';
-        textSpan.textContent = cell.textContent;
+        textSpan.textContent = normalizedText;
         
         textWrapper.appendChild(textSpan);
         cell.textContent = '';
