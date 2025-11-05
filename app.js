@@ -391,10 +391,14 @@ class SpreadsheetApp {
 
         // Configuration from application data
         this.config = {
-            initialRows: 100,
-            initialCols: 50,
-            maxRows: 10000,
-            maxCols: 1000,
+            initialRows: 1000,
+            initialCols: 26,
+            rowBatchSize: 1000,
+            colBatchSize: 26,
+            rowExtensionThreshold: 80,
+            colExtensionThreshold: 10,
+            maxRows: 0,
+            maxCols: 0,
             cellWidth: 80,
             cellHeight: 32,
             headerHeight: 32,
@@ -491,6 +495,7 @@ class SpreadsheetApp {
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
+        this.initializeDynamicDimensions();
         this.ensureSaveOptionsModal();
         this.maybeHandleOAuthRedirect();
         this.saveButton = document.getElementById('saveBtn');
@@ -585,7 +590,128 @@ class SpreadsheetApp {
         return clone;
     }
 
+    initializeDynamicDimensions() {
+        const requiredRows = (this.persistedRange?.maxRow ?? 0) + 1;
+        const requiredCols = (this.persistedRange?.maxCol ?? 0) + 1;
+        this.config.maxRows = this.computeInitialLimit(
+            this.config.initialRows,
+            this.config.rowBatchSize,
+            requiredRows
+        );
+        this.config.maxCols = this.computeInitialLimit(
+            this.config.initialCols,
+            this.config.colBatchSize,
+            requiredCols
+        );
+    }
+
+    computeInitialLimit(base, batchSize, required) {
+        const minimum = Math.max(base, required);
+        const batches = Math.ceil(minimum / batchSize) || 1;
+        return batches * batchSize;
+    }
+
+    createColumnHeader(col) {
+        const header = document.createElement('div');
+        header.className = 'column-header';
+        header.textContent = this.getColumnName(col);
+        header.dataset.col = col;
+
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'column-resize-handle';
+        resizeHandle.dataset.col = col;
+        header.appendChild(resizeHandle);
+
+        return header;
+    }
+
+    createRowHeader(row) {
+        const header = document.createElement('div');
+        header.className = 'row-header';
+        header.textContent = (row + 1).toString();
+        header.dataset.row = row;
+
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'row-resize-handle';
+        resizeHandle.dataset.row = row;
+        header.appendChild(resizeHandle);
+
+        return header;
+    }
+
+    appendColumnHeaders(start, end) {
+        for (let col = start; col < end; col++) {
+            this.columnHeaders.appendChild(this.createColumnHeader(col));
+        }
+    }
+
+    appendRowHeaders(start, end) {
+        for (let row = start; row < end; row++) {
+            this.rowHeaders.appendChild(this.createRowHeader(row));
+        }
+    }
+
+    extendRows(minRowIndex = this.config.maxRows - 1) {
+        const desired = Math.max(minRowIndex + 1, this.config.maxRows + this.config.rowBatchSize);
+        const batches = Math.ceil(desired / this.config.rowBatchSize) || 1;
+        const newMax = batches * this.config.rowBatchSize;
+        if (newMax <= this.config.maxRows) return false;
+
+        const start = this.config.maxRows;
+        this.config.maxRows = newMax;
+        this.appendRowHeaders(start, newMax);
+        this.updateGridSize();
+        this.updateHeaderPositions();
+        return true;
+    }
+
+    extendCols(minColIndex = this.config.maxCols - 1) {
+        const desired = Math.max(minColIndex + 1, this.config.maxCols + this.config.colBatchSize);
+        const batches = Math.ceil(desired / this.config.colBatchSize) || 1;
+        const newMax = batches * this.config.colBatchSize;
+        if (newMax <= this.config.maxCols) return false;
+
+        const start = this.config.maxCols;
+        this.config.maxCols = newMax;
+        this.appendColumnHeaders(start, newMax);
+        this.updateGridSize();
+        this.updateHeaderPositions();
+        return true;
+    }
+
+    ensureCapacityForCell(row, col) {
+        let extended = false;
+        if (row >= this.config.maxRows) {
+            extended = this.extendRows(row) || extended;
+        }
+        if (col >= this.config.maxCols) {
+            extended = this.extendCols(col) || extended;
+        }
+        if (extended) {
+            this.recalculateVisibleViewport(true);
+            this.updateVisibleCells();
+        }
+    }
+
+    maybeExtendForViewport(visibleRows, visibleCols) {
+        if (!visibleRows || !visibleCols) return false;
+        let extended = false;
+        const rowThreshold = Math.max(10, this.config.rowExtensionThreshold);
+        const colThreshold = Math.max(6, this.config.colExtensionThreshold);
+        const rowTrigger = Math.max(0, this.config.maxRows - rowThreshold);
+        const colTrigger = Math.max(0, this.config.maxCols - colThreshold);
+        if (visibleRows.end >= rowTrigger) {
+            extended = this.extendRows(visibleRows.end) || extended;
+        }
+        if (visibleCols.end >= colTrigger) {
+            extended = this.extendCols(visibleCols.end) || extended;
+        }
+        return extended;
+    }
+
     updateCellDataEntry(coord, mutator) {
+        const [row, col] = this.parseCoord(coord);
+        this.ensureCapacityForCell(row, col);
         const existing = this.cellData.get(coord) || {};
         mutator(existing);
         if (this.isCellEffectivelyEmpty(existing)) {
@@ -2432,40 +2558,14 @@ class SpreadsheetApp {
 
     generateHeaders() {
         // Clear existing headers
-        this.columnHeaders.innerHTML = '';
-        this.rowHeaders.innerHTML = '';
+        this.columnHeaders.replaceChildren();
+        this.rowHeaders.replaceChildren();
         
         // Generate column headers
-        for (let col = 0; col < this.config.maxCols; col++) {
-            const header = document.createElement('div');
-            header.className = 'column-header';
-            header.textContent = this.getColumnName(col);
-            header.dataset.col = col;
-            
-            // Add resize handle
-            const resizeHandle = document.createElement('div');
-            resizeHandle.className = 'column-resize-handle';
-            resizeHandle.dataset.col = col;
-            header.appendChild(resizeHandle);
-            
-            this.columnHeaders.appendChild(header);
-        }
+        this.appendColumnHeaders(0, this.config.maxCols);
 
         // Generate row headers
-        for (let row = 0; row < this.config.maxRows; row++) {
-            const header = document.createElement('div');
-            header.className = 'row-header';
-            header.textContent = (row + 1).toString();
-            header.dataset.row = row;
-            
-            // Add resize handle
-            const resizeHandle = document.createElement('div');
-            resizeHandle.className = 'row-resize-handle';
-            resizeHandle.dataset.row = row;
-            header.appendChild(resizeHandle);
-            
-            this.rowHeaders.appendChild(header);
-        }
+        this.appendRowHeaders(0, this.config.maxRows);
 
         this.updateHeaderPositions();
         this.log(`Generated headers: ${this.config.maxCols} columns, ${this.config.maxRows} rows`);
@@ -3294,7 +3394,8 @@ class SpreadsheetApp {
         if (this.recalculateVisibleViewport()) this.updateVisibleCells();
     }
 
-    recalculateVisibleViewport(forceUpdate = false) {
+    recalculateVisibleViewport(forceUpdate = false, depth = 0) {
+        if (depth > 4) return false;
         if (!this.mainGrid) return false;
 
         const zoom = this.zoomLevel || 1;
@@ -3316,6 +3417,10 @@ class SpreadsheetApp {
             this.config.maxRows,
             this.getRowHeight
         );
+
+        if (this.maybeExtendForViewport(newVisibleRows, newVisibleCols)) {
+            return this.recalculateVisibleViewport(forceUpdate, depth + 1);
+        }
 
         const colsChanged = newVisibleCols.start !== this.visibleCols.start ||
             newVisibleCols.end !== this.visibleCols.end;
