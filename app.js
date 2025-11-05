@@ -2570,9 +2570,11 @@ class SpreadsheetApp {
         return this.getColumnName(col) + (row + 1);
     }
 
-    // Parse cell address to get row and column
+    // Parse cell address to get row and column (supports optional $ for absolute refs)
     parseCellAddress(address) {
-        const match = address.match(/^([A-Z]+)(\d+)$/);
+        if (!address || typeof address !== 'string') return null;
+        const trimmed = address.trim().toUpperCase();
+        const match = trimmed.match(/^\$?([A-Z]+)\$?(\d+)$/);
         if (!match) return null;
         return {
             row: parseInt(match[2]) - 1,
@@ -6405,7 +6407,7 @@ class SpreadsheetApp {
             MEDIAN: v => {const s=[...v].sort((a,b)=>a-b), m=s.length>>1; return s.length%2?s[m]:(s[m-1]+s[m])/2}
         };
         
-        return expr.replace(/(\w+)\(([A-Z]+\d+):([A-Z]+\d+)\)/gi, 
+        return expr.replace(/(\w+)\(\s*([$]?[A-Z]+[$]?\d+)\s*:\s*([$]?[A-Z]+[$]?\d+)\s*\)/gi, 
             (_, fn, s, e) => (v => v.length ? (ops[fn.toUpperCase()]?.(v) ?? 0) : 0)(this.getRangeValues(s, e))
         );
     }
