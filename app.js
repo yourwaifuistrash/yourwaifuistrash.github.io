@@ -4896,6 +4896,30 @@ class SpreadsheetApp {
         this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
         this.refreshColorPalette();
         this.refreshFontColorPalette();
+
+        // Ensure the pasted range is selected and formula bar shows the latest value immediately
+        const newSelection = [];
+        this.clipboard.data.forEach((_, relativeKey) => {
+            const [relRow, relCol] = relativeKey.split(',').map(Number);
+            const newRow = targetRow + relRow;
+            const newCol = targetCol + relCol;
+            if (newRow >= 0 && newRow < this.config.maxRows && newCol >= 0 && newCol < this.config.maxCols) {
+                newSelection.push(this.getCellAt(newRow, newCol) || this.createCell(newRow, newCol));
+            }
+        });
+
+        if (newSelection.length) {
+            const firstCell = newSelection[0];
+            this.clearAllSelections();
+            this.selectCells(newSelection, true);
+            if (firstCell) {
+                this.primaryCell = firstCell;
+                this.primaryCellCoord = `${firstCell.dataset.row},${firstCell.dataset.col}`;
+                this.updateFormulaBar();
+            }
+        } else {
+            this.updateFormulaBar();
+        }
     }
     
     openLink() {
