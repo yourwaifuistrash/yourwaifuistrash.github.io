@@ -466,6 +466,7 @@ class SpreadsheetApp {
         this.visibleCols = { start: 0, end: 20 };
         this.defaultCellStyle = {};
         this.fullSheetSelection = false;
+        this.blockNextNativeContextMenu = false;
 
         // DOM elements
         this.gridContainer = this.container.querySelector('.grid-container');
@@ -4630,6 +4631,21 @@ class SpreadsheetApp {
             return;
         }
 
+        // Handle Context Menu key
+        if (event.key === 'ContextMenu' && !isInInput) {
+            event.preventDefault();
+            this.blockNextNativeContextMenu = true;
+            if (this.primaryCell && this.hasSelection()) {
+                const rect = this.primaryCell.getBoundingClientRect();
+                // Position the menu at the center of the primary cell
+                const x = rect.left + rect.width / 2;
+                const y = rect.top + rect.height / 2;
+                this.showContextMenu(x, y);
+                this.log(`Context menu opened via keyboard for ${this.selectedCells.size} selected cells`);
+            }
+            return;
+        }
+
         // Don't handle other keys if in an input field
         if (isInInput) return;
 
@@ -4728,6 +4744,12 @@ class SpreadsheetApp {
     }
 
     handleContextMenu(event) {
+        if (this.blockNextNativeContextMenu) {
+            event.preventDefault();
+            this.blockNextNativeContextMenu = false;
+            return;
+        }
+
         if (this.currentEditingCell && event.target.classList.contains('cell-editor')) {
             return;
         }
