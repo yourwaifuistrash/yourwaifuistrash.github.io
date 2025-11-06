@@ -420,6 +420,7 @@ class SpreadsheetApp {
         this.currentEditingCell = null;
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
+        this.renderedCellCoords = new Set();
 
         // Edge scrolling state
         this.edgeScrolling = false;
@@ -2729,6 +2730,7 @@ class SpreadsheetApp {
                 if (cell === this.primaryCell) {
                     this.primaryCell = null;
                 }
+                this.renderedCellCoords.delete(`${row},${col}`);
                 cell.remove();
             }
         });
@@ -2742,6 +2744,8 @@ class SpreadsheetApp {
             }
         }
         
+        this.refreshVisibleCellStyles();
+        
         // Restore primary cell reference if it's now visible
         if (!this.primaryCell && this.primaryCellCoord) {
             const [pRow, pCol] = this.parseCoord(this.primaryCellCoord);
@@ -2753,6 +2757,18 @@ class SpreadsheetApp {
                 }
             }
         }
+    }
+    
+    refreshVisibleCellStyles() {
+        const visibleCells = this.gridContent.querySelectorAll('.cell');
+        visibleCells.forEach(cell => {
+            if (cell === this.currentEditingCell) return;
+            const row = parseInt(cell.dataset.row, 10);
+            const col = parseInt(cell.dataset.col, 10);
+            if (Number.isNaN(row) || Number.isNaN(col)) return;
+            const data = this.cellData.get(`${row},${col}`) || {};
+            this.updateCellDisplay(cell, data);
+        });
     }
     
     createCell(row, col) {
@@ -2786,6 +2802,7 @@ class SpreadsheetApp {
         }
 
         this.gridContent.appendChild(cell);
+        this.renderedCellCoords.add(coordKey);
         return cell;
     }
     
@@ -4227,6 +4244,7 @@ class SpreadsheetApp {
 
         this.gridContent.innerHTML = '';
         this.selectedCells = new Set();
+        this.renderedCellCoords.clear();
 
         this.updateGridSize();
         this.generateHeaders();
@@ -5230,54 +5248,47 @@ class SpreadsheetApp {
         cell.style.color = effective.fontColor || '';
         cell.style.fontSize = effective.fontSize ? effective.fontSize + 'px' : '';
         
-        // Apply borders from this cell's data (borders are stored at full width, applied at half width)
-        let topBorder = d.borders?.top || '';
-        let rightBorder = d.borders?.right || '';
-        let bottomBorder = d.borders?.bottom || '';
-        let leftBorder = d.borders?.left || '';
-        
-        // Helper function to halve border width for rendering
-        const halveBorder = (border) => {
-            if (!border) return '';
-            const match = border.match(/^(\d+(?:\.\d+)?)px\s+(.+)$/);
-            if (match) {
-                const halfWidth = parseFloat(match[1]) / 2;
-                return `${halfWidth}px ${match[2]}`;
+        const neighborKey = (r, c) => `${r},${c}`;
+        const getNeighborInfo = (nRow, nCol) => {
+            if (nRow < 0 || nCol < 0 || nRow >= this.config.maxRows || nCol >= this.config.maxCols) {
+                return { data: null, rendered: false };
             }
-            return border;
+            return {
+                data: this.cellData.get(neighborKey(nRow, nCol)) || null,
+                rendered: this.renderedCellCoords.has(neighborKey(nRow, nCol))
+            };
         };
-        
-        // Halve the border widths for visual display
-        topBorder = halveBorder(topBorder);
-        rightBorder = halveBorder(rightBorder);
-        bottomBorder = halveBorder(bottomBorder);
-        leftBorder = halveBorder(leftBorder);
-        
-        // Check adjacent cells for borders that should appear on shared edges (visual only)
-        // Cell above's bottom border should appear as this cell's top border
-        const cellAbove = this.cellData.get(`${row - 1},${col}`);
-        if (cellAbove?.borders?.bottom && !topBorder) {
-            topBorder = halveBorder(cellAbove.borders.bottom);
-        }
-        
-        // Cell below's top border should appear as this cell's bottom border
-        const cellBelow = this.cellData.get(`${row + 1},${col}`);
-        if (cellBelow?.borders?.top && !bottomBorder) {
-            bottomBorder = halveBorder(cellBelow.borders.top);
-        }
-        
-        // Cell to the left's right border should appear as this cell's left border
-        const cellLeft = this.cellData.get(`${row},${col - 1}`);
-        if (cellLeft?.borders?.right && !leftBorder) {
-            leftBorder = halveBorder(cellLeft.borders.right);
-        }
-        
-        // Cell to the right's left border should appear as this cell's right border
-        const cellRight = this.cellData.get(`${row},${col + 1}`);
-        if (cellRight?.borders?.left && !rightBorder) {
-            rightBorder = halveBorder(cellRight.borders.left);
-        }
-        
+
+        const aboveInfo = getNeighborInfo(row - 1, col);
+        const belowInfo = getNeighborInfo(row + 1, col);
+        const leftInfo = getNeighborInfo(row, col - 1);
+        const rightInfo = getNeighborInfo(row, col + 1);
+
+        const topBorder = this._resolveSharedBorder(
+            d.borders?.top || '',
+            aboveInfo.data?.borders?.bottom,
+            aboveInfo.rendered,
+            true
+        );
+        const bottomBorder = this._resolveSharedBorder(
+            d.borders?.bottom || '',
+            belowInfo.data?.borders?.top,
+            belowInfo.rendered,
+            false
+        );
+        const leftBorder = this._resolveSharedBorder(
+            d.borders?.left || '',
+            leftInfo.data?.borders?.right,
+            leftInfo.rendered,
+            true
+        );
+        const rightBorder = this._resolveSharedBorder(
+            d.borders?.right || '',
+            rightInfo.data?.borders?.left,
+            rightInfo.rendered,
+            false
+        );
+
         cell.style.borderTop = topBorder;
         cell.style.borderRight = rightBorder;
         cell.style.borderBottom = bottomBorder;
@@ -6087,6 +6098,31 @@ class SpreadsheetApp {
         return { hasValue: true, value: commonValue, allSame };
     }
 
+    _resolveSharedBorder(ownBorder, neighborBorder, neighborActive, preferNeighbor) {
+        const own = ownBorder || '';
+        const neighbor = neighborBorder || '';
+        if (preferNeighbor) {
+            if (neighborActive && neighbor) {
+                return '';
+            }
+            if (own) {
+                return own;
+            }
+            if (!neighborActive && neighbor) {
+                return neighbor;
+            }
+            return '';
+        }
+
+        if (own) {
+            return own;
+        }
+        if (!neighborActive && neighbor) {
+            return neighbor;
+        }
+        return '';
+    }
+
     updateBackgroundColorButton() {
         const indicator = document.getElementById('bgColorIndicator');
         const { hasValue, value, allSame } = this._getCommonCellProperty('backgroundColor');
@@ -6112,104 +6148,123 @@ class SpreadsheetApp {
         const borderWidthSelect = document.getElementById('borderWidthSelect');
         const borderColorPicker = document.getElementById('borderColorPicker');
         const borderColorHex = document.getElementById('borderColorHex');
-        const borderPreviewCells = this.borderMenu.querySelectorAll('.border-preview-cell');
-        
-        // Update preview function
-        const updatePreview = () => {
-            const style = borderStyleSelect.value;
-            const width = borderWidthSelect.value + 'px';
-            const color = borderColorPicker.value;
-            borderPreviewCells.forEach(cell => {
-                cell.style.border = `${width} ${style} ${color}`;
-            });
+        const borderPreviewCells = Array.from(this.borderMenu.querySelectorAll('.border-preview-cell'));
+        let currentPreviewAction = 'clear';
+
+        const minPreviewRow = 0;
+        const maxPreviewRow = 2;
+        const minPreviewCol = 0;
+        const maxPreviewCol = 2;
+
+        const getPreviewCellIndex = (row, col) => {
+            if (row < minPreviewRow || row > maxPreviewRow) return null;
+            if (col < minPreviewCol || col > maxPreviewCol) return null;
+            return row * 3 + col;
         };
-        
-        // Apply preview border based on action
-        const applyPreviewBorder = (action) => {
-            const style = borderStyleSelect.value;
-            const width = borderWidthSelect.value + 'px';
-            const color = borderColorPicker.value;
-            const borderValue = `${width} ${style} ${color}`;
-            
-            // Reset all borders first to default grid borders
+
+        const getPreviewCellPosition = (index) => ({
+            row: Math.floor(index / 3),
+            col: index % 3
+        });
+
+        const clearPreviewInlineBorders = () => {
             borderPreviewCells.forEach(cell => {
                 cell.style.borderTop = '';
-                cell.style.borderRight = '1px solid var(--color-border)';
-                cell.style.borderBottom = '1px solid var(--color-border)';
+                cell.style.borderRight = '';
+                cell.style.borderBottom = '';
                 cell.style.borderLeft = '';
             });
-            
-            // Define which cells are on which edges (0-8, row-major order)
-            const topRow = [0, 1, 2];
-            const middleRow = [3, 4, 5];
-            const bottomRow = [6, 7, 8];
-            const leftCol = [0, 3, 6];
-            const centerCol = [1, 4, 7];
-            const rightCol = [2, 5, 8];
-            
-            switch (action) {
-                case 'all':
-                    borderPreviewCells.forEach(cell => {
-                        cell.style.border = borderValue;
-                    });
-                    break;
-                case 'outer':
-                    topRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
-                    bottomRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
-                    leftCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
-                    rightCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
-                    break;
-                case 'inner':
-                    // Horizontal inner borders - top row bottom + middle row top AND bottom + bottom row top
-                    topRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
-                    middleRow.forEach(i => {
-                        borderPreviewCells[i].style.borderTop = borderValue;
-                        borderPreviewCells[i].style.borderBottom = borderValue;
-                    });
-                    bottomRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
-                    // Vertical inner borders - left col right + center col left AND right + right col left
-                    leftCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
-                    centerCol.forEach(i => {
-                        borderPreviewCells[i].style.borderLeft = borderValue;
-                        borderPreviewCells[i].style.borderRight = borderValue;
-                    });
-                    rightCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
-                    break;
-                case 'horizontal':
-                    // Top row bottom + middle row both sides + bottom row top
-                    topRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
-                    middleRow.forEach(i => {
-                        borderPreviewCells[i].style.borderTop = borderValue;
-                        borderPreviewCells[i].style.borderBottom = borderValue;
-                    });
-                    bottomRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
-                    break;
-                case 'vertical':
-                    // Left col right + center col both sides + right col left
-                    leftCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
-                    centerCol.forEach(i => {
-                        borderPreviewCells[i].style.borderLeft = borderValue;
-                        borderPreviewCells[i].style.borderRight = borderValue;
-                    });
-                    rightCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
-                    break;
-                case 'left':
-                    leftCol.forEach(i => borderPreviewCells[i].style.borderLeft = borderValue);
-                    break;
-                case 'right':
-                    rightCol.forEach(i => borderPreviewCells[i].style.borderRight = borderValue);
-                    break;
-                case 'top':
-                    topRow.forEach(i => borderPreviewCells[i].style.borderTop = borderValue);
-                    break;
-                case 'bottom':
-                    bottomRow.forEach(i => borderPreviewCells[i].style.borderBottom = borderValue);
-                    break;
-                case 'clear':
-                    // Show no borders (keep default grid borders)
-                    break;
-            }
         };
+
+        const previewRules = {
+            all: () => ['top', 'right', 'bottom', 'left'],
+            outer: (r, c) => [[r === minPreviewRow, 'top'], [r === maxPreviewRow, 'bottom'], [c === minPreviewCol, 'left'], [c === maxPreviewCol, 'right']]
+                .filter(pair => pair[0]).map(pair => pair[1]),
+            inner: (r, c) => [[r > minPreviewRow, 'top'], [r < maxPreviewRow, 'bottom'], [c > minPreviewCol, 'left'], [c < maxPreviewCol, 'right']]
+                .filter(pair => pair[0]).map(pair => pair[1]),
+            horizontal: (r) => [[r > minPreviewRow, 'top'], [r < maxPreviewRow, 'bottom']]
+                .filter(pair => pair[0]).map(pair => pair[1]),
+            vertical: (r, c) => [[c > minPreviewCol, 'left'], [c < maxPreviewCol, 'right']]
+                .filter(pair => pair[0]).map(pair => pair[1]),
+            left: (r, c) => c === minPreviewCol ? ['left'] : [],
+            right: (r, c) => c === maxPreviewCol ? ['right'] : [],
+            top: (r) => r === minPreviewRow ? ['top'] : [],
+            bottom: (r) => r === maxPreviewRow ? ['bottom'] : []
+        };
+
+        const applyPreviewBorder = (action) => {
+            currentPreviewAction = action;
+            clearPreviewInlineBorders();
+
+            if (action === 'clear' || !previewRules[action]) {
+                return;
+            }
+
+            const style = borderStyleSelect.value;
+            const widthValue = parseFloat(borderWidthSelect.value);
+            const numericWidth = Number.isFinite(widthValue) && widthValue > 0 ? widthValue : 1;
+            const color = borderColorPicker.value;
+            const borderValue = `${numericWidth}px ${style} ${color}`;
+
+            const previewData = Array.from({ length: borderPreviewCells.length }, () => ({}));
+
+            borderPreviewCells.forEach((_, index) => {
+                const { row, col } = getPreviewCellPosition(index);
+                const sides = previewRules[action](row, col) || [];
+                if (!sides.length) return;
+                const cellBorders = previewData[index];
+                sides.forEach(side => {
+                    cellBorders[side] = borderValue;
+                });
+            });
+
+            borderPreviewCells.forEach((cell, index) => {
+                const { row, col } = getPreviewCellPosition(index);
+                const cellBorders = previewData[index];
+
+                const aboveIndex = getPreviewCellIndex(row - 1, col);
+                const belowIndex = getPreviewCellIndex(row + 1, col);
+                const leftIndex = getPreviewCellIndex(row, col - 1);
+                const rightIndex = getPreviewCellIndex(row, col + 1);
+
+                const hasAbove = aboveIndex !== null;
+                const hasBelow = belowIndex !== null;
+                const hasLeft = leftIndex !== null;
+                const hasRight = rightIndex !== null;
+
+                const topBorder = this._resolveSharedBorder(
+                    cellBorders.top || '',
+                    hasAbove ? previewData[aboveIndex].bottom : '',
+                    hasAbove,
+                    true
+                );
+                const bottomBorder = this._resolveSharedBorder(
+                    cellBorders.bottom || '',
+                    hasBelow ? previewData[belowIndex].top : '',
+                    hasBelow,
+                    false
+                );
+                const leftBorder = this._resolveSharedBorder(
+                    cellBorders.left || '',
+                    hasLeft ? previewData[leftIndex].right : '',
+                    hasLeft,
+                    true
+                );
+                const rightBorder = this._resolveSharedBorder(
+                    cellBorders.right || '',
+                    hasRight ? previewData[rightIndex].left : '',
+                    hasRight,
+                    false
+                );
+
+                cell.style.borderTop = topBorder;
+                cell.style.borderRight = rightBorder;
+                cell.style.borderBottom = bottomBorder;
+                cell.style.borderLeft = leftBorder;
+            });
+        };
+
+        const updatePreview = () => applyPreviewBorder(currentPreviewAction);
         
         // Update colors in use
         const updateColorsInUse = () => {
