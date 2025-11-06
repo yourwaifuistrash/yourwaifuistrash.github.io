@@ -5831,6 +5831,12 @@ class SpreadsheetApp {
             if (color && !customColorsArray.includes(color)) {
                 customColorsArray.push(color);
                 refreshPaletteFn();
+                // Re-show the palette after refresh
+                if (type === 'background') {
+                    setTimeout(() => this.showColorPalette(), 0);
+                } else {
+                    setTimeout(() => this.showFontColorPalette(), 0);
+                }
             }
         });
 
@@ -5843,9 +5849,14 @@ class SpreadsheetApp {
                     const fullColor = '#' + value;
                     if (!customColorsArray.includes(fullColor)) {
                         customColorsArray.push(fullColor);
+                        refreshPaletteFn();
+                        // Re-show the palette after refresh
+                        if (type === 'background') {
+                            setTimeout(() => this.showColorPalette(), 0);
+                        } else {
+                            setTimeout(() => this.showFontColorPalette(), 0);
+                        }
                     }
-                    applyColorFn(fullColor);
-                    hidePaletteFn();
                 }
             }
         });
