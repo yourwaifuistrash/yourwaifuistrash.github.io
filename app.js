@@ -5697,6 +5697,18 @@ class SpreadsheetApp {
         paletteElement.classList.add('hidden');
     }
 
+    _keepPaletteOpen(type) {
+        let palette = null;
+        if (type === 'background') {
+            palette = this.colorPalette;
+        } else if (type === 'font') {
+            palette = this.fontColorPalette;
+        }
+        if (palette) {
+            palette.classList.remove('hidden');
+        }
+    }
+
     setupColorPalette() {
         this._setupColorPaletteGeneric(
             'colorPaletteGrid',
@@ -5827,16 +5839,11 @@ class SpreadsheetApp {
 
         // Add custom color
         addBtn.addEventListener('click', () => {
-            let color = colorInput.value;
+            const color = colorInput.value;
             if (color && !customColorsArray.includes(color)) {
                 customColorsArray.push(color);
                 refreshPaletteFn();
-                // Re-show the palette after refresh
-                if (type === 'background') {
-                    setTimeout(() => this.showColorPalette(), 0);
-                } else {
-                    setTimeout(() => this.showFontColorPalette(), 0);
-                }
+                this._keepPaletteOpen(type);
             }
         });
 
@@ -5850,12 +5857,7 @@ class SpreadsheetApp {
                     if (!customColorsArray.includes(fullColor)) {
                         customColorsArray.push(fullColor);
                         refreshPaletteFn();
-                        // Re-show the palette after refresh
-                        if (type === 'background') {
-                            setTimeout(() => this.showColorPalette(), 0);
-                        } else {
-                            setTimeout(() => this.showFontColorPalette(), 0);
-                        }
+                        this._keepPaletteOpen(type);
                     }
                 }
             }
@@ -5906,12 +5908,12 @@ class SpreadsheetApp {
         // Colors in use section
         const colorsInUse = getColorsInUseFn();
         if (colorsInUse.length > 0) {
-            this._appendColorSection(container, 'Colors in use', colorsInUse, applyColorFn, hidePaletteFn);
+            this._appendColorSection(container, 'Colors in use', colorsInUse, applyColorFn, hidePaletteFn, refreshPaletteFn, type);
         }
-        
+
         // Custom colors section
         if (customColorsArray.length > 0) {
-            this._appendColorSection(container, 'Custom colors', customColorsArray, applyColorFn, hidePaletteFn);
+            this._appendColorSection(container, 'Custom colors', customColorsArray, applyColorFn, hidePaletteFn, refreshPaletteFn, type);
         }
     }
 
@@ -5927,7 +5929,34 @@ class SpreadsheetApp {
         return swatch;
     }
 
-    _appendColorSection(container, title, colors, applyColorFn, hidePaletteFn) {
+    _createRemovableColorSwatch(color, customColorsArray, applyColorFn, hidePaletteFn, refreshPaletteFn, type) {
+        const swatch = document.createElement('div');
+        swatch.className = 'color-swatch';
+        swatch.style.backgroundColor = color;
+        swatch.title = color;
+        
+        // Left click to apply color
+        swatch.addEventListener('click', () => {
+            applyColorFn(color);
+            hidePaletteFn();
+        });
+        
+        // Right click to remove color
+        swatch.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const index = customColorsArray.indexOf(color);
+            if (index > -1) {
+                customColorsArray.splice(index, 1);
+                refreshPaletteFn();
+                this._keepPaletteOpen(type);
+            }
+        });
+        
+        return swatch;
+    }
+    
+    _appendColorSection(container, title, colors, applyColorFn, hidePaletteFn, refreshPaletteFn, type) {
         const sectionTitle = document.createElement('div');
         sectionTitle.textContent = title;
         sectionTitle.style.fontSize = 'var(--font-size-xs)';
@@ -5943,7 +5972,11 @@ class SpreadsheetApp {
         grid.style.gap = 'var(--space-4)';
         
         colors.forEach(color => {
-            const swatch = this._createColorSwatch(color, applyColorFn, hidePaletteFn);
+            // Use removable swatches for custom colors section
+            const isCustomSection = title === 'Custom colors';
+            const swatch = isCustomSection 
+                ? this._createRemovableColorSwatch(color, colors, applyColorFn, hidePaletteFn, refreshPaletteFn, type)
+                : this._createColorSwatch(color, applyColorFn, hidePaletteFn);
             grid.appendChild(swatch);
         });
         
