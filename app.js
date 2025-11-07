@@ -4315,6 +4315,8 @@ class SpreadsheetApp {
     
     clearAllSelections() {
         this.clearSelectionVisuals();
+        // Only clear cut/copy styling if we're doing a new cut or copy
+        // NOT when just clearing selections
         this.primaryCell = null;
         this.primaryCellCoord = null;
         this.fullSheetSelection = false;
@@ -4913,9 +4915,19 @@ class SpreadsheetApp {
         return { coords, minRow, minCol };
     }
     
+    clearCutCopyStyling() {
+        document.querySelectorAll('.cell').forEach(cell => {
+            cell.style.border = '';
+        });
+    }
+
     cutCells() { this.copyCells(true); }
+
     copyCells(isCut = false) {
         if (!this.hasSelection()) return;
+
+        // Clear existing cut/copy styling when doing a new cut or copy
+        this.clearCutCopyStyling();
 
         this.clipboard = {
             data: new Map(),
@@ -4937,73 +4949,19 @@ class SpreadsheetApp {
             }
         });
 
-        if (isCut) {
-            this.selectedCells.forEach(cell => 
-                cell.style.border = '2px dashed var(--color-primary)'
-            );
-        }
+        // Apply visual styling for both cut and copy
+        this.selectedCells.forEach(cell => {
+            if (isCut) {
+                cell.style.border = '2px dashed var(--color-primary)';
+            } else {
+                cell.style.border = '1px dashed var(--color-primary)';
+            }
+        });
 
         // Copy to system clipboard
         this.copyToSystemClipboard();
 
         this.log(`${isCut ? 'Cut' : 'Copied'} ${this.selectedCellCoords.size} cells`);
-    }
-
-    copyToSystemClipboard() {
-        if (!this.hasSelection()) return;
-
-        // Get bounds to create a proper grid
-        const bounds = this.getSelectionBounds();
-        if (!bounds) return;
-
-        const { minRow, maxRow, minCol, maxCol } = bounds;
-        
-        // Create TSV (tab-separated values) for clipboard
-        const rows = [];
-        for (let row = minRow; row <= maxRow; row++) {
-            const cols = [];
-            for (let col = minCol; col <= maxCol; col++) {
-                const coordKey = `${row},${col}`;
-                const cellData = this.cellData.get(coordKey);
-                
-                let value = '';
-                if (cellData && cellData.value) {
-                    value = cellData.value;
-                    // If it's a formula, use the calculated result instead
-                    if (value.startsWith('=')) {
-                        value = this.parseFormula(value, row, col);
-                    } else if (value.startsWith("'")) {
-                        // Remove the leading apostrophe for escaped text
-                        value = value.substring(1);
-                    }
-                }
-                cols.push(value);
-            }
-            rows.push(cols.join('\t'));
-        }
-        
-        const text = rows.join('\n');
-        
-        // Try to copy to system clipboard
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).catch(err => {
-                console.warn('Failed to copy to clipboard:', err);
-            });
-        } else {
-            // Fallback for older browsers
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            try {
-                document.execCommand('copy');
-            } catch (err) {
-                console.warn('Failed to copy to clipboard:', err);
-            }
-            document.body.removeChild(textarea);
-        }
     }
 
     pasteCells() {
@@ -5037,7 +4995,8 @@ class SpreadsheetApp {
                     cell.style.backgroundColor = '';
                     cell.style.color = '';
                     cell.style.fontSize = '';
-                    cell.style.border = ''; // Remove the dashed border
+                    // Remove the dashed border after first paste
+                    cell.style.border = '';
                     cell.classList.remove('bold', 'italic', 'underline', 'strikethrough',
                                         'align-left', 'align-center', 'align-right',
                                         'align-top', 'align-middle', 'align-bottom');
@@ -5119,6 +5078,63 @@ class SpreadsheetApp {
             }
         } else {
             this.updateFormulaBar();
+        }
+    }
+
+    copyToSystemClipboard() {
+        if (!this.hasSelection()) return;
+
+        // Get bounds to create a proper grid
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return;
+
+        const { minRow, maxRow, minCol, maxCol } = bounds;
+        
+        // Create TSV (tab-separated values) for clipboard
+        const rows = [];
+        for (let row = minRow; row <= maxRow; row++) {
+            const cols = [];
+            for (let col = minCol; col <= maxCol; col++) {
+                const coordKey = `${row},${col}`;
+                const cellData = this.cellData.get(coordKey);
+                
+                let value = '';
+                if (cellData && cellData.value) {
+                    value = cellData.value;
+                    // If it's a formula, use the calculated result instead
+                    if (value.startsWith('=')) {
+                        value = this.parseFormula(value, row, col);
+                    } else if (value.startsWith("'")) {
+                        // Remove the leading apostrophe for escaped text
+                        value = value.substring(1);
+                    }
+                }
+                cols.push(value);
+            }
+            rows.push(cols.join('\t'));
+        }
+        
+        const text = rows.join('\n');
+        
+        // Try to copy to system clipboard
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).catch(err => {
+                console.warn('Failed to copy to clipboard:', err);
+            });
+        } else {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+            } catch (err) {
+                console.warn('Failed to copy to clipboard:', err);
+            }
+            document.body.removeChild(textarea);
         }
     }
     
