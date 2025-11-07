@@ -5589,24 +5589,61 @@ class SpreadsheetApp {
         if (!event.target.closest('#contextMenu')) {
             this.hideContextMenu();
         }
-        if (!event.target.closest('#colorPalette') && !event.target.closest('#colorBtn')) {
-            this.hideColorPalette();
-        }
-        if (!event.target.closest('#fontColorPalette') && !event.target.closest('#fontColorBtn')) {
+        
+        // Handle color palettes and custom picker
+        const clickedInColorPalette = event.target.closest('#colorPalette');
+        const clickedInFontColorPalette = event.target.closest('#fontColorPalette');
+        const clickedInPalette = clickedInColorPalette || clickedInFontColorPalette;
+        const clickedInCustomPicker = event.target.closest('.custom-color-picker') || event.target.closest('input[type="color"]');
+        const clickedColorButton = event.target.closest('#colorBtn');
+        const clickedFontColorButton = event.target.closest('#fontColorBtn');
+        
+        // If clicking a color button, close the OTHER palette
+        if (clickedColorButton) {
             this.hideFontColorPalette();
+            if (this.customColorPicker) {
+                this.customColorPicker.classList.add('hidden');
+                this.customColorPickerActive = false;
+            }
+        } else if (clickedFontColorButton) {
+            this.hideColorPalette();
+            if (this.customColorPicker) {
+                this.customColorPicker.classList.add('hidden');
+                this.customColorPickerActive = false;
+            }
+        } else if (!clickedInCustomPicker && !clickedInPalette) {
+            // Clicked completely outside - close everything
+            this.hideColorPalette();
+            this.hideFontColorPalette();
+            if (this.customColorPicker) {
+                this.customColorPicker.classList.add('hidden');
+                this.customColorPickerActive = false;
+            }
+        } else if (clickedInCustomPicker) {
+            // Clicked in custom picker - do nothing, keep both open
+        } else if (clickedInPalette && !clickedInCustomPicker) {
+            // Clicked in palette but not in custom picker - close custom picker only if not clicking the color input
+            if (this.customColorPicker && !event.target.closest('input[type="color"]')) {
+                this.customColorPicker.classList.add('hidden');
+                this.customColorPickerActive = false;
+            }
         }
+        
         if (!event.target.closest('#borderMenu') && !event.target.closest('#borderBtn')) {
             this.hideBorderMenu();
         }
+        
         // Don't close link editor if clicking inside it OR on its buttons
         if (!event.target.closest('#linkEditor') && 
             !event.target.closest('#linkSaveBtn') && 
             !event.target.closest('#linkCancelBtn')) {
             this.hideLinkEditor();
         }
+        
         if (!event.target.closest('.formula-input-wrapper') && !event.target.closest('#formulaSuggestions')) {
             this.hideFormulaSuggestions();
         }
+        
         if (!event.target.closest('.spreadsheet-container') && 
             !event.target.closest('#contextMenu') && 
             !event.target.closest('#colorPalette') &&
@@ -5615,6 +5652,12 @@ class SpreadsheetApp {
             if (this.currentEditingCell) {
                 this.stopEditingCell();
             }
+        }
+        
+        if (this.customColorPicker && 
+            !event.target.closest('.custom-color-picker') && 
+            !event.target.closest('input[type="color"]')) {
+            this.customColorPicker?.classList.add('hidden');
         }
     }
     
@@ -5780,7 +5823,7 @@ class SpreadsheetApp {
         customSection.style.display = 'flex';
         customSection.style.gap = 'var(--space-8)';
         customSection.style.alignItems = 'center';
-        
+
         const colorInput = document.createElement('input');
         colorInput.type = 'color';
         colorInput.style.width = '40px';
@@ -5788,13 +5831,13 @@ class SpreadsheetApp {
         colorInput.style.border = '1px solid var(--color-border)';
         colorInput.style.borderRadius = 'var(--radius-sm)';
         colorInput.style.cursor = 'pointer';
-        
+
         const hexInputWrapper = document.createElement('div');
         hexInputWrapper.style.flex = '1';
         hexInputWrapper.style.position = 'relative';
         hexInputWrapper.style.display = 'flex';
         hexInputWrapper.style.alignItems = 'center';
-        
+
         const hexPrefix = document.createElement('span');
         hexPrefix.textContent = '#';
         hexPrefix.style.position = 'absolute';
@@ -5803,7 +5846,7 @@ class SpreadsheetApp {
         hexPrefix.style.fontSize = 'var(--font-size-sm)';
         hexPrefix.style.fontFamily = 'var(--font-family-mono)';
         hexPrefix.style.pointerEvents = 'none';
-        
+
         const hexInput = document.createElement('input');
         hexInput.type = 'text';
         hexInput.className = 'form-control';
@@ -5813,13 +5856,19 @@ class SpreadsheetApp {
         hexInput.style.fontSize = 'var(--font-size-sm)';
         hexInput.style.fontFamily = 'var(--font-family-mono)';
         hexInput.maxLength = 6;
-        
+
         const addBtn = document.createElement('button');
         addBtn.className = 'btn btn--sm';
         addBtn.textContent = '+';
         addBtn.style.minWidth = '32px';
         addBtn.title = 'Add custom color';
-        
+
+        // Open custom picker when clicking color input
+        colorInput.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.showCustomColorPicker(type, customColorsArray, applyColorFn, hidePaletteFn, refreshPaletteFn);
+        });
+
         // Sync color picker and hex input
         colorInput.addEventListener('input', (e) => {
             hexInput.value = e.target.value.substring(1);
@@ -5848,32 +5897,49 @@ class SpreadsheetApp {
             }
         });
 
-        // Add custom color
-        addBtn.addEventListener('click', () => {
+        // Add custom color to palette without applying
+        addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const color = colorInput.value;
             if (color && !customColorsArray.includes(color)) {
+                // Store the current color value before refresh
+                const currentColor = color;
                 customColorsArray.push(color);
                 refreshPaletteFn();
                 this._keepPaletteOpen(type);
+                
+                // Restore the color value in the new inputs after refresh
+                setTimeout(() => {
+                    const palette = type === 'background' ? this.colorPalette : this.fontColorPalette;
+                    const newColorInput = palette.querySelector('input[type="color"]');
+                    const newHexInput = palette.querySelector('input[type="text"]');
+                    if (newColorInput && newHexInput) {
+                        newColorInput.value = currentColor;
+                        newHexInput.value = currentColor.substring(1);
+                    }
+                }, 0);
+                
+                // Close custom color picker after adding
+                if (this.customColorPicker) {
+                    this.customColorPicker.classList.add('hidden');
+                    this.customColorPickerActive = false;
+                }
             }
         });
 
         // Apply color on Enter
         hexInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
+                e.preventDefault();
                 let value = hexInput.value.trim().toUpperCase();
                 value = value.replace(/#/g, '');
                 if (/^[0-9A-F]{6}$/.test(value)) {
                     const fullColor = '#' + value;
-                    if (!customColorsArray.includes(fullColor)) {
-                        customColorsArray.push(fullColor);
-                        refreshPaletteFn();
-                        this._keepPaletteOpen(type);
-                    }
+                    colorInput.value = fullColor;
                 }
             }
         });
-        
+
         hexInputWrapper.appendChild(hexPrefix);
         hexInputWrapper.appendChild(hexInput);
         customSection.appendChild(colorInput);
@@ -5926,6 +5992,446 @@ class SpreadsheetApp {
         if (customColorsArray.length > 0) {
             this._appendColorSection(container, 'Custom colors', customColorsArray, applyColorFn, hidePaletteFn, refreshPaletteFn, type);
         }
+    }
+    
+    showCustomColorPicker(type, customColorsArray, applyColorFn, hidePaletteFn, refreshPaletteFn) {
+        // Create picker if it doesn't exist
+        if (!this.customColorPicker) {
+            this.customColorPicker = this.createCustomColorPicker();
+        }
+
+        // Store callbacks
+        this.colorPickerCallbacks = {
+            type,
+            customColorsArray,
+            applyColorFn,
+            hidePaletteFn,
+            refreshPaletteFn
+        };
+
+        // Show picker
+        this.customColorPicker.classList.remove('hidden');
+        
+        // Position it to the right of the palette
+        const palette = type === 'background' ? this.colorPalette : this.fontColorPalette;
+        const rect = palette.getBoundingClientRect();
+        this.customColorPicker.style.left = (rect.right + 8) + 'px';
+        this.customColorPicker.style.top = rect.top + 'px';
+
+        // Get current color from the color input
+        const colorInput = palette.querySelector('input[type="color"]');
+        const currentColor = colorInput ? colorInput.value : '#ffffff';
+        
+        // Update hex input with current color
+        const hexInput = palette.querySelector('input[type="text"]');
+        if (hexInput) {
+            hexInput.value = currentColor.substring(1);
+        }
+
+        // Initialize with current color
+        this.setCustomPickerColor(currentColor);
+        
+        // IMPORTANT: Keep the palette visible by removing any hide event listeners temporarily
+        this.customColorPickerActive = true;
+    }
+
+    createCustomColorPicker() {
+        const picker = document.createElement('div');
+        picker.className = 'custom-color-picker hidden';
+        picker.innerHTML = `
+            <div class="color-picker-canvas-container" id="customColorCanvas">
+                <canvas class="color-picker-canvas" width="256" height="256"></canvas>
+                <div class="color-picker-cursor" id="customColorCursor"></div>
+            </div>
+            
+            <div class="color-picker-hue-slider" id="customColorHue">
+                <div class="color-picker-hue-cursor" id="customColorHueCursor"></div>
+            </div>
+            
+            <div class="color-picker-inputs">
+                <div class="color-picker-input-group">
+                    <label class="color-picker-input-label">R</label>
+                    <input type="number" class="color-picker-input" id="customColorR" min="0" max="255">
+                </div>
+                <div class="color-picker-input-group">
+                    <label class="color-picker-input-label">G</label>
+                    <input type="number" class="color-picker-input" id="customColorG" min="0" max="255">
+                </div>
+                <div class="color-picker-input-group">
+                    <label class="color-picker-input-label">B</label>
+                    <input type="number" class="color-picker-input" id="customColorB" min="0" max="255">
+                </div>
+            </div>
+            
+            <div class="color-picker-suggestions">
+                <div class="color-picker-suggestions-label">Color Suggestions</div>
+                <div class="color-picker-swatches" id="customColorSuggestions"></div>
+            </div>
+        `;
+
+        document.body.appendChild(picker);
+
+        // Initialize canvas and event listeners
+        this.initCustomColorPicker(picker);
+
+        return picker;
+    }
+
+    initCustomColorPicker(picker) {
+        const canvas = picker.querySelector('.color-picker-canvas');
+        const ctx = canvas.getContext('2d');
+        const cursor = picker.querySelector('#customColorCursor');
+        const hueCursor = picker.querySelector('#customColorHueCursor');
+        
+        const hueSlider = picker.querySelector('#customColorHue');
+        const canvasContainer = picker.querySelector('#customColorCanvas');
+        
+        const rInput = picker.querySelector('#customColorR');
+        const gInput = picker.querySelector('#customColorG');
+        const bInput = picker.querySelector('#customColorB');
+        
+        // Get references to existing inputs in the palette
+        const getExistingInputs = () => {
+            const callbacks = this.colorPickerCallbacks;
+            if (!callbacks) return null;
+            
+            const palette = callbacks.type === 'background' ? this.colorPalette : this.fontColorPalette;
+            return {
+                colorInput: palette.querySelector('input[type="color"]'),
+                hexInput: palette.querySelector('input[type="text"]'),
+                preview: palette.querySelector('.color-swatch') || null
+            };
+        };
+        
+        const suggestions = picker.querySelector('#customColorSuggestions');
+
+        let lastCanvasMetrics = null;
+
+        const getCanvasMetrics = () => {
+            const containerRect = canvasContainer.getBoundingClientRect();
+            const canvasRect = canvas.getBoundingClientRect();
+            
+            let containerWidth = containerRect.width;
+            let containerHeight = containerRect.height;
+            let canvasWidth = canvasRect.width;
+            let canvasHeight = canvasRect.height;
+            let offsetX = canvasRect.left - containerRect.left;
+            let offsetY = canvasRect.top - containerRect.top;
+
+            const hasVisibleMetrics = containerWidth && containerHeight && canvasWidth && canvasHeight;
+            
+            if (!hasVisibleMetrics) {
+                if (lastCanvasMetrics) {
+                    return lastCanvasMetrics;
+                }
+                containerWidth = canvasContainer.clientWidth || canvas.width || 1;
+                containerHeight = canvasContainer.clientHeight || canvas.height || 1;
+                canvasWidth = canvas.width;
+                canvasHeight = canvas.height;
+                offsetX = (containerWidth - canvasWidth) / 2;
+                offsetY = (containerHeight - canvasHeight) / 2;
+            }
+
+            const metrics = {
+                containerRect,
+                canvasRect,
+                containerWidth,
+                containerHeight,
+                canvasWidth,
+                canvasHeight,
+                offsetX,
+                offsetY
+            };
+            lastCanvasMetrics = metrics;
+            return metrics;
+        };
+
+        const clampValue = (value, min, max) => Math.max(min, Math.min(max, value));
+
+        // State
+        let currentHue = 0;
+        let currentSaturation = 100;
+        let currentLightness = 50;
+
+        // Draw color canvas
+        const drawCanvas = (hue) => {
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            // Create gradient
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const saturation = (x / width) * 100;
+                    const lightness = 100 - (y / height) * 100;
+                    const color = this.hslToRgb(hue, saturation, lightness);
+                    
+                    ctx.fillStyle = `rgb(${color.r}, ${color.g}, ${color.b})`;
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+        };
+
+        // Update color from HSL
+        const updateColor = () => {
+            const rgb = this.hslToRgb(currentHue, currentSaturation, currentLightness);
+            const hex = this.rgbToHex(rgb.r, rgb.g, rgb.b);
+            
+            // Update our local inputs
+            rInput.value = rgb.r;
+            gInput.value = rgb.g;
+            bInput.value = rgb.b;
+            
+            // Update existing palette inputs WITHOUT applying
+            const existing = getExistingInputs();
+            if (existing) {
+                existing.colorInput.value = hex;
+                existing.hexInput.value = hex.substring(1); // Remove #
+            }
+            
+            // Calculate cursor position with proper clamping
+            // Clamp saturation and lightness to valid range first
+            const clampedSaturation = Math.max(0, Math.min(100, currentSaturation));
+            const clampedLightness = Math.max(0, Math.min(100, currentLightness));
+            
+            // Calculate position as a percentage, then convert to pixels
+            const xPercent = clampedSaturation / 100;
+            const yPercent = 1 - (clampedLightness / 100);
+            
+            // Calculate pixel position
+            const metrics = getCanvasMetrics();
+            const cursorHalfWidth = (cursor.offsetWidth || 16) / 2;
+            const cursorHalfHeight = (cursor.offsetHeight || 16) / 2;
+            const x = xPercent * metrics.canvasWidth;
+            const y = yPercent * metrics.canvasHeight;
+            
+            const centerX = clampValue(
+                metrics.offsetX + x,
+                metrics.offsetX,
+                metrics.offsetX + metrics.canvasWidth
+            );
+            const centerY = clampValue(
+                metrics.offsetY + y,
+                metrics.offsetY,
+                metrics.offsetY + metrics.canvasHeight
+            );
+            
+            // Position cursor so its center aligns with the pointer after translate(-50%, -50%)
+            cursor.style.left = centerX + 2*cursorHalfWidth + 'px';
+            cursor.style.top = centerY + 2*cursorHalfHeight + 'px';
+            
+            // Update hue cursor
+            const hueX = (currentHue / 360) * hueSlider.offsetWidth;
+            const clampedHueX = Math.max(2, Math.min(hueSlider.offsetWidth - 2, hueX));
+            hueCursor.style.left = clampedHueX + 'px';
+            
+            // Update suggestions
+            this.updateColorSuggestions(suggestions, currentHue, currentSaturation, currentLightness);
+        };
+
+        // Canvas click
+        canvasContainer.addEventListener('mousedown', (e) => {
+            const handleMove = (e) => {
+                const metrics = getCanvasMetrics();
+                const pointerX = clampValue(e.clientX - metrics.canvasRect.left, 0, metrics.canvasWidth);
+                const pointerY = clampValue(e.clientY - metrics.canvasRect.top, 0, metrics.canvasHeight);
+                
+                currentSaturation = Math.max(0, Math.min(100, (pointerX / metrics.canvasWidth) * 100));
+                currentLightness = Math.max(0, Math.min(100, (1 - pointerY / metrics.canvasHeight) * 100));
+                updateColor();
+            };
+            
+            handleMove(e);
+            
+            const handleUp = () => {
+                document.removeEventListener('mousemove', handleMove);
+                document.removeEventListener('mouseup', handleUp);
+            };
+            
+            document.addEventListener('mousemove', handleMove);
+            document.addEventListener('mouseup', handleUp);
+        });
+
+        // Hue slider
+        hueSlider.addEventListener('mousedown', (e) => {
+            const handleMove = (e) => {
+                const rect = hueSlider.getBoundingClientRect();
+                const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+                currentHue = Math.max(0, Math.min(360, (x / rect.width) * 360));
+                drawCanvas(currentHue);
+                updateColor();
+            };
+            
+            handleMove(e);
+            
+            const handleUp = () => {
+                document.removeEventListener('mousemove', handleMove);
+                document.removeEventListener('mouseup', handleUp);
+            };
+            
+            document.addEventListener('mousemove', handleMove);
+            document.addEventListener('mouseup', handleUp);
+        });
+
+        // RGB inputs
+        [rInput, gInput, bInput].forEach(input => {
+            input.addEventListener('input', () => {
+                const r = Math.max(0, Math.min(255, parseInt(rInput.value) || 0));
+                const g = Math.max(0, Math.min(255, parseInt(gInput.value) || 0));
+                const b = Math.max(0, Math.min(255, parseInt(bInput.value) || 0));
+                
+                const hsl = this.rgbToHsl(r, g, b);
+                currentHue = Math.max(0, Math.min(360, hsl.h));
+                currentSaturation = Math.max(0, Math.min(100, hsl.s));
+                currentLightness = Math.max(0, Math.min(100, hsl.l));
+                
+                drawCanvas(currentHue);
+                updateColor();
+            });
+        });
+
+        // Store references
+        this.customColorPickerState = {
+            drawCanvas,
+            updateColor,
+            get currentHue() { return currentHue; },
+            set currentHue(v) { currentHue = Math.max(0, Math.min(360, v)); },
+            get currentSaturation() { return currentSaturation; },
+            set currentSaturation(v) { currentSaturation = Math.max(0, Math.min(100, v)); },
+            get currentLightness() { return currentLightness; },
+            set currentLightness(v) { currentLightness = Math.max(0, Math.min(100, v)); }
+        };
+
+        // Initial draw
+        drawCanvas(0);
+        updateColor();
+    }
+
+    setCustomPickerColor(hex) {
+        if (!this.customColorPickerState) return;
+        
+        const rgb = this.hexToRgb(hex);
+        const hsl = this.rgbToHsl(rgb.r, rgb.g, rgb.b);
+        
+        this.customColorPickerState.currentHue = hsl.h;
+        this.customColorPickerState.currentSaturation = hsl.s;
+        this.customColorPickerState.currentLightness = hsl.l;
+        
+        this.customColorPickerState.drawCanvas(hsl.h);
+        this.customColorPickerState.updateColor();
+    }
+
+    updateColorSuggestions(container, hue, saturation, lightness) {
+        const suggestions = [
+            // Complementary
+            { h: (hue + 180) % 360, s: saturation, l: lightness },
+            // Triadic
+            { h: (hue + 120) % 360, s: saturation, l: lightness },
+            { h: (hue + 240) % 360, s: saturation, l: lightness },
+            // Analogous
+            { h: (hue + 30) % 360, s: saturation, l: lightness },
+            { h: (hue - 30 + 360) % 360, s: saturation, l: lightness },
+            // Lighter/darker
+            { h: hue, s: saturation, l: Math.min(100, lightness + 20) },
+            { h: hue, s: saturation, l: Math.max(0, lightness - 20) },
+            // Desaturated
+            { h: hue, s: Math.max(0, saturation - 30), l: lightness }
+        ];
+
+        container.innerHTML = '';
+        suggestions.forEach(color => {
+            const rgb = this.hslToRgb(color.h, color.s, color.l);
+            const hex = this.rgbToHex(rgb.r, rgb.g, rgb.b);
+            
+            const swatch = document.createElement('div');
+            swatch.className = 'color-picker-swatch';
+            swatch.style.backgroundColor = hex;
+            swatch.title = hex;
+            swatch.addEventListener('click', () => {
+                this.setCustomPickerColor(hex);
+            });
+            
+            container.appendChild(swatch);
+        });
+    }
+
+    // Color conversion utilities
+    hslToRgb(h, s, l) {
+        h = h / 360;
+        s = s / 100;
+        l = l / 100;
+        
+        let r, g, b;
+        
+        if (s === 0) {
+            r = g = b = l;
+        } else {
+            const hue2rgb = (p, q, t) => {
+                if (t < 0) t += 1;
+                if (t > 1) t -= 1;
+                if (t < 1/6) return p + (q - p) * 6 * t;
+                if (t < 1/2) return q;
+                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                return p;
+            };
+            
+            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+            const p = 2 * l - q;
+            
+            r = hue2rgb(p, q, h + 1/3);
+            g = hue2rgb(p, q, h);
+            b = hue2rgb(p, q, h - 1/3);
+        }
+        
+        return {
+            r: Math.round(r * 255),
+            g: Math.round(g * 255),
+            b: Math.round(b * 255)
+        };
+    }
+
+    rgbToHsl(r, g, b) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+        
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+        
+        if (max === min) {
+            h = s = 0;
+        } else {
+            const d = max - min;
+            s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+            
+            switch (max) {
+                case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+                case g: h = ((b - r) / d + 2) / 6; break;
+                case b: h = ((r - g) / d + 4) / 6; break;
+            }
+        }
+        
+        return {
+            h: h * 360,
+            s: s * 100,
+            l: l * 100
+        };
+    }
+
+    rgbToHex(r, g, b) {
+        return '#' + [r, g, b].map(x => {
+            const hex = x.toString(16);
+            return hex.length === 1 ? '0' + hex : hex;
+        }).join('');
+    }
+
+    hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+        } : { r: 0, g: 0, b: 0 };
     }
 
     _createColorSwatch(color, applyColorFn, hidePaletteFn) {

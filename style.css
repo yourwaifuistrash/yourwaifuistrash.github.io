@@ -765,6 +765,158 @@ body { margin: 0; padding: 0; }
   font-size: var(--font-size-xs);
 }
 
+/* Custom Color Picker */
+.custom-color-picker {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-16);
+    padding: var(--space-16);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-base);
+    box-shadow: var(--shadow-lg);
+    position: fixed;
+    z-index: 1002;
+    width: 280px;
+}
+
+.custom-color-picker.hidden {
+    display: none;
+}F
+
+.color-picker-canvas-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    cursor: crosshair;
+    border: 1px solid var(--color-border);
+}
+
+.color-picker-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.color-picker-cursor {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 2px solid white;
+    border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+}
+
+.color-picker-hue-slider {
+    position: relative;
+    width: 100%;
+    height: 16px;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(to right, 
+        #ff0000 0%, 
+        #ffff00 16.67%, 
+        #00ff00 33.33%, 
+        #00ffff 50%, 
+        #0000ff 66.67%, 
+        #ff00ff 83.33%, 
+        #ff0000 100%
+    );
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+}
+
+.color-picker-hue-cursor {
+    position: absolute;
+    width: 4px;
+    height: 100%;
+    background: white;
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+    transform: translateX(-50%);
+}
+
+.color-picker-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: var(--space-8);
+}
+
+.color-picker-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+
+.color-picker-input-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.color-picker-input {
+    width: 100%;
+    padding: var(--space-6) var(--space-8);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-family-mono);
+    color: var(--color-text);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    text-align: center;
+}
+
+.color-picker-input:focus {
+    border-color: var(--color-primary);
+    outline: none;
+}
+
+.color-picker-hex-group {
+    grid-column: span 3;
+}
+
+.color-picker-suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+}
+
+.color-picker-suggestions-label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-secondary);
+}
+
+.color-picker-swatches {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: var(--space-4);
+}
+
+.color-picker-swatch {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    cursor: pointer;
+    transition: transform var(--duration-fast);
+}
+
+.color-picker-swatch:hover {
+    transform: scale(1.15);
+}
+
+.color-picker-actions .btn {
+    flex: 1;
+}
+
 .main-grid::-webkit-scrollbar { width: 12px; height: 12px; }
 .main-grid::-webkit-scrollbar-track { background: var(--color-bg-1); }
 .main-grid::-webkit-scrollbar-thumb {
