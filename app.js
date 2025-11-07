@@ -4707,6 +4707,7 @@ class SpreadsheetApp {
                 this.moveSelection(0, event.shiftKey ? -1 : 1);
                 break;
             case 'Escape':
+                this.clearCutCopyStyling();
                 this.clearAllSelections();
                 break;
         }
