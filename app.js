@@ -3778,6 +3778,10 @@ class SpreadsheetApp {
                 this.justResized = false;
             }, 10);
             
+            // IMPORTANT: Mark that user made changes and update dirty state after resize
+            this.userMadeChanges = true;
+            this.scheduleDirtyStateUpdate();
+            
             return;
         }
         
