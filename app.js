@@ -2560,7 +2560,7 @@ class SpreadsheetApp {
     saveState(action) {
         this.userMadeChanges = true;
         this.hasAutoPersistedBaseline = false;
-        this.undoStack.push({ action, cellData: new Map(this.cellData), timestamp: Date.now() });
+        this.undoStack.push({ action, cellData: this.cloneCellData(this.cellData), timestamp: Date.now() });
         if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
         this.redoStack = [];
         this.updateUndoRedoButtons();
@@ -2569,8 +2569,8 @@ class SpreadsheetApp {
 
     undo() {
         if (!this.undoStack.length) return;
-        this.redoStack.push({ cellData: new Map(this.cellData), timestamp: Date.now() });
-        this.cellData = new Map(this.undoStack.pop().cellData);
+        this.redoStack.push({ cellData: this.cloneCellData(this.cellData), timestamp: Date.now() });
+        this.cellData = this.cloneCellData(this.undoStack.pop().cellData);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         
@@ -2582,8 +2582,8 @@ class SpreadsheetApp {
 
     redo() {
         if (!this.redoStack.length) return;
-        this.undoStack.push({ cellData: new Map(this.cellData), timestamp: Date.now() });
-        this.cellData = new Map(this.redoStack.pop().cellData);
+        this.undoStack.push({ cellData: this.cloneCellData(this.cellData), timestamp: Date.now() });
+        this.cellData = this.cloneCellData(this.redoStack.pop().cellData);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         
