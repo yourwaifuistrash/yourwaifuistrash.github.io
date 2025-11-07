@@ -619,6 +619,12 @@ class SpreadsheetApp {
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initializeDynamicDimensions();
+        
+        // Select cell A1 by default
+        setTimeout(() => {
+            const firstCell = this.getCellAt(0, 0) || this.createCell(0, 0);
+            this.selectCells([firstCell], true);
+        }, 100);
         this.ensureSaveOptionsModal();
         this.maybeHandleOAuthRedirect();
         this.saveButton = document.getElementById('saveBtn');
