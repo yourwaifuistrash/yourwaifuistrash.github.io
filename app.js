@@ -77,6 +77,9 @@ const TOOLBAR_AND_FORMULA_HTML = `
             </div>
             
             <div class="toolbar-section" style="margin-left: auto;">
+                <button class="btn btn--sm toolbar-btn" id="keyboardShortcutsBtn" title="Keyboard Shortcuts">
+                    <span>⌨️</span>
+                </button>
                 <button class="btn btn--sm toolbar-btn" id="zoomOutBtn" title="Zoom Out">
                     <span>−</span>
                 </button>
@@ -365,6 +368,117 @@ const SAVE_OPTIONS_MODAL_HTML = `
                 </p>
                 <div class="save-modal__oauth" id="saveModalOAuthInfo"></div>
                 <div class="save-modal__status" id="saveModalStatus" role="status" aria-live="polite"></div>
+            </div>
+        </div>
+    </div>
+`;
+
+const KEYBOARD_SHORTCUTS_MODAL_HTML = `
+    <div id="keyboardShortcutsModal" class="shortcuts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="shortcutsModalTitle">
+        <div class="shortcuts-modal__backdrop" data-modal-dismiss></div>
+        <div class="shortcuts-modal__dialog">
+            <div class="shortcuts-modal__header">
+                <h2 id="shortcutsModalTitle">Keyboard Shortcuts</h2>
+                <button class="shortcuts-modal__close" type="button" data-modal-dismiss aria-label="Close">×</button>
+            </div>
+            <div class="shortcuts-modal__body">
+                <div class="shortcuts-section">
+                    <h3 class="shortcuts-section__title">Navigation</h3>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <kbd>Arrow Keys</kbd>
+                            <span>Move selection</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Tab</kbd>
+                            <span>Move right</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Shift</kbd> + <kbd>Tab</kbd>
+                            <span>Move left</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Enter</kbd>
+                            <span>Edit cell / Move down</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="shortcuts-section">
+                    <h3 class="shortcuts-section__title">Editing</h3>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <kbd>Delete</kbd> / <kbd>Backspace</kbd>
+                            <span>Clear cell content</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Escape</kbd>
+                            <span>Cancel editing / Clear selection</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>Z</kbd>
+                            <span>Undo</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>Y</kbd>
+                            <span>Redo</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="shortcuts-section">
+                    <h3 class="shortcuts-section__title">Selection</h3>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>A</kbd>
+                            <span>Select all cells</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>Drag</kbd>
+                            <span>Range selection</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>Click</kbd>
+                            <span>Add/remove from selection</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="shortcuts-section">
+                    <h3 class="shortcuts-section__title">Clipboard</h3>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>C</kbd>
+                            <span>Copy</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>X</kbd>
+                            <span>Cut</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Ctrl/Cmd</kbd> + <kbd>V</kbd>
+                            <span>Paste</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="shortcuts-section">
+                    <h3 class="shortcuts-section__title">Other</h3>
+                    <div class="shortcuts-list">
+                        <div class="shortcut-item">
+                            <kbd>Context Menu</kbd>
+                            <span>Open context menu</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Right Click</kbd>
+                            <span>Open context menu</span>
+                        </div>
+                        <div class="shortcut-item">
+                            <kbd>Double Click</kbd>
+                            <span>Edit cell</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2472,6 +2586,10 @@ class SpreadsheetApp {
         if (!document.getElementById('borderMenu')) {
             document.body.insertAdjacentHTML('beforeend', BORDER_MENU_HTML);
         }
+        
+        if (!document.getElementById('keyboardShortcutsModal')) {
+            document.body.insertAdjacentHTML('beforeend', KEYBOARD_SHORTCUTS_MODAL_HTML);
+        }
     }
 
     loadInitialDataFromDOM() {
@@ -2861,6 +2979,7 @@ class SpreadsheetApp {
             ['#linkCancelBtn', 'click', (e) => { e.stopPropagation(); e.preventDefault(); this.hideLinkEditor(); }],
             ['.corner-cell', 'click', e => this.handleCornerCellClick(e)],
             ['#formatPainterBtn', 'click', () => this.activateFormatPainter()],
+            ['#keyboardShortcutsBtn', 'click', () => this.showKeyboardShortcutsModal()],
             ['#zoomInBtn', 'click', () => this.zoomIn()],
             ['#zoomOutBtn', 'click', () => this.zoomOut()],
             ['#zoomResetBtn', 'click', () => this.resetZoom()],
@@ -8241,6 +8360,29 @@ class SpreadsheetApp {
             return result === undefined || result === null ? '' : String(result);
         }
         return cellData.value;
+    }
+    
+    showKeyboardShortcutsModal() {
+        const modal = document.getElementById('keyboardShortcutsModal');
+        if (!modal) return;
+        
+        modal.classList.remove('hidden');
+        
+        // Add click handler for backdrop and close button
+        const handleClick = (e) => {
+            if (e.target.hasAttribute('data-modal-dismiss')) {
+                this.hideKeyboardShortcutsModal();
+            }
+        };
+        
+        modal.addEventListener('click', handleClick);
+    }
+
+    hideKeyboardShortcutsModal() {
+        const modal = document.getElementById('keyboardShortcutsModal');
+        if (!modal) return;
+        
+        modal.classList.add('hidden');
     }
     
     zoomIn() {
