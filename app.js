@@ -50,6 +50,9 @@ const TOOLBAR_AND_FORMULA_HTML = `
                 <button class="btn btn--sm toolbar-btn" id="borderBtn" title="Borders">
                     <span>⊞</span>
                 </button>
+                <button class="btn btn--sm toolbar-btn" id="mergeBtn" title="Merge Cells">
+                    <span>⧺</span>
+                </button>
             </div>
             
             <div class="toolbar-section">
@@ -545,6 +548,10 @@ class SpreadsheetApp {
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
         this.renderedCellCoords = new Set();
+        
+        // Merged cells tracking
+        this.mergedCells = new Map(); // Map of parent cell coord -> {rows, cols, childCells: Set}
+        this.cellToMergeParent = new Map(); // Map of child cell coord -> parent cell coord
 
         // Edge scrolling state
         this.edgeScrolling = false;
@@ -2687,6 +2694,21 @@ class SpreadsheetApp {
         if (detectedMaxCol >= 0) {
             this.persistedRange.maxCol = Math.max(this.persistedRange.maxCol, detectedMaxCol);
         }
+        
+        // Restore merged cells
+        const mergedCells = fallbackTable.querySelectorAll('td[data-merged-rows][data-merged-cols]');
+        mergedCells.forEach(td => {
+            const row = parseInt(td.parentElement.getAttribute('data-row'), 10);
+            const col = parseInt(td.getAttribute('data-col'), 10);
+            const mergedRows = parseInt(td.getAttribute('data-merged-rows'), 10);
+            const mergedCols = parseInt(td.getAttribute('data-merged-cols'), 10);
+            
+            if (Number.isInteger(row) && Number.isInteger(col) && 
+                Number.isInteger(mergedRows) && Number.isInteger(mergedCols) &&
+                mergedRows > 1 || mergedCols > 1) {
+                this.mergeCells(row, col, mergedRows, mergedCols);
+            }
+        });
 
         fallbackTable.remove();
     }
@@ -2907,6 +2929,10 @@ class SpreadsheetApp {
     }
     
     createCell(row, col) {
+        // Check if this cell is part of a merge and should be hidden
+        const coordKey = `${row},${col}`;
+        const parentCoord = this.cellToMergeParent.get(coordKey);
+        
         const cell = document.createElement('div');
         cell.className = 'cell';
         cell.dataset.row = row;
@@ -2916,17 +2942,47 @@ class SpreadsheetApp {
         // Position the cell
         cell.style.left = this.getColumnLeft(col) + 'px';
         cell.style.top = this.getRowTop(row) + 'px';
-        cell.style.width = this.getColumnWidth(col) + 'px';
-        cell.style.height = this.getRowHeight(row) + 'px';
+        
+        // Check if this is a merged parent cell
+        const mergeInfo = this.mergedCells.get(coordKey);
+        if (mergeInfo) {
+            // This is a merged parent - calculate total dimensions
+            let totalWidth = 0;
+            let totalHeight = 0;
+            
+            for (let c = 0; c < mergeInfo.cols; c++) {
+                totalWidth += this.getColumnWidth(col + c);
+            }
+            
+            for (let r = 0; r < mergeInfo.rows; r++) {
+                totalHeight += this.getRowHeight(row + r);
+            }
+            
+            cell.style.width = totalWidth + 'px';
+            cell.style.height = totalHeight + 'px';
+            cell.style.zIndex = '3';
+            cell.classList.add('merged-cell');
+            cell.dataset.mergedRows = mergeInfo.rows;
+            cell.dataset.mergedCols = mergeInfo.cols;
+        } else if (parentCoord) {
+            // This is a merged child - hide it
+            cell.style.width = this.getColumnWidth(col) + 'px';
+            cell.style.height = this.getRowHeight(row) + 'px';
+            cell.style.display = 'none';
+            cell.classList.add('merged-child');
+        } else {
+            // Normal cell
+            cell.style.width = this.getColumnWidth(col) + 'px';
+            cell.style.height = this.getRowHeight(row) + 'px';
+        }
 
         // Get cell data
-        const cellData = this.cellData.get(`${row},${col}`) || {};
+        const cellData = this.cellData.get(coordKey) || {};
         
         // Apply content and formatting using helper method
         this.updateCellDisplay(cell, cellData);
 
         // Restore selection state
-        const coordKey = `${row},${col}`;
         if (this.selectedCellCoords.has(coordKey)) {
             cell.classList.add('selected');
             this.selectedCells.add(cell);
@@ -2979,6 +3035,7 @@ class SpreadsheetApp {
             ['#colorBtn', 'click', () => this.showColorPalette()],
             ['#fontColorBtn', 'click', () => this.showFontColorPalette()],
             ['#borderBtn', 'click', () => this.showBorderMenu()],
+            ['#mergeBtn', 'click', () => this.handleMergeCells()],
             ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e)],
             ['#fontSizeInput', 'keydown', e => {
                 if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e); e.target.blur(); }
@@ -7642,6 +7699,155 @@ class SpreadsheetApp {
         });
         
         return regions;
+    }
+    
+    handleMergeCells() {
+        if (!this.hasSelection()) {
+            this.log('No cells selected for merging');
+            return;
+        }
+
+        const bounds = this.getSelectionBounds();
+        if (!bounds) return;
+
+        const { minRow, maxRow, minCol, maxCol, coords } = bounds;
+        const rows = maxRow - minRow + 1;
+        const cols = maxCol - minCol + 1;
+        const expectedCells = rows * cols;
+
+        // Check if selection is contiguous (rectangle)
+        if (coords.length !== expectedCells) {
+            alert('Can only merge contiguous (rectangular) cell selections');
+            return;
+        }
+
+        // Check if selection forms a proper rectangle
+        const isRectangle = this.isRectangularSelection(coords, minRow, maxRow, minCol, maxCol);
+        if (!isRectangle) {
+            alert('Can only merge contiguous (rectangular) cell selections');
+            return;
+        }
+
+        // Check if any cells in selection are already part of a merge
+        for (const coord of coords) {
+            if (this.cellToMergeParent.has(coord)) {
+                alert('Cannot merge cells that are already part of a merged cell. Please unmerge first.');
+                return;
+            }
+        }
+
+        // Single cell selected - nothing to merge
+        if (rows === 1 && cols === 1) {
+            this.log('Single cell selected - nothing to merge');
+            return;
+        }
+
+        this.saveState(`Merge ${rows}x${cols} cells`);
+        this.mergeCells(minRow, minCol, rows, cols);
+        this.log(`Merged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
+    }
+
+    isRectangularSelection(coords, minRow, maxRow, minCol, maxCol) {
+        // Check if all cells in the rectangle are present
+        for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+                const coordKey = `${row},${col}`;
+                if (!coords.some(c => c.row === row && c.col === col)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    mergeCells(startRow, startCol, rows, cols) {
+        const parentCoord = `${startRow},${startCol}`;
+        const childCells = new Set();
+
+        // Collect all child cells (except the parent)
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const row = startRow + r;
+                const col = startCol + c;
+                const coordKey = `${row},${col}`;
+                
+                if (r === 0 && c === 0) continue; // Skip parent cell
+                
+                childCells.add(coordKey);
+                this.cellToMergeParent.set(coordKey, parentCoord);
+            }
+        }
+
+        // Store merge info
+        this.mergedCells.set(parentCoord, {
+            rows,
+            cols,
+            childCells
+        });
+
+        // Update visual representation
+        this.applyMergeVisuals(startRow, startCol, rows, cols);
+    }
+
+    applyMergeVisuals(startRow, startCol, rows, cols) {
+        const parentCell = this.getCellAt(startRow, startCol);
+        if (!parentCell) return;
+
+        // Calculate merged cell dimensions
+        let totalWidth = 0;
+        let totalHeight = 0;
+
+        for (let c = 0; c < cols; c++) {
+            totalWidth += this.getColumnWidth(startCol + c);
+        }
+
+        for (let r = 0; r < rows; r++) {
+            totalHeight += this.getRowHeight(startRow + r);
+        }
+
+        // Apply merged cell styles
+        parentCell.style.width = totalWidth + 'px';
+        parentCell.style.height = totalHeight + 'px';
+        parentCell.style.zIndex = '3';
+        parentCell.classList.add('merged-cell');
+        parentCell.dataset.mergedRows = rows;
+        parentCell.dataset.mergedCols = cols;
+
+        // Hide child cells
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                if (r === 0 && c === 0) continue; // Skip parent
+                
+                const row = startRow + r;
+                const col = startCol + c;
+                const childCell = this.getCellAt(row, col);
+                
+                if (childCell) {
+                    childCell.style.display = 'none';
+                    childCell.classList.add('merged-child');
+                }
+            }
+        }
+    }
+
+    isCellMerged(row, col) {
+        const coordKey = `${row},${col}`;
+        return this.mergedCells.has(coordKey) || this.cellToMergeParent.has(coordKey);
+    }
+
+    getMergeParent(row, col) {
+        const coordKey = `${row},${col}`;
+        if (this.mergedCells.has(coordKey)) {
+            return { row, col };
+        }
+        
+        const parentCoord = this.cellToMergeParent.get(coordKey);
+        if (parentCoord) {
+            const [parentRow, parentCol] = this.parseCoord(parentCoord);
+            return { row: parentRow, col: parentCol };
+        }
+        
+        return null;
     }
 
     // Extract adjacent cell update logic (reusable)
