@@ -3333,28 +3333,46 @@ class SpreadsheetApp {
             }
         });
 
-        // NEW: Third pass - handle adjacent cells when merged cells are at boundaries
-        // Build a coordinate set for quick lookup
+        // ============================================================================
+        // NEW THIRD PASS: Expand selection bounds to include full merged cell widths
+        // ============================================================================
+        // This is the KEY FIX that solves the user's problem.
+        // When a merged cell is within the selection but is wider/taller than the
+        // original drag range, we expand the selection to include its full dimensions.
+        
+        // Build coordinate set and track current bounds
         const selectedCoords = new Set();
+        let minRowSelected = Infinity;
+        let maxRowSelected = -Infinity;
+        let minColSelected = Infinity;
+        let maxColSelected = -Infinity;
+
         expandedCells.forEach(cell => {
             const { row, col } = this.getCellPos(cell);
             selectedCoords.add(`${row},${col}`);
+            minRowSelected = Math.min(minRowSelected, row);
+            maxRowSelected = Math.max(maxRowSelected, row);
+            minColSelected = Math.min(minColSelected, col);
+            maxColSelected = Math.max(maxColSelected, col);
         });
 
-        // Find all merged cells in the current selection
+        // Find all merged cells in current selection
         const mergedCellsInSelection = new Set();
         expandedCells.forEach(cell => {
             const { row, col } = this.getCellPos(cell);
             const coordKey = `${row},${col}`;
 
-            // Check if this is a merge parent
+            // Check if this is a merge parent (not a child cell)
             if (this.mergedCells.has(coordKey)) {
                 mergedCellsInSelection.add(coordKey);
             }
         });
 
-        // For each merged cell in selection, check if we need to extend adjacent cells
-        const additionalCells = new Set();
+        // For each merged cell, check if it extends the selection bounds
+        // If so, expand the selection to include all cells up to the merge boundaries
+        const cellsToAddForMergeExtension = new Set();
+        let boundsExpanded = false;
+
         mergedCellsInSelection.forEach(mergeParentCoord => {
             const mergeInfo = this.mergedCells.get(mergeParentCoord);
             if (!mergeInfo) return;
@@ -3363,70 +3381,149 @@ class SpreadsheetApp {
             const mergeMaxRow = parentRow + mergeInfo.rows - 1;
             const mergeMaxCol = parentCol + mergeInfo.cols - 1;
 
-            // Check cells adjacent to the merged cell in all 4 directions
+            // CASE 1: Merged cell is wider than current selection
+            // Example: You drag vertically H4→H10, but H10:J10 is merged (3 cols wide)
+            // Solution: Expand selection horizontally to include all 3 columns
+            if (mergeMaxCol > maxColSelected) {
+                // Expand selection to include all columns from minCol to mergeMaxCol
+                // for all selected rows
+                for (let row = minRowSelected; row <= maxRowSelected; row++) {
+                    for (let col = minColSelected; col <= mergeMaxCol; col++) {
+                        const coord = `${row},${col}`;
+                        if (!selectedCoords.has(coord)) {
+                            cellsToAddForMergeExtension.add(coord);
+                        }
+                    }
+                }
+                maxColSelected = mergeMaxCol;
+                boundsExpanded = true;
+            }
 
-            // Top edge: if any cell above the merge is selected, select all cells in that row
-            // within the merge's column span
+            // CASE 2: Merged cell extends further down than current selection
+            if (mergeMaxRow > maxRowSelected) {
+                // Expand selection to include all rows from minRow to mergeMaxRow
+                // for all selected columns (including newly expanded ones)
+                for (let row = minRowSelected; row <= mergeMaxRow; row++) {
+                    for (let col = minColSelected; col <= maxColSelected; col++) {
+                        const coord = `${row},${col}`;
+                        if (!selectedCoords.has(coord)) {
+                            cellsToAddForMergeExtension.add(coord);
+                        }
+                    }
+                }
+                maxRowSelected = mergeMaxRow;
+                boundsExpanded = true;
+            }
+        });
+
+        // Add the expansion cells to expandedCells
+        if (boundsExpanded) {
+            cellsToAddForMergeExtension.forEach(coordKey => {
+                const [row, col] = this.parseCoord(coordKey);
+                const cell = this.getCellAt(row, col);
+                if (cell && !expandedCells.includes(cell)) {
+                    expandedCells.push(cell);
+                }
+            });
+        }
+
+        // ============================================================================
+        // FOURTH PASS: Handle adjacent cells when merged cells are at boundaries
+        // ============================================================================
+        
+        // Build a fresh coordinate set with all expanded cells
+        const allSelectedCoords = new Set();
+        expandedCells.forEach(cell => {
+            const { row, col } = this.getCellPos(cell);
+            allSelectedCoords.add(`${row},${col}`);
+        });
+
+        // Find merged cells in the final selection
+        const finalMergedCellsInSelection = new Set();
+        expandedCells.forEach(cell => {
+            const { row, col } = this.getCellPos(cell);
+            const coordKey = `${row},${col}`;
+
+            // Check if this is a merge parent
+            if (this.mergedCells.has(coordKey)) {
+                finalMergedCellsInSelection.add(coordKey);
+            }
+        });
+
+        // For each merged cell in selection, check if we need to extend adjacent cells
+        const additionalCells = new Set();
+        finalMergedCellsInSelection.forEach(mergeParentCoord => {
+            const mergeInfo = this.mergedCells.get(mergeParentCoord);
+            if (!mergeInfo) return;
+
+            const [parentRow, parentCol] = this.parseCoord(mergeParentCoord);
+            const mergeMaxRow = parentRow + mergeInfo.rows - 1;
+            const mergeMaxCol = parentCol + mergeInfo.cols - 1;
+
+            // Check cells adjacent to the merged cell in all 4 directions
+            
+            // Top edge: if any cell above the merge is selected, 
+            // select all cells in that row within the merge's column span
             for (let c = parentCol; c <= mergeMaxCol; c++) {
                 const aboveCoord = `${parentRow - 1},${c}`;
-                if (parentRow > 0 && selectedCoords.has(aboveCoord)) {
-                    // Select all cells in row (parentRow - 1) from parentCol to mergeMaxCol
+                if (parentRow > 0 && allSelectedCoords.has(aboveCoord)) {
+                    // Select all cells in row parentRow - 1 from parentCol to mergeMaxCol
                     for (let cc = parentCol; cc <= mergeMaxCol; cc++) {
                         const coord = `${parentRow - 1},${cc}`;
-                        if (!selectedCoords.has(coord)) {
+                        if (!allSelectedCoords.has(coord)) {
                             additionalCells.add(coord);
-                            selectedCoords.add(coord);
+                            allSelectedCoords.add(coord);
                         }
                     }
                     break;
                 }
             }
 
-            // Bottom edge: if any cell below the merge is selected, select all cells in that row
-            // within the merge's column span
+            // Bottom edge: if any cell below the merge is selected, 
+            // select all cells in that row within the merge's column span
             for (let c = parentCol; c <= mergeMaxCol; c++) {
                 const belowCoord = `${mergeMaxRow + 1},${c}`;
-                if (mergeMaxRow < this.config.maxRows - 1 && selectedCoords.has(belowCoord)) {
-                    // Select all cells in row (mergeMaxRow + 1) from parentCol to mergeMaxCol
+                if (mergeMaxRow < this.config.maxRows - 1 && allSelectedCoords.has(belowCoord)) {
+                    // Select all cells in row mergeMaxRow + 1 from parentCol to mergeMaxCol
                     for (let cc = parentCol; cc <= mergeMaxCol; cc++) {
                         const coord = `${mergeMaxRow + 1},${cc}`;
-                        if (!selectedCoords.has(coord)) {
+                        if (!allSelectedCoords.has(coord)) {
                             additionalCells.add(coord);
-                            selectedCoords.add(coord);
+                            allSelectedCoords.add(coord);
                         }
                     }
                     break;
                 }
             }
 
-            // Left edge: if any cell to the left of the merge is selected, select all cells in that column
-            // within the merge's row span
+            // Left edge: if any cell to the left of the merge is selected, 
+            // select all cells in that column within the merge's row span
             for (let r = parentRow; r <= mergeMaxRow; r++) {
                 const leftCoord = `${r},${parentCol - 1}`;
-                if (parentCol > 0 && selectedCoords.has(leftCoord)) {
-                    // Select all cells in column (parentCol - 1) from parentRow to mergeMaxRow
+                if (parentCol > 0 && allSelectedCoords.has(leftCoord)) {
+                    // Select all cells in column parentCol - 1 from parentRow to mergeMaxRow
                     for (let rr = parentRow; rr <= mergeMaxRow; rr++) {
                         const coord = `${rr},${parentCol - 1}`;
-                        if (!selectedCoords.has(coord)) {
+                        if (!allSelectedCoords.has(coord)) {
                             additionalCells.add(coord);
-                            selectedCoords.add(coord);
+                            allSelectedCoords.add(coord);
                         }
                     }
                     break;
                 }
             }
 
-            // Right edge: if any cell to the right of the merge is selected, select all cells in that column
-            // within the merge's row span
+            // Right edge: if any cell to the right of the merge is selected, 
+            // select all cells in that column within the merge's row span
             for (let r = parentRow; r <= mergeMaxRow; r++) {
                 const rightCoord = `${r},${mergeMaxCol + 1}`;
-                if (mergeMaxCol < this.config.maxCols - 1 && selectedCoords.has(rightCoord)) {
-                    // Select all cells in column (mergeMaxCol + 1) from parentRow to mergeMaxRow
+                if (mergeMaxCol < this.config.maxCols - 1 && allSelectedCoords.has(rightCoord)) {
+                    // Select all cells in column mergeMaxCol + 1 from parentRow to mergeMaxRow
                     for (let rr = parentRow; rr <= mergeMaxRow; rr++) {
                         const coord = `${rr},${mergeMaxCol + 1}`;
-                        if (!selectedCoords.has(coord)) {
+                        if (!allSelectedCoords.has(coord)) {
                             additionalCells.add(coord);
-                            selectedCoords.add(coord);
+                            allSelectedCoords.add(coord);
                         }
                     }
                     break;
@@ -3438,7 +3535,7 @@ class SpreadsheetApp {
         additionalCells.forEach(coordKey => {
             const [row, col] = this.parseCoord(coordKey);
             const cell = this.getCellAt(row, col);
-            if (cell) {
+            if (cell && !expandedCells.includes(cell)) {
                 expandedCells.push(cell);
             }
         });
