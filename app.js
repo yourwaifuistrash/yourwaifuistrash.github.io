@@ -253,6 +253,7 @@ const BORDER_MENU_HTML = `
             <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
                 <input type="color" id="borderColorPicker" value="#000000" style="width: 40px; height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer;">
                 <input type="text" id="borderColorHex" class="form-control" placeholder="#000000" maxlength="7" style="flex: 1; font-family: var(--font-family-mono); font-size: var(--font-size-sm);">
+                <button class="btn btn--sm" id="addBorderColorBtn" title="Add custom color" style="min-width: 32px;">+</button>
             </div>
             <div id="borderColorsInUse" style="display: none; margin-top: 8px;">
                 <div style="font-size: 10px; color: var(--color-text-secondary); margin-bottom: 4px;">Colors in use:</div>
@@ -581,6 +582,7 @@ class SpreadsheetApp {
         // Custom colors
         this.customBackgroundColors = [];
         this.customFontColors = [];
+        this.customBorderColors = [];
 
         // Grid data
         this.cellData = new Map();
@@ -7280,15 +7282,27 @@ class SpreadsheetApp {
 
         const updatePreview = () => applyPreviewBorder(currentPreviewAction);
         
-        // Update colors in use
+        // Update colors in use with a separate custom colors section
         const updateColorsInUse = () => {
             const colors = this.getBorderColorsInUse();
             const container = document.getElementById('borderColorsInUse');
             const grid = document.getElementById('borderColorsInUseGrid');
-            
+
+            if (!container || !grid) return;
+
+            // Clear the existing "colors in use" grid
+            grid.innerHTML = '';
+
+            // Remove any existing custom colors section so we can rebuild it
+            const existingCustomSection = document.getElementById('borderCustomColorsSection');
+            if (existingCustomSection) existingCustomSection.remove();
+
+            let hasAny = false;
+
+            // Show colors in use (if any)
             if (colors.length > 0) {
                 container.style.display = 'block';
-                grid.innerHTML = '';
+                hasAny = true;
                 colors.forEach(color => {
                     const swatch = document.createElement('div');
                     swatch.style.width = '20px';
@@ -7305,7 +7319,78 @@ class SpreadsheetApp {
                     });
                     grid.appendChild(swatch);
                 });
-            } else {
+            }
+
+            // Add a dedicated custom colors section (keeps "Colors in use" separate)
+            if (this.customBorderColors.length > 0) {
+                // Ensure container is visible when only custom colors exist
+                container.style.display = 'block';
+                hasAny = true;
+
+                const customSection = document.createElement('div');
+                customSection.id = 'borderCustomColorsSection';
+                customSection.style.marginTop = 'var(--space-8)';
+
+                // If there are colors in use, add a visual separator
+                if (colors.length > 0) {
+                    const separator = document.createElement('div');
+                    separator.style.width = '100%';
+                    separator.style.height = '1px';
+                    separator.style.background = 'var(--color-border)';
+                    separator.style.margin = 'var(--space-8) 0';
+                    customSection.appendChild(separator);
+                }
+
+                const title = document.createElement('div');
+                title.textContent = 'Custom colors';
+                title.style.fontSize = 'var(--font-size-xs)';
+                title.style.color = 'var(--color-text-secondary)';
+                title.style.marginTop = 'var(--space-12)';
+                title.style.marginBottom = 'var(--space-4)';
+                title.style.fontWeight = 'var(--font-weight-medium)';
+                customSection.appendChild(title);
+
+                const customGrid = document.createElement('div');
+                customGrid.style.display = 'flex';
+                customGrid.style.gap = '4px';
+                customGrid.style.flexWrap = 'wrap';
+
+                this.customBorderColors.forEach(color => {
+                    const swatch = document.createElement('div');
+                    swatch.style.width = '20px';
+                    swatch.style.height = '20px';
+                    swatch.style.backgroundColor = color;
+                    swatch.style.border = '1px solid var(--color-border)';
+                    swatch.style.borderRadius = 'var(--radius-sm)';
+                    swatch.style.cursor = 'pointer';
+                    swatch.title = color + ' (right-click to remove)';
+
+                    // Left click to apply
+                    swatch.addEventListener('click', () => {
+                        borderColorPicker.value = color;
+                        borderColorHex.value = color;
+                        updatePreview();
+                    });
+
+                    // Right click to remove
+                    swatch.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const index = this.customBorderColors.indexOf(color);
+                        if (index > -1) {
+                            this.customBorderColors.splice(index, 1);
+                            updateColorsInUse();
+                        }
+                    });
+
+                    customGrid.appendChild(swatch);
+                });
+
+                customSection.appendChild(customGrid);
+                container.appendChild(customSection);
+            }
+
+            if (!hasAny) {
                 container.style.display = 'none';
             }
         };
@@ -7314,7 +7399,7 @@ class SpreadsheetApp {
         applyPreviewBorder('clear');
         updateColorsInUse();
         
-        // UPDATED: Open custom color picker when clicking the color input
+        // Open custom color picker when clicking the color input
         borderColorPicker.addEventListener('click', (e) => {
             e.preventDefault();
             this.showCustomColorPickerForBorder(borderColorPicker, borderColorHex, updatePreview);
@@ -7340,6 +7425,25 @@ class SpreadsheetApp {
                 updatePreview();
             }
         });
+        
+        // Add button to add custom border color
+        const addBorderColorBtn = document.getElementById('addBorderColorBtn');
+        if (addBorderColorBtn) {
+            addBorderColorBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const color = borderColorPicker.value;
+                if (color && !this.customBorderColors.includes(color)) {
+                    this.customBorderColors.push(color);
+                    updateColorsInUse();
+                    
+                    // Close custom color picker if open
+                    if (this.customColorPicker) {
+                        this.customColorPicker.classList.add('hidden');
+                        this.customColorPickerActive = false;
+                    }
+                }
+            });
+        }
         
         // Update preview on style/width change
         borderStyleSelect.addEventListener('change', updatePreview);
@@ -7378,12 +7482,28 @@ class SpreadsheetApp {
             this.customColorPicker = this.createCustomColorPicker();
         }
 
-        // Store callbacks for border
+        // Store callbacks for border with add button handler
         this.colorPickerCallbacks = {
             type: 'border',
             colorInput,
             hexInput,
-            updateCallback
+            updateCallback,
+            addCustomColor: () => {
+                const color = colorInput.value;
+                if (color && !this.customBorderColors.includes(color)) {
+                    this.customBorderColors.push(color);
+                    // Refresh the border menu to show new custom color
+                    this.setupBorderMenu();
+                    // Re-show border menu after refresh
+                    const borderBtn = document.getElementById('borderBtn');
+                    if (borderBtn) {
+                        const rect = borderBtn.getBoundingClientRect();
+                        this.borderMenu.classList.remove('hidden');
+                        this.borderMenu.style.left = rect.left + 'px';
+                        this.borderMenu.style.top = (rect.bottom + 5) + 'px';
+                    }
+                }
+            }
         };
 
         // Show picker
