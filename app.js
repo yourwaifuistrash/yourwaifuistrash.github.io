@@ -532,6 +532,15 @@ class SpreadsheetApp {
         this.isCtrlDragging = false;
         this.dragStartCell = null;
         this.currentEditingCell = null;
+        this.currentEditorSelection = null;
+        this.editorSelectionListener = null;
+        this.pendingFormattingInteraction = null;
+        this.activeFormattingInteraction = null;
+        this.currentEditorSelection = null;
+        this.editorSelectionListener = null;
+        this.editorBlurTimeout = null;
+        this.pendingFormattingInteraction = null;
+        this.activeFormattingInteraction = null;
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
         this.renderedCellCoords = new Set();
@@ -3307,6 +3316,339 @@ class SpreadsheetApp {
         (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
     }
     
+    handleFormatButtonClick(format) {
+        if (this.currentEditingCell && this.applyInlineFormat(format)) {
+            return;
+        }
+        this.toggleFormat(format);
+    }
+
+    applyInlineFormat(format) {
+        if (!this.currentEditingCell) return false;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (!editor || editor.dataset.isFormula === 'true') return false;
+        const commandMap = {
+            bold: 'bold',
+            italic: 'italic',
+            underline: 'underline',
+            strikethrough: 'strikeThrough'
+        };
+        const command = commandMap[format];
+        if (!command) return false;
+        this.restoreEditorSelection(editor);
+        editor.focus();
+        try {
+            document.execCommand(command, false, null);
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+            this.syncEditorToFormulaBar(editor);
+            return true;
+        } catch (err) {
+            console.warn('Unable to apply inline format', err);
+            return false;
+        }
+    }
+
+    applyInlineFontColor(color) {
+        if (!this.currentEditingCell) return false;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (!editor || editor.dataset.isFormula === 'true') return false;
+
+        this.restoreEditorSelection(editor);
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return false;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return false;
+
+        editor.focus();
+
+        try {
+            if (color) {
+                this.execCommandWithCSS('foreColor', color);
+            } else {
+                this.removeInlineStyleFromSelection(editor, 'color');
+            }
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+            this.syncEditorToFormulaBar(editor);
+            const activeSelection = window.getSelection();
+            if (activeSelection && activeSelection.rangeCount) {
+                this.currentEditorSelection = activeSelection.getRangeAt(0).cloneRange();
+            }
+            return true;
+        } catch (err) {
+            console.warn('Unable to apply inline font color', err);
+            return false;
+        }
+    }
+
+    execCommandWithCSS(command, value) {
+        if (typeof document.execCommand !== 'function') return false;
+        try {
+            document.execCommand('styleWithCSS', false, true);
+        } catch (err) {
+            // Some browsers throw if unsupported; ignore.
+        }
+        const result = document.execCommand(command, false, value);
+        return result !== false;
+    }
+
+    removeInlineStyleFromSelection(editor, styleProp) {
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return;
+
+        const clearStyle = element => {
+            if (!element || element === editor || element.nodeType !== Node.ELEMENT_NODE) return;
+            let removed = false;
+            if (element.style && element.style[styleProp]) {
+                element.style.removeProperty(styleProp);
+                if (!element.getAttribute('style')) {
+                    element.removeAttribute('style');
+                }
+                removed = true;
+            }
+            if (styleProp === 'color' && element.tagName === 'FONT' && element.getAttribute('color')) {
+                element.removeAttribute('color');
+                removed = true;
+            }
+            if (removed) {
+                this.cleanupFormattingSpan(element);
+            }
+        };
+
+        if (range.collapsed) {
+            let node = range.startContainer;
+            if (node.nodeType === Node.TEXT_NODE) {
+                node = node.parentElement;
+            }
+            while (node && node !== editor) {
+                clearStyle(node);
+                node = node.parentElement;
+            }
+            return;
+        }
+
+        const walker = document.createTreeWalker(
+            range.commonAncestorContainer,
+            NodeFilter.SHOW_ELEMENT,
+            {
+                acceptNode: node => {
+                    if (!editor.contains(node)) return NodeFilter.FILTER_REJECT;
+                    return this.rangeIntersectsNode(range, node)
+                        ? NodeFilter.FILTER_ACCEPT
+                        : NodeFilter.FILTER_SKIP;
+                }
+            }
+        );
+
+        const nodes = [];
+        while (walker.nextNode()) {
+            nodes.push(walker.currentNode);
+        }
+        nodes.forEach(clearStyle);
+    }
+
+    cleanupFormattingSpan(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
+        const tag = element.tagName;
+        // Only unwrap spans or fonts that have no attributes left
+        const canUnwrap = (tag === 'SPAN' || tag === 'FONT') && element.attributes.length === 0;
+        if (!canUnwrap) return;
+        const parent = element.parentNode;
+        if (!parent) return;
+        while (element.firstChild) {
+            parent.insertBefore(element.firstChild, element);
+        }
+        parent.removeChild(element);
+    }
+
+    rangeIntersectsNode(range, node) {
+        if (typeof range.intersectsNode === 'function') {
+            try {
+                return range.intersectsNode(node);
+            } catch (err) {
+                return false;
+            }
+        }
+        const tempRange = document.createRange();
+        try {
+            tempRange.selectNodeContents(node);
+            return range.compareBoundaryPoints(Range.END_TO_START, tempRange) > 0 &&
+                range.compareBoundaryPoints(Range.START_TO_END, tempRange) < 0;
+        } catch (err) {
+            return false;
+        } finally {
+            tempRange.detach?.();
+        }
+    }
+
+    handleFormatButtonClick(format) {
+        if (this.currentEditingCell && this.applyInlineFormat(format)) {
+            return;
+        }
+        this.toggleFormat(format);
+    }
+
+    applyInlineFormat(format) {
+        if (!this.currentEditingCell) return false;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (!editor || editor.dataset.isFormula === 'true') return false;
+        const commandMap = {
+            bold: 'bold',
+            italic: 'italic',
+            underline: 'underline',
+            strikethrough: 'strikeThrough'
+        };
+        const command = commandMap[format];
+        if (!command) return false;
+        this.restoreEditorSelection(editor);
+        editor.focus();
+        try {
+            document.execCommand(command, false, null);
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+            this.syncEditorToFormulaBar(editor);
+            return true;
+        } catch (err) {
+            console.warn('Unable to apply inline format', err);
+            return false;
+        }
+    }
+
+    applyInlineFontColor(color) {
+        if (!this.currentEditingCell) return false;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (!editor || editor.dataset.isFormula === 'true') return false;
+
+        this.restoreEditorSelection(editor);
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return false;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return false;
+
+        editor.focus();
+
+        try {
+            if (color) {
+                this.execCommandWithCSS('foreColor', color);
+            } else {
+                this.removeInlineStyleFromSelection(editor, 'color');
+            }
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+            this.syncEditorToFormulaBar(editor);
+            const activeSelection = window.getSelection();
+            if (activeSelection && activeSelection.rangeCount) {
+                this.currentEditorSelection = activeSelection.getRangeAt(0).cloneRange();
+            }
+            this.focusEditorPreservingSelection();
+            return true;
+        } catch (err) {
+            console.warn('Unable to apply inline font color', err);
+            return false;
+        }
+    }
+
+    execCommandWithCSS(command, value) {
+        if (typeof document.execCommand !== 'function') return false;
+        try {
+            document.execCommand('styleWithCSS', false, true);
+        } catch (err) {
+            // Some browsers throw if unsupported; ignore.
+        }
+        const result = document.execCommand(command, false, value);
+        return result !== false;
+    }
+
+    removeInlineStyleFromSelection(editor, styleProp) {
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return;
+
+        const clearStyle = element => {
+            if (!element || element === editor || element.nodeType !== Node.ELEMENT_NODE) return;
+            let removed = false;
+            if (element.style && element.style[styleProp]) {
+                element.style.removeProperty(styleProp);
+                if (!element.getAttribute('style')) {
+                    element.removeAttribute('style');
+                }
+                removed = true;
+            }
+            if (styleProp === 'color' && element.tagName === 'FONT' && element.getAttribute('color')) {
+                element.removeAttribute('color');
+                removed = true;
+            }
+            if (removed) {
+                this.cleanupFormattingSpan(element);
+            }
+        };
+
+        if (range.collapsed) {
+            let node = range.startContainer;
+            if (node.nodeType === Node.TEXT_NODE) {
+                node = node.parentElement;
+            }
+            while (node && node !== editor) {
+                clearStyle(node);
+                node = node.parentElement;
+            }
+            return;
+        }
+
+        const walker = document.createTreeWalker(
+            range.commonAncestorContainer,
+            NodeFilter.SHOW_ELEMENT,
+            {
+                acceptNode: node => {
+                    if (!editor.contains(node)) return NodeFilter.FILTER_REJECT;
+                    return this.rangeIntersectsNode(range, node)
+                        ? NodeFilter.FILTER_ACCEPT
+                        : NodeFilter.FILTER_SKIP;
+                }
+            }
+        );
+
+        const nodes = [];
+        while (walker.nextNode()) {
+            nodes.push(walker.currentNode);
+        }
+        nodes.forEach(clearStyle);
+    }
+
+    cleanupFormattingSpan(element) {
+        if (!element || element.nodeType !== Node.ELEMENT_NODE) return;
+        const tag = element.tagName;
+        // Only unwrap spans or fonts that have no attributes left
+        const canUnwrap = (tag === 'SPAN' || tag === 'FONT') && element.attributes.length === 0;
+        if (!canUnwrap) return;
+        const parent = element.parentNode;
+        if (!parent) return;
+        while (element.firstChild) {
+            parent.insertBefore(element.firstChild, element);
+        }
+        parent.removeChild(element);
+    }
+
+    rangeIntersectsNode(range, node) {
+        if (typeof range.intersectsNode === 'function') {
+            try {
+                return range.intersectsNode(node);
+            } catch (err) {
+                return false;
+            }
+        }
+        const tempRange = document.createRange();
+        try {
+            tempRange.selectNodeContents(node);
+            return range.compareBoundaryPoints(Range.END_TO_START, tempRange) > 0 &&
+                range.compareBoundaryPoints(Range.START_TO_END, tempRange) < 0;
+        } catch (err) {
+            return false;
+        } finally {
+            tempRange.detach?.();
+        }
+    }
+
     toggleFormat(format) { this.applyFormatting(format, true); }
     setTextAlign(alignment) { this.applyFormatting('textAlign', alignment); }
     setVerticalAlign(alignment) { this.applyFormatting('verticalAlign', alignment); }
@@ -5776,7 +6118,9 @@ class SpreadsheetApp {
         }
         
         if (!event.target.closest('#borderMenu') && !event.target.closest('#borderBtn')) {
-            this.hideBorderMenu();
+            if (!(clickedInCustomPicker && this.colorPickerCallbacks && this.colorPickerCallbacks.type === 'border')) {
+                this.hideBorderMenu();
+            }
         }
         
         // Don't close link editor if clicking inside it OR on its buttons
@@ -6327,11 +6671,29 @@ class SpreadsheetApp {
             gInput.value = rgb.g;
             bInput.value = rgb.b;
             
-            // Update existing palette inputs WITHOUT applying
-            const existing = getExistingInputs();
-            if (existing) {
-                existing.colorInput.value = hex;
-                existing.hexInput.value = hex.substring(1); // Remove #
+            // Update existing palette inputs OR border inputs WITHOUT applying
+            const callbacks = this.colorPickerCallbacks;
+            if (callbacks) {
+                if (callbacks.type === 'border') {
+                    // Update border dialog inputs
+                    if (callbacks.colorInput) {
+                        callbacks.colorInput.value = hex;
+                    }
+                    if (callbacks.hexInput) {
+                        callbacks.hexInput.value = hex.substring(1);
+                    }
+                    // Call the update callback to update preview
+                    if (typeof callbacks.updateCallback === 'function') {
+                        callbacks.updateCallback();
+                    }
+                } else {
+                    // Update palette inputs
+                    const existing = getExistingInputs();
+                    if (existing) {
+                        existing.colorInput.value = hex;
+                        existing.hexInput.value = hex.substring(1);
+                    }
+                }
             }
             
             // Calculate cursor position with proper clamping
@@ -6952,12 +7314,13 @@ class SpreadsheetApp {
         applyPreviewBorder('clear');
         updateColorsInUse();
         
-        // Sync color picker and hex input
-        borderColorPicker.addEventListener('input', (e) => {
-            borderColorHex.value = e.target.value;
-            updatePreview();
+        // UPDATED: Open custom color picker when clicking the color input
+        borderColorPicker.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.showCustomColorPickerForBorder(borderColorPicker, borderColorHex, updatePreview);
         });
         
+        // Sync hex input with color picker
         borderColorHex.addEventListener('input', (e) => {
             let value = e.target.value.trim();
             if (value.startsWith('#')) {
@@ -7007,6 +7370,43 @@ class SpreadsheetApp {
                 this.hideBorderMenu();
             });
         });
+    }
+    
+    showCustomColorPickerForBorder(colorInput, hexInput, updateCallback) {
+        // Create picker if it doesn't exist
+        if (!this.customColorPicker) {
+            this.customColorPicker = this.createCustomColorPicker();
+        }
+
+        // Store callbacks for border
+        this.colorPickerCallbacks = {
+            type: 'border',
+            colorInput,
+            hexInput,
+            updateCallback
+        };
+
+        // Show picker
+        this.customColorPicker.classList.remove('hidden');
+        
+        // Position it to the right of the border menu
+        const rect = this.borderMenu.getBoundingClientRect();
+        this.customColorPicker.style.left = (rect.right + 8) + 'px';
+        this.customColorPicker.style.top = rect.top + 'px';
+
+        // Get current color from the color input
+        const currentColor = colorInput ? colorInput.value : '#000000';
+        
+        // Update hex input with current color
+        if (hexInput) {
+            hexInput.value = currentColor.substring(1);
+        }
+
+        // Initialize with current color
+        this.setCustomPickerColor(currentColor);
+        
+        // Keep the border menu visible
+        this.customColorPickerActive = true;
     }
 
     applyBorder(action, style, width, color) {
