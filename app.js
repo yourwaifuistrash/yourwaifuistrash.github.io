@@ -4348,12 +4348,12 @@ class SpreadsheetApp {
                 this.clearAllSelections();
                 const rangeCells = this.getCellsInRect(this.primaryCell, cell);
                 const expandedCells = this.expandSelectionForMergedCells(rangeCells);
-                this.selectCells(expandedCells, true);
+                this.selectCells(expandedCells, true, this.primaryCell);
             } else {
                 // Normal click: start new selection
                 this.clearAllSelections();
                 const expandedCells = this.expandSelectionForMergedCells([cell]);
-                this.selectCells(expandedCells, true);
+                this.selectCells(expandedCells, true, cell);
             }
             return;
         }
@@ -4378,36 +4378,44 @@ class SpreadsheetApp {
             this.clearAllSelections();
             const rangeCells = this.getCellsInRect(this.primaryCell, cell);
             const expandedCells = this.expandSelectionForMergedCells(rangeCells);
-            this.selectCells(expandedCells, true);
+            this.selectCells(expandedCells, true, this.primaryCell);
         } else {
             this.clearAllSelections();
             const expandedCells = this.expandSelectionForMergedCells([cell]);
-            this.selectCells(expandedCells, true);
+            this.selectCells(expandedCells, true, cell);
         }
     }
 
     handleMouseMove(event) {
         if (!this.isDragging || !this.dragStartCell) return;
 
-        // Handle edge scrolling
         this.handleEdgeScrolling(event);
 
         const cell = this.resolveCellFromEvent(event);
         if (!cell) return;
 
-        if (this.isCtrlDragging) {
-            const rangeCells = this.getCellsInRect(this.dragStartCell, cell);
-            rangeCells.forEach(c => {
-                if (!this.ctrlDragProcessedCells.has(c)) {
-                    this.processCtrlDragCell(c);
-                }
-            });
-        } else if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
+        // DEBUG
+        const { row: cellRow, col: cellCol } = this.getCellPos(cell);
+        const gridRect = this.mainGrid.getBoundingClientRect();
+        const zoom = this.zoomLevel || 1;
+        const offsetX = (event.clientX - gridRect.left) / zoom;
+        const offsetY = (event.clientY - gridRect.top) / zoom;
+        const x = offsetX + this.mainGrid.scrollLeft;
+        const y = offsetY + this.mainGrid.scrollTop;
+        const actualCol = this.getIndexAtCoordinate(x, this.getColumnWidth, this.config.maxCols);
+        const actualRow = this.getIndexAtCoordinate(y, this.getRowHeight, this.config.maxRows);
+        console.log(`Mouse over: resolved=${String.fromCharCode(65+cellCol)}${cellRow+1}, actual=${String.fromCharCode(65+actualCol)}${actualRow+1}`);
+
+        if (!this.isCtrlDragging && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
             this.clearAllSelections();
-            const rangeCells = this.getCellsInRect(this.dragStartCell, cell);
-            // Expand selection to include full merged cells
+            let endCell = cell;
+            if (actualCol !== -1 && actualRow !== -1) {
+                const actualCell = this.getCellAt(actualRow, actualCol);
+                if (actualCell) endCell = actualCell;
+            }
+            const rangeCells = this.getCellsInRect(this.dragStartCell, endCell);
             const expandedCells = this.expandSelectionForMergedCells(rangeCells);
-            this.selectCells(expandedCells, true);
+            this.selectCells(expandedCells, true, this.dragStartCell);
         }
     }
 
@@ -4970,7 +4978,7 @@ class SpreadsheetApp {
         updated.forEach(coord => coordSet.add(coord));
     }
 
-    selectCells(cells, isPrimary = false) {
+    selectCells(cells, isPrimary = false, primaryCell = null) {
         if (!cells || !cells.length) return;
         this.fullSheetSelection = false;
         
@@ -4994,7 +5002,19 @@ class SpreadsheetApp {
                 }
             }
             
-            if (isPrimary && index === 0) {
+            // Determine which cell should be marked as primary
+            let shouldMarkPrimary = false;
+            if (isPrimary) {
+                if (primaryCell) {
+                    // If explicit primaryCell is provided, use that
+                    shouldMarkPrimary = (cell === primaryCell);
+                } else {
+                    // Otherwise mark the first cell as primary
+                    shouldMarkPrimary = (index === 0);
+                }
+            }
+            
+            if (shouldMarkPrimary) {
                 if (this.primaryCell) {
                     this.primaryCell.classList.remove('primary-selected');
                 }
