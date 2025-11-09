@@ -4406,7 +4406,21 @@ class SpreadsheetApp {
         const actualRow = this.getIndexAtCoordinate(y, this.getRowHeight, this.config.maxRows);
         console.log(`Mouse over: resolved=${String.fromCharCode(65+cellCol)}${cellRow+1}, actual=${String.fromCharCode(65+actualCol)}${actualRow+1}`);
 
-        if (!this.isCtrlDragging && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+        if (this.isCtrlDragging) {
+            // Handle Ctrl+drag: add cells to selection as user drags
+            let endCell = cell;
+            if (actualCol !== -1 && actualRow !== -1) {
+                const actualCell = this.getCellAt(actualRow, actualCol);
+                if (actualCell) endCell = actualCell;
+            }
+            const rangeCells = this.getCellsInRect(this.dragStartCell, endCell);
+            rangeCells.forEach(c => {
+                if (!this.ctrlDragProcessedCells.has(c)) {
+                    this.processCtrlDragCell(c);
+                }
+            });
+        } else if (!event.shiftKey && !event.ctrlKey && !event.metaKey) {
+            // Normal drag: rectangle selection
             this.clearAllSelections();
             let endCell = cell;
             if (actualCol !== -1 && actualRow !== -1) {
