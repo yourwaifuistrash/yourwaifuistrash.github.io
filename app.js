@@ -6662,7 +6662,17 @@ class SpreadsheetApp {
         addBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const color = colorInput.value;
-            if (color && !customColorsArray.includes(color)) {
+            if (color) {
+                if (customColorsArray.includes(color)) {
+                    // Get the palette element to position notification below it
+                    const paletteElement = type === 'background' ? this.colorPalette : this.fontColorPalette;
+                    // Show error notification below the palette
+                    this.showErrorNotification(
+                        `Color ${color} already exists`,
+                        paletteElement
+                    );
+                    return;
+                }
                 // Store the current color value before refresh
                 const currentColor = color;
                 customColorsArray.push(color);
@@ -6671,9 +6681,9 @@ class SpreadsheetApp {
                 
                 // Restore the color value in the new inputs after refresh
                 setTimeout(() => {
-                    const palette = type === 'background' ? this.colorPalette : this.fontColorPalette;
-                    const newColorInput = palette.querySelector('input[type="color"]');
-                    const newHexInput = palette.querySelector('input[type="text"]');
+                    const newPalette = type === 'background' ? this.colorPalette : this.fontColorPalette;
+                    const newColorInput = newPalette.querySelector('input[type="color"]');
+                    const newHexInput = newPalette.querySelector('input[type="text"]');
                     if (newColorInput && newHexInput) {
                         newColorInput.value = currentColor;
                         newHexInput.value = currentColor.substring(1);
@@ -7701,7 +7711,15 @@ class SpreadsheetApp {
             addBorderColorBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const color = borderColorPicker.value;
-                if (color && !this.customBorderColors.includes(color)) {
+                if (color) {
+                    if (this.customBorderColors.includes(color)) {
+                        // Show error notification below the border menu
+                        this.showErrorNotification(
+                            `Color ${color} already exists`,
+                            this.borderMenu
+                        );
+                        return;
+                    }
                     this.customBorderColors.push(color);
                     updateColorsInUse();
                     
@@ -7745,6 +7763,71 @@ class SpreadsheetApp {
         });
     }
     
+    showErrorNotification(message, parentElement) {
+        // Remove any existing notification from this parent
+        const existingNotification = parentElement.querySelector('.error-notification');
+        if (existingNotification) {
+            clearTimeout(existingNotification.dataset.timeoutId);
+            existingNotification.remove();
+        }
+        
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = 'error-notification';
+        notification.setAttribute('role', 'alert');
+        notification.style.cssText = `
+            background-color: #ffebee;
+            border-left: 4px solid #f44336;
+            color: #c62828;
+            padding: var(--space-12, 12px) var(--space-16, 16px);
+            margin-top: var(--space-12, 12px);
+            border-radius: var(--radius-sm, 4px);
+            font-size: var(--font-size-sm, 13px);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: var(--space-8, 8px);
+            animation: slideInError 0.3s ease-out;
+        `;
+        
+        // Add warning icon
+        const icon = document.createElement('span');
+        icon.textContent = '⚠';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.style.cssText = `
+            font-size: 16px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+        `;
+        
+        // Add message text
+        const text = document.createElement('span');
+        text.textContent = message;
+        text.style.flex = '1';
+        
+        notification.appendChild(icon);
+        notification.appendChild(text);
+        
+        // Append to the parent element (inside the dialog)
+        parentElement.appendChild(notification);
+        
+        // Auto-remove after 4 seconds
+        const timeoutId = setTimeout(() => {
+            if (notification.parentElement) {
+                notification.style.animation = 'slideOutError 0.3s ease-out forwards';
+                setTimeout(() => {
+                    if (notification.parentElement) {
+                        notification.remove();
+                    }
+                }, 300);
+            }
+        }, 4000);
+        
+        // Store timeout ID for cleanup if needed
+        notification.dataset.timeoutId = timeoutId;
+    }
+
     showCustomColorPickerForBorder(colorInput, hexInput, updateCallback) {
         // Create picker if it doesn't exist
         if (!this.customColorPicker) {
