@@ -958,6 +958,65 @@ body { margin: 0; padding: 0; }
 .cell.align-middle { align-items: center; }
 .cell.align-bottom { align-items: flex-end; }
 
+.cell-text-inline {
+  display: inline-block;
+  width: 100%;
+  font-weight: inherit;
+  font-style: inherit;
+  text-decoration: inherit;
+  color: inherit;
+}
+
+/* Cell-level formatting (baseline) */
+.cell.bold {
+  font-weight: var(--font-weight-bold);
+}
+
+.cell.italic {
+  font-style: italic;
+}
+
+.cell.underline {
+  text-decoration-line: underline;
+}
+
+.cell.strikethrough {
+  text-decoration-line: line-through;
+}
+
+.cell.underline.strikethrough {
+  text-decoration-line: underline line-through;
+}
+
+/* Inline span overrides - only specify when different from cell default */
+.cell-text-inline span {
+  font-weight: inherit;
+  font-style: inherit;
+  text-decoration: inherit;
+}
+
+/* Override bold only when explicitly set to normal */
+.cell.bold .cell-text-inline span[data-bold="false"] {
+  font-weight: normal;
+}
+
+/* Override italic only when explicitly set to normal */
+.cell.italic .cell-text-inline span[data-italic="false"] {
+  font-style: normal;
+}
+
+/* Override underline only when explicitly removed */
+.cell.underline .cell-text-inline span[data-underline="false"] {
+  text-decoration: none;
+}
+
+/* Override strikethrough only when explicitly removed */
+.cell.strikethrough .cell-text-inline span[data-strikethrough="false"] {
+  text-decoration: none;
+}
+
+
+
 @media (max-width: 768px) {
   .toolbar { flex-wrap: wrap; gap: var(--space-8); }
   .toolbar-section { gap: var(--space-4); }
