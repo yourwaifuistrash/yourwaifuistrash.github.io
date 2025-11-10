@@ -3037,6 +3037,7 @@ class SpreadsheetApp {
             ['#borderBtn', 'click', () => this.showBorderMenu()],
             ['#mergeBtn', 'click', () => this.handleMergeCells()],
             ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e)],
+            ['#fontSizeInput', 'input', e => this.handleFontSizeChange(e)],
             ['#fontSizeInput', 'keydown', e => {
                 if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e); e.target.blur(); }
             }],
