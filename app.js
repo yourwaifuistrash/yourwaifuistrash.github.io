@@ -4465,6 +4465,8 @@ class SpreadsheetApp {
             this.userMadeChanges = true;
             this.scheduleDirtyStateUpdate();
             
+            this.refreshAllVisibleCells();
+            
             return;
         }
         
