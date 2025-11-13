@@ -7530,6 +7530,44 @@ class SpreadsheetApp {
             if (svg) svg.innerHTML = '';
         };
 
+        const isHorizontalLine = (coords) => Math.abs(coords[1] - coords[3]) < 0.01;
+        const isVerticalLine = (coords) => Math.abs(coords[0] - coords[2]) < 0.01;
+
+        const getDoubleLineSegments = (coords, width) => {
+            const [x1, y1, x2, y2] = coords;
+            const lineThickness = Math.max(1, Math.round(width / 3));
+            const gap = Math.max(0, width - lineThickness * 2);
+            const offset = gap / 2 + lineThickness / 2;
+
+            if (isHorizontalLine(coords)) {
+                return [
+                    { coords: [x1, y1 - offset, x2, y2 - offset], strokeWidth: lineThickness },
+                    { coords: [x1, y1 + offset, x2, y2 + offset], strokeWidth: lineThickness }
+                ];
+            }
+
+            if (isVerticalLine(coords)) {
+                return [
+                    { coords: [x1 - offset, y1, x2 - offset, y2], strokeWidth: lineThickness },
+                    { coords: [x1 + offset, y1, x2 + offset, y2], strokeWidth: lineThickness }
+                ];
+            }
+
+            return [{ coords, strokeWidth: width }];
+        };
+
+        const getDashPattern = (style, width) => {
+            if (style === 'dashed') {
+                return `${width * 3}, ${width * 2}`;
+            }
+            if (style === 'dotted') {
+                const dotLength = Math.max(1, Math.round(width * 0.6));
+                const gapLength = Math.max(dotLength + 1, Math.round(width * 1.6));
+                return `${dotLength}, ${gapLength}`;
+            }
+            return null;
+        };
+
         const applyPreviewBorder = (action) => {
             currentPreviewAction = action;
             clearPreviewBorders();
@@ -7584,23 +7622,43 @@ class SpreadsheetApp {
             }[action] || [];
 
             const shouldExtendToCorners = action === 'all' || action === 'outer';
-            lines.forEach(([x1, y1, x2, y2]) => {
-                const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                l.setAttribute('x1', x1);
-                l.setAttribute('y1', y1);
-                l.setAttribute('x2', x2);
-                l.setAttribute('y2', y2);
-                l.setAttribute('stroke', c);
-                l.setAttribute('stroke-width', w);
-                const lineCap = s === 'dotted'
-                    ? 'round'
-                    : (shouldExtendToCorners ? 'square' : 'butt');
-                l.setAttribute('stroke-linecap', lineCap);
-                if (s === 'dashed') l.setAttribute('stroke-dasharray', `${w * 3}, ${w * 2}`);
-                else if (s === 'dotted') {
-                    l.setAttribute('stroke-dasharray', `${w}, ${w}`);
+            const baseLineCap = s === 'dotted'
+                ? 'round'
+                : (shouldExtendToCorners ? 'square' : 'butt');
+            const baseDashPattern = getDashPattern(s, w);
+
+            const drawLine = (coords, strokeWidth, lineCapOverride, dashPatternOverride) => {
+                const [x1, y1, x2, y2] = coords;
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', x1);
+                line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2);
+                line.setAttribute('y2', y2);
+                line.setAttribute('stroke', c);
+                line.setAttribute('stroke-width', strokeWidth);
+                line.setAttribute('stroke-linecap', lineCapOverride ?? baseLineCap);
+                const dashPattern = dashPatternOverride ?? baseDashPattern;
+                if (dashPattern) {
+                    line.setAttribute('stroke-dasharray', dashPattern);
                 }
-                svg.appendChild(l);
+                svg.appendChild(line);
+            };
+
+            lines.forEach((coords) => {
+                if (s === 'double') {
+                    const doubleSegments = getDoubleLineSegments(coords, w);
+                    doubleSegments.forEach(segment => {
+                        drawLine(
+                            segment.coords,
+                            segment.strokeWidth,
+                            shouldExtendToCorners ? 'square' : 'butt',
+                            null
+                        );
+                    });
+                    return;
+                }
+
+                drawLine(coords, w);
             });
         };
 
