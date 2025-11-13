@@ -251,17 +251,13 @@ const BORDER_MENU_HTML = `
                 </div>
             </div>
         </div>
-        <div class="border-menu-section">
-            <div class="border-menu-subtitle">Border Color</div>
-            <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px;">
+        <div class="border-menu-section border-menu-section--compact">
+            <div style="display: flex; gap: var(--space-8); align-items: center;">
                 <input type="color" id="borderColorPicker" value="#000000" style="width: 40px; height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer;">
                 <input type="text" id="borderColorHex" class="form-control" placeholder="#000000" maxlength="7" style="flex: 1; font-family: var(--font-family-mono); font-size: var(--font-size-sm);">
                 <button class="btn btn--sm" id="addBorderColorBtn" title="Add custom color" style="min-width: 32px;">+</button>
             </div>
-            <div id="borderColorsInUse" style="display: none; margin-top: 8px;">
-                <div style="font-size: 10px; color: var(--color-text-secondary); margin-bottom: 4px;">Colors in use:</div>
-                <div id="borderColorsInUseGrid" style="display: flex; gap: 4px; flex-wrap: wrap;"></div>
-            </div>
+            <div class="border-menu-divider"></div>
         </div>
         <div class="border-menu-section">
             <div class="border-menu-subtitle">Border Styles</div>
@@ -326,24 +322,29 @@ const BORDER_MENU_HTML = `
                 </button>
             </div>
         </div>
-        <div class="border-menu-section">
-            <div class="border-menu-subtitle">Border Style</div>
-            <select id="borderStyleSelect" class="form-control">
-                <option value="solid">Solid</option>
-                <option value="dashed">Dashed</option>
-                <option value="dotted">Dotted</option>
-                <option value="double">Double</option>
-            </select>
+        <div class="border-menu-section border-menu-section--compact">
+            <div class="border-menu-control-row">
+                <div class="border-menu-control-label">Line:</div>
+                <select id="borderStyleSelect" class="form-control border-menu-control-select">
+                    <option value="solid">Solid</option>
+                    <option value="dashed">Dashed</option>
+                    <option value="dotted">Dotted</option>
+                    <option value="double">Double</option>
+                </select>
+            </div>
         </div>
-        <div class="border-menu-section">
-            <div class="border-menu-subtitle">Border Width</div>
-            <select id="borderWidthSelect" class="form-control">
-                <option value="1">1px</option>
-                <option value="2">2px</option>
-                <option value="3">3px</option>
-                <option value="4">4px</option>
-            </select>
+        <div class="border-menu-section border-menu-section--compact">
+            <div class="border-menu-control-row">
+                <div class="border-menu-control-label">Width:</div>
+                <select id="borderWidthSelect" class="form-control border-menu-control-select">
+                    <option value="1">1px</option>
+                    <option value="2">2px</option>
+                    <option value="3">3px</option>
+                    <option value="4">4px</option>
+                </select>
+            </div>
         </div>
+        <div class="border-menu-section border-menu-color-sections" id="borderColorSections" style="display: none;"></div>
     </div>
 `;
 
@@ -6471,36 +6472,9 @@ class SpreadsheetApp {
             element.style.left = rect.left + 'px';
             element.style.top = (rect.bottom + 5) + 'px';
             
-            // Refresh colors in use for border menu
-            if (type === 'border') {
-                const colors = this.getBorderColorsInUse();
-                const container = document.getElementById('borderColorsInUse');
-                const grid = document.getElementById('borderColorsInUseGrid');
-                
-                if (colors.length > 0) {
-                    container.style.display = 'block';
-                    grid.innerHTML = '';
-                    colors.forEach(color => {
-                        const swatch = document.createElement('div');
-                        Object.assign(swatch.style, {
-                            width: '20px', height: '20px', backgroundColor: color,
-                            border: '1px solid var(--color-border)',
-                            borderRadius: 'var(--radius-sm)', cursor: 'pointer'
-                        });
-                        swatch.title = color;
-                        swatch.onclick = () => {
-                            document.getElementById('borderColorPicker').value = color;
-                            document.getElementById('borderColorHex').value = color;
-                            const preview = this.borderMenu.querySelector('.border-preview-cell');
-                            const style = document.getElementById('borderStyleSelect').value;
-                            const width = document.getElementById('borderWidthSelect').value + 'px';
-                            preview.style.border = `${width} ${style} ${color}`;
-                        };
-                        grid.appendChild(swatch);
-                    });
-                } else {
-                    container.style.display = 'none';
-                }
+            // Refresh border color sections when opening the menu
+            if (type === 'border' && typeof this.refreshBorderColorSections === 'function') {
+                this.refreshBorderColorSections();
             }
         } else {
             element.classList.add('hidden');
@@ -6521,6 +6495,8 @@ class SpreadsheetApp {
             palette = this.colorPalette;
         } else if (type === 'font') {
             palette = this.fontColorPalette;
+        } else if (type === 'border') {
+            palette = this.borderMenu;
         }
         if (palette) {
             palette.classList.remove('hidden');
@@ -7276,9 +7252,8 @@ class SpreadsheetApp {
         container.appendChild(sectionTitle);
         
         const grid = document.createElement('div');
-        grid.style.display = 'grid';
-        grid.style.gridTemplateColumns = 'repeat(10, 1fr)';
-        grid.style.gap = 'var(--space-4)';
+        grid.classList.add('color-section-grid');
+        grid.style.marginTop = 'var(--space-4)';
         
         colors.forEach(color => {
             // Use removable swatches for custom colors section
@@ -7446,6 +7421,7 @@ class SpreadsheetApp {
         const borderWidthSelect = document.getElementById('borderWidthSelect');
         const borderColorPicker = document.getElementById('borderColorPicker');
         const borderColorHex = document.getElementById('borderColorHex');
+        const borderColorSections = document.getElementById('borderColorSections');
         const borderPreviewCells = Array.from(this.borderMenu.querySelectorAll('.border-preview-cell'));
         let currentPreviewAction = 'clear';
 
@@ -7564,122 +7540,54 @@ class SpreadsheetApp {
 
         const updatePreview = () => applyPreviewBorder(currentPreviewAction);
         
-        // Update colors in use with a separate custom colors section
-        const updateColorsInUse = () => {
-            const colors = this.getBorderColorsInUse();
-            const container = document.getElementById('borderColorsInUse');
-            const grid = document.getElementById('borderColorsInUseGrid');
-
-            if (!container || !grid) return;
-
-            // Clear the existing "colors in use" grid
-            grid.innerHTML = '';
-
-            // Remove any existing custom colors section so we can rebuild it
-            const existingCustomSection = document.getElementById('borderCustomColorsSection');
-            if (existingCustomSection) existingCustomSection.remove();
-
-            let hasAny = false;
-
-            // Show colors in use (if any)
-            if (colors.length > 0) {
-                container.style.display = 'block';
-                hasAny = true;
-                colors.forEach(color => {
-                    const swatch = document.createElement('div');
-                    swatch.style.width = '20px';
-                    swatch.style.height = '20px';
-                    swatch.style.backgroundColor = color;
-                    swatch.style.border = '1px solid var(--color-border)';
-                    swatch.style.borderRadius = 'var(--radius-sm)';
-                    swatch.style.cursor = 'pointer';
-                    swatch.title = color;
-                    swatch.addEventListener('click', () => {
-                        borderColorPicker.value = color;
-                        borderColorHex.value = color;
-                        updatePreview();
-                    });
-                    grid.appendChild(swatch);
-                });
-            }
-
-            // Add a dedicated custom colors section (keeps "Colors in use" separate)
-            if (this.customBorderColors.length > 0) {
-                // Ensure container is visible when only custom colors exist
-                container.style.display = 'block';
-                hasAny = true;
-
-                const customSection = document.createElement('div');
-                customSection.id = 'borderCustomColorsSection';
-                customSection.style.marginTop = 'var(--space-8)';
-
-                // If there are colors in use, add a visual separator
-                if (colors.length > 0) {
-                    const separator = document.createElement('div');
-                    separator.style.width = '100%';
-                    separator.style.height = '1px';
-                    separator.style.background = 'var(--color-border)';
-                    separator.style.margin = 'var(--space-8) 0';
-                    customSection.appendChild(separator);
-                }
-
-                const title = document.createElement('div');
-                title.textContent = 'Custom colors';
-                title.style.fontSize = 'var(--font-size-xs)';
-                title.style.color = 'var(--color-text-secondary)';
-                title.style.marginTop = 'var(--space-12)';
-                title.style.marginBottom = 'var(--space-4)';
-                title.style.fontWeight = 'var(--font-weight-medium)';
-                customSection.appendChild(title);
-
-                const customGrid = document.createElement('div');
-                customGrid.style.display = 'flex';
-                customGrid.style.gap = '4px';
-                customGrid.style.flexWrap = 'wrap';
-
-                this.customBorderColors.forEach(color => {
-                    const swatch = document.createElement('div');
-                    swatch.style.width = '20px';
-                    swatch.style.height = '20px';
-                    swatch.style.backgroundColor = color;
-                    swatch.style.border = '1px solid var(--color-border)';
-                    swatch.style.borderRadius = 'var(--radius-sm)';
-                    swatch.style.cursor = 'pointer';
-                    swatch.title = color + ' (right-click to remove)';
-
-                    // Left click to apply
-                    swatch.addEventListener('click', () => {
-                        borderColorPicker.value = color;
-                        borderColorHex.value = color;
-                        updatePreview();
-                    });
-
-                    // Right click to remove
-                    swatch.addEventListener('contextmenu', (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const index = this.customBorderColors.indexOf(color);
-                        if (index > -1) {
-                            this.customBorderColors.splice(index, 1);
-                            updateColorsInUse();
-                        }
-                    });
-
-                    customGrid.appendChild(swatch);
-                });
-
-                customSection.appendChild(customGrid);
-                container.appendChild(customSection);
-            }
-
-            if (!hasAny) {
-                container.style.display = 'none';
-            }
+        const applyColorFromSwatch = (color) => {
+            if (!color) return;
+            borderColorPicker.value = color;
+            borderColorHex.value = color.toUpperCase();
+            updatePreview();
         };
+
+        const renderBorderColorSections = () => {
+            if (!borderColorSections) return;
+            borderColorSections.innerHTML = '';
+
+            const colorsInUse = this.getBorderColorsInUse();
+            const hideMenu = this.hideBorderMenu.bind(this);
+
+            if (colorsInUse.length > 0) {
+                this._appendColorSection(
+                    borderColorSections,
+                    'Colors in use',
+                    colorsInUse,
+                    applyColorFromSwatch,
+                    hideMenu,
+                    renderBorderColorSections,
+                    'border'
+                );
+            }
+
+            if (this.customBorderColors.length > 0) {
+                this._appendColorSection(
+                    borderColorSections,
+                    'Custom colors',
+                    this.customBorderColors,
+                    applyColorFromSwatch,
+                    hideMenu,
+                    renderBorderColorSections,
+                    'border'
+                );
+            }
+
+            borderColorSections.style.display = (colorsInUse.length || this.customBorderColors.length)
+                ? 'block'
+                : 'none';
+        };
+
+        this.refreshBorderColorSections = renderBorderColorSections;
         
         // Initial preview and colors - show clear state by default
         applyPreviewBorder('clear');
-        updateColorsInUse();
+        renderBorderColorSections();
         
         // Open custom color picker when clicking the color input
         borderColorPicker.addEventListener('click', (e) => {
@@ -7724,7 +7632,7 @@ class SpreadsheetApp {
                         return;
                     }
                     this.customBorderColors.push(color);
-                    updateColorsInUse();
+                    renderBorderColorSections();
                     
                     // Close custom color picker if open
                     if (this.customColorPicker) {
@@ -7847,15 +7755,8 @@ class SpreadsheetApp {
                 const color = colorInput.value;
                 if (color && !this.customBorderColors.includes(color)) {
                     this.customBorderColors.push(color);
-                    // Refresh the border menu to show new custom color
-                    this.setupBorderMenu();
-                    // Re-show border menu after refresh
-                    const borderBtn = document.getElementById('borderBtn');
-                    if (borderBtn) {
-                        const rect = borderBtn.getBoundingClientRect();
-                        this.borderMenu.classList.remove('hidden');
-                        this.borderMenu.style.left = rect.left + 'px';
-                        this.borderMenu.style.top = (rect.bottom + 5) + 'px';
+                    if (typeof this.refreshBorderColorSections === 'function') {
+                        this.refreshBorderColorSections();
                     }
                 }
             }
