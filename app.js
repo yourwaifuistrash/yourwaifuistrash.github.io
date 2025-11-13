@@ -7422,119 +7422,185 @@ class SpreadsheetApp {
         const borderColorPicker = document.getElementById('borderColorPicker');
         const borderColorHex = document.getElementById('borderColorHex');
         const borderColorSections = document.getElementById('borderColorSections');
-        const borderPreviewCells = Array.from(this.borderMenu.querySelectorAll('.border-preview-cell'));
+        const borderPreview = document.getElementById('borderPreview');
         let currentPreviewAction = 'clear';
 
-        const minPreviewRow = 0;
-        const maxPreviewRow = 2;
-        const minPreviewCol = 0;
-        const maxPreviewCol = 2;
+        const previewColumns = 3;
+        const previewRows = 3;
+        const previewCellWidth = this.config.cellWidth;
+        const previewCellHeight = this.config.cellHeight;
+        const previewWidth = previewColumns * previewCellWidth;
+        const previewHeight = previewRows * previewCellHeight;
+        const gridBufferColumns = previewColumns + 2;
+        const gridBufferRows = previewRows + 2;
+        const edgePeek = 4;
+        const stageWidth = previewWidth + edgePeek * 2;
+        const stageHeight = previewHeight + edgePeek * 2;
+        const gridWidth = gridBufferColumns * previewCellWidth;
+        const gridHeight = gridBufferRows * previewCellHeight;
+        const gridOffsetX = previewCellWidth - edgePeek;
+        const gridOffsetY = previewCellHeight - edgePeek;
+        const stagePaddingX = edgePeek;
+        const stagePaddingY = edgePeek;
 
-        const getPreviewCellIndex = (row, col) => {
-            if (row < minPreviewRow || row > maxPreviewRow) return null;
-            if (col < minPreviewCol || col > maxPreviewCol) return null;
-            return row * 3 + col;
+        if (borderPreview) {
+            const stage = document.createElement('div');
+            stage.className = 'border-preview-stage';
+
+            stage.style.width = `${stageWidth}px`;
+            stage.style.height = `${stageHeight}px`;
+
+            const viewport = document.createElement('div');
+            viewport.className = 'border-preview-viewport';
+            viewport.style.width = `${stageWidth}px`;
+            viewport.style.height = `${stageHeight}px`;
+
+            const grid = document.createElement('div');
+            grid.className = 'border-preview-grid';
+            grid.style.setProperty('--border-preview-cell-width', `${previewCellWidth}px`);
+            grid.style.setProperty('--border-preview-cell-height', `${previewCellHeight}px`);
+            grid.style.width = `${gridWidth}px`;
+            grid.style.height = `${gridHeight}px`;
+            grid.style.left = `-${gridOffsetX}px`;
+            grid.style.top = `-${gridOffsetY}px`;
+            grid.style.gridTemplateColumns = `repeat(${gridBufferColumns}, var(--border-preview-cell-width))`;
+            grid.style.gridTemplateRows = `repeat(${gridBufferRows}, var(--border-preview-cell-height))`;
+
+            const totalCells = gridBufferColumns * gridBufferRows;
+            for (let i = 0; i < totalCells; i++) {
+                const cell = document.createElement('div');
+                cell.className = 'border-preview-cell';
+                const colIndex = i % gridBufferColumns;
+                const rowIndex = Math.floor(i / gridBufferColumns);
+                if (colIndex === 0) cell.classList.add('border-preview-cell--edge-left');
+                if (rowIndex === 0) cell.classList.add('border-preview-cell--edge-top');
+                grid.appendChild(cell);
+            }
+
+            viewport.appendChild(grid);
+
+            const overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            overlay.classList.add('border-preview-overlay');
+            overlay.setAttribute('width', stageWidth);
+            overlay.setAttribute('height', stageHeight);
+            overlay.setAttribute('viewBox', `0 0 ${stageWidth} ${stageHeight}`);
+            overlay.setAttribute('aria-hidden', 'true');
+            overlay.setAttribute('role', 'presentation');
+            overlay.style.width = `${stageWidth}px`;
+            overlay.style.height = `${stageHeight}px`;
+            overlay.style.left = '0';
+            overlay.style.top = '0';
+
+            stage.appendChild(viewport);
+            stage.appendChild(overlay);
+
+            borderPreview.innerHTML = '';
+            borderPreview.appendChild(stage);
+        }
+
+        const svg = borderPreview?.querySelector('.border-preview-overlay');
+        const spanXStart = stagePaddingX - 0.5;
+        const spanYStart = stagePaddingY - 0.5;
+        const spanXEnd = spanXStart + previewWidth;
+        const spanYEnd = spanYStart + previewHeight;
+        const verticalPositions = Array.from(
+            { length: previewColumns + 1 },
+            (_, idx) => spanXStart + idx * previewCellWidth
+        );
+        const horizontalPositions = Array.from(
+            { length: previewRows + 1 },
+            (_, idx) => spanYStart + idx * previewCellHeight
+        );
+        const previewEdges = {
+            left: verticalPositions[0],
+            right: verticalPositions[verticalPositions.length - 1],
+            top: horizontalPositions[0],
+            bottom: horizontalPositions[horizontalPositions.length - 1],
+            innerXs: verticalPositions.slice(1, -1),
+            innerYs: horizontalPositions.slice(1, -1)
         };
+        const makeHorizontal = (y) => [spanXStart, y, spanXEnd, y];
+        const makeVertical = (x) => [x, spanYStart, x, spanYEnd];
+        const outerHorizontalLines = [makeHorizontal(previewEdges.top), makeHorizontal(previewEdges.bottom)];
+        const outerVerticalLines = [makeVertical(previewEdges.left), makeVertical(previewEdges.right)];
+        const innerHorizontalLines = previewEdges.innerYs.map(makeHorizontal);
+        const innerVerticalLines = previewEdges.innerXs.map(makeVertical);
 
-        const getPreviewCellPosition = (index) => ({
-            row: Math.floor(index / 3),
-            col: index % 3
-        });
-
-        const clearPreviewInlineBorders = () => {
-            borderPreviewCells.forEach(cell => {
-                cell.style.borderTop = '';
-                cell.style.borderRight = '';
-                cell.style.borderBottom = '';
-                cell.style.borderLeft = '';
-            });
-        };
-
-        const previewRules = {
-            all: () => ['top', 'right', 'bottom', 'left'],
-            outer: (r, c) => [[r === minPreviewRow, 'top'], [r === maxPreviewRow, 'bottom'], [c === minPreviewCol, 'left'], [c === maxPreviewCol, 'right']]
-                .filter(pair => pair[0]).map(pair => pair[1]),
-            inner: (r, c) => [[r > minPreviewRow, 'top'], [r < maxPreviewRow, 'bottom'], [c > minPreviewCol, 'left'], [c < maxPreviewCol, 'right']]
-                .filter(pair => pair[0]).map(pair => pair[1]),
-            horizontal: (r) => [[r > minPreviewRow, 'top'], [r < maxPreviewRow, 'bottom']]
-                .filter(pair => pair[0]).map(pair => pair[1]),
-            vertical: (r, c) => [[c > minPreviewCol, 'left'], [c < maxPreviewCol, 'right']]
-                .filter(pair => pair[0]).map(pair => pair[1]),
-            left: (r, c) => c === minPreviewCol ? ['left'] : [],
-            right: (r, c) => c === maxPreviewCol ? ['right'] : [],
-            top: (r) => r === minPreviewRow ? ['top'] : [],
-            bottom: (r) => r === maxPreviewRow ? ['bottom'] : []
+        const clearPreviewBorders = () => {
+            if (svg) svg.innerHTML = '';
         };
 
         const applyPreviewBorder = (action) => {
             currentPreviewAction = action;
-            clearPreviewInlineBorders();
+            clearPreviewBorders();
 
-            if (action === 'clear' || !previewRules[action]) {
-                return;
+            if (action === 'clear' || !svg) return;
+
+            const w = parseInt(borderWidthSelect.value, 10);
+            const s = borderStyleSelect.value;
+            const c = borderColorPicker.value;
+
+            // Add corner dots for outer borders
+            if (action === 'all' || action === 'outer') {
+                [
+                    [previewEdges.left, previewEdges.top],
+                    [previewEdges.right, previewEdges.top],
+                    [previewEdges.left, previewEdges.bottom],
+                    [previewEdges.right, previewEdges.bottom]
+                ].forEach(([x, y]) => {
+                    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    dot.setAttribute('x1', x);
+                    dot.setAttribute('y1', y);
+                    dot.setAttribute('x2', x);
+                    dot.setAttribute('y2', y);
+                    dot.setAttribute('stroke', c);
+                    dot.setAttribute('stroke-width', w);
+                    dot.setAttribute('stroke-linecap', 'square');
+                    svg.appendChild(dot);
+                });
             }
 
-            const style = borderStyleSelect.value;
-            const widthValue = parseFloat(borderWidthSelect.value);
-            const numericWidth = Number.isFinite(widthValue) && widthValue > 0 ? widthValue : 1;
-            const color = borderColorPicker.value;
-            const borderValue = `${numericWidth}px ${style} ${color}`;
+            const lines = {
+                all: [
+                    ...outerHorizontalLines,
+                    ...outerVerticalLines,
+                    ...innerHorizontalLines,
+                    ...innerVerticalLines
+                ],
+                inner: [
+                    ...innerHorizontalLines,
+                    ...innerVerticalLines
+                ],
+                horizontal: [...innerHorizontalLines],
+                vertical: [...innerVerticalLines],
+                outer: [
+                    ...outerHorizontalLines,
+                    ...outerVerticalLines
+                ],
+                left: [makeVertical(previewEdges.left)],
+                right: [makeVertical(previewEdges.right)],
+                top: [makeHorizontal(previewEdges.top)],
+                bottom: [makeHorizontal(previewEdges.bottom)]
+            }[action] || [];
 
-            const previewData = Array.from({ length: borderPreviewCells.length }, () => ({}));
-
-            borderPreviewCells.forEach((_, index) => {
-                const { row, col } = getPreviewCellPosition(index);
-                const sides = previewRules[action](row, col) || [];
-                if (!sides.length) return;
-                const cellBorders = previewData[index];
-                sides.forEach(side => {
-                    cellBorders[side] = borderValue;
-                });
-            });
-
-            borderPreviewCells.forEach((cell, index) => {
-                const { row, col } = getPreviewCellPosition(index);
-                const cellBorders = previewData[index];
-
-                const aboveIndex = getPreviewCellIndex(row - 1, col);
-                const belowIndex = getPreviewCellIndex(row + 1, col);
-                const leftIndex = getPreviewCellIndex(row, col - 1);
-                const rightIndex = getPreviewCellIndex(row, col + 1);
-
-                const hasAbove = aboveIndex !== null;
-                const hasBelow = belowIndex !== null;
-                const hasLeft = leftIndex !== null;
-                const hasRight = rightIndex !== null;
-
-                const topBorder = this._resolveSharedBorder(
-                    cellBorders.top || '',
-                    hasAbove ? previewData[aboveIndex].bottom : '',
-                    hasAbove,
-                    true
-                );
-                const bottomBorder = this._resolveSharedBorder(
-                    cellBorders.bottom || '',
-                    hasBelow ? previewData[belowIndex].top : '',
-                    hasBelow,
-                    false
-                );
-                const leftBorder = this._resolveSharedBorder(
-                    cellBorders.left || '',
-                    hasLeft ? previewData[leftIndex].right : '',
-                    hasLeft,
-                    true
-                );
-                const rightBorder = this._resolveSharedBorder(
-                    cellBorders.right || '',
-                    hasRight ? previewData[rightIndex].left : '',
-                    hasRight,
-                    false
-                );
-
-                cell.style.borderTop = topBorder;
-                cell.style.borderRight = rightBorder;
-                cell.style.borderBottom = bottomBorder;
-                cell.style.borderLeft = leftBorder;
+            const shouldExtendToCorners = action === 'all' || action === 'outer';
+            lines.forEach(([x1, y1, x2, y2]) => {
+                const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                l.setAttribute('x1', x1);
+                l.setAttribute('y1', y1);
+                l.setAttribute('x2', x2);
+                l.setAttribute('y2', y2);
+                l.setAttribute('stroke', c);
+                l.setAttribute('stroke-width', w);
+                const lineCap = s === 'dotted'
+                    ? 'round'
+                    : (shouldExtendToCorners ? 'square' : 'butt');
+                l.setAttribute('stroke-linecap', lineCap);
+                if (s === 'dashed') l.setAttribute('stroke-dasharray', `${w * 3}, ${w * 2}`);
+                else if (s === 'dotted') {
+                    l.setAttribute('stroke-dasharray', `${w}, ${w}`);
+                }
+                svg.appendChild(l);
             });
         };
 
