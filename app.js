@@ -3293,128 +3293,92 @@ class SpreadsheetApp {
     }
     
     expandSelectionForMergedCells(cells) {
-        const cellsToAdd = new Set();
-        const processedMerges = new Set();
+        if (!cells || !cells.length) {
+            return [];
+        }
 
-        // First pass: find all merged cells that should be included
-        cells.forEach(cell => {
-            const { row, col } = this.getCellPos(cell);
-            const coordKey = `${row},${col}`;
-
-            // Check if this cell is part of a merge
-            const parentCoord = this.cellToMergeParent.get(coordKey);
-            const mergeParentCoord = parentCoord || (this.mergedCells.has(coordKey) ? coordKey : null);
-
-            if (mergeParentCoord && !processedMerges.has(mergeParentCoord)) {
-                processedMerges.add(mergeParentCoord);
-                const mergeInfo = this.mergedCells.get(mergeParentCoord);
-
-                if (mergeInfo) {
-                    const [parentRow, parentCol] = this.parseCoord(mergeParentCoord);
-
-                    // Add all cells in the merged area
-                    for (let r = 0; r < mergeInfo.rows; r++) {
-                        for (let c = 0; c < mergeInfo.cols; c++) {
-                            const targetRow = parentRow + r;
-                            const targetCol = parentCol + c;
-                            const targetCoord = `${targetRow},${targetCol}`;
-                            cellsToAdd.add(targetCoord);
-                        }
-                    }
-                }
-            }
-        });
-
-        // Second pass: get the actual cell elements
-        const expandedCells = [...cells];
-        cellsToAdd.forEach(coordKey => {
-            const [row, col] = this.parseCoord(coordKey);
-            const cell = this.getCellAt(row, col);
-            if (cell && !cells.includes(cell)) {
-                expandedCells.push(cell);
-            }
-        });
-
-        // Build coordinate set and track current bounds
+        const expandedCells = [];
+        const expandedCellSet = new Set();
         const selectedCoords = new Set();
         let minRowSelected = Infinity;
         let maxRowSelected = -Infinity;
         let minColSelected = Infinity;
         let maxColSelected = -Infinity;
 
-        expandedCells.forEach(cell => {
-            const { row, col } = this.getCellPos(cell);
-            selectedCoords.add(`${row},${col}`);
+        const mergeQueue = [];
+        const enqueuedMerges = new Set();
+
+        const enqueueMergeForCoord = (coordKey) => {
+            if (!coordKey) return;
+            const parentCoord = this.cellToMergeParent.get(coordKey);
+            const mergeParentCoord = parentCoord || (this.mergedCells.has(coordKey) ? coordKey : null);
+            if (mergeParentCoord && !enqueuedMerges.has(mergeParentCoord)) {
+                mergeQueue.push(mergeParentCoord);
+                enqueuedMerges.add(mergeParentCoord);
+            }
+        };
+
+        const addCoord = (row, col, explicitCell = null) => {
+            const coordKey = `${row},${col}`;
+            if (selectedCoords.has(coordKey)) return false;
+
+            selectedCoords.add(coordKey);
             minRowSelected = Math.min(minRowSelected, row);
             maxRowSelected = Math.max(maxRowSelected, row);
             minColSelected = Math.min(minColSelected, col);
             maxColSelected = Math.max(maxColSelected, col);
-        });
 
-        // Find all merged cells that touch the selection
-        const mergedCellsInSelection = new Set();
-        expandedCells.forEach(cell => {
-            const { row, col } = this.getCellPos(cell);
-            const coordKey = `${row},${col}`;
-
-            // Check if this cell is a merge parent
-            if (this.mergedCells.has(coordKey)) {
-                mergedCellsInSelection.add(coordKey);
-            } 
-            // Check if this cell is a child of a merge - if so, find its parent
-            else {
-                const parentCoord = this.cellToMergeParent.get(coordKey);
-                if (parentCoord) {
-                    mergedCellsInSelection.add(parentCoord);
-                }
+            const cell = explicitCell || this.getCellAt(row, col);
+            if (cell && !expandedCellSet.has(cell)) {
+                expandedCells.push(cell);
+                expandedCellSet.add(cell);
             }
+
+            enqueueMergeForCoord(coordKey);
+            return true;
+        };
+
+        cells.forEach(cell => {
+            if (!cell) return;
+            const { row, col } = this.getCellPos(cell);
+            addCoord(row, col, cell);
         });
 
-        // THE KEY FIX: For each merged cell, expand the selection to fill the merged cell's span
-        const cellsToAddForMergeExtension = new Set();
-
-        mergedCellsInSelection.forEach(mergeParentCoord => {
+        while (mergeQueue.length) {
+            const mergeParentCoord = mergeQueue.shift();
             const mergeInfo = this.mergedCells.get(mergeParentCoord);
-            if (!mergeInfo) return;
+            if (!mergeInfo) continue;
 
             const [parentRow, parentCol] = this.parseCoord(mergeParentCoord);
             const mergeMaxRow = parentRow + mergeInfo.rows - 1;
             const mergeMaxCol = parentCol + mergeInfo.cols - 1;
 
-            // RULE 1: Fill ALL currently selected rows with the merged cell's full column span
-            // When you drag B1→B3 and hit merged A3:C3, this fills A1, C1 for row 1, A2, C2 for row 2
-            for (let row = minRowSelected; row <= maxRowSelected; row++) {
-                for (let col = parentCol; col <= mergeMaxCol; col++) {
-                    const coord = `${row},${col}`;
-                    if (!selectedCoords.has(coord)) {
-                        cellsToAddForMergeExtension.add(coord);
-                        selectedCoords.add(coord);
-                    }
-                }
-            }
-
-            // RULE 2: Fill ALL merged cell's rows with currently selected columns
-            // This extends vertically to include all rows of the merged cell
+            // Always include the full merged block first
             for (let row = parentRow; row <= mergeMaxRow; row++) {
-                for (let col = minColSelected; col <= maxColSelected; col++) {
-                    const coord = `${row},${col}`;
-                    if (!selectedCoords.has(coord)) {
-                        cellsToAddForMergeExtension.add(coord);
-                        selectedCoords.add(coord);
-                    }
+                for (let col = parentCol; col <= mergeMaxCol; col++) {
+                    addCoord(row, col);
                 }
             }
-        });
 
-        // Add the expansion cells to expandedCells
-        if (cellsToAddForMergeExtension.size > 0) {
-            cellsToAddForMergeExtension.forEach(coordKey => {
-                const [row, col] = this.parseCoord(coordKey);
-                const cell = this.getCellAt(row, col);
-                if (cell && !expandedCells.includes(cell)) {
-                    expandedCells.push(cell);
+            // Snapshot current bounds so a merge can cascade once per pass
+            const currentMinRow = minRowSelected;
+            const currentMaxRow = maxRowSelected;
+            const currentMinCol = minColSelected;
+            const currentMaxCol = maxColSelected;
+
+            // RULE 1: Fill every selected row with the merge's column span
+            for (let row = currentMinRow; row <= currentMaxRow; row++) {
+                for (let col = parentCol; col <= mergeMaxCol; col++) {
+                    addCoord(row, col);
                 }
-            });
+            }
+
+            // RULE 2: Fill every column in-range across the merge's rows
+            for (let row = parentRow; row <= mergeMaxRow; row++) {
+                for (let col = currentMinCol; col <= currentMaxCol; col++) {
+                    addCoord(row, col);
+                }
+            }
         }
 
         return expandedCells;
