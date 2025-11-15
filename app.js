@@ -6454,6 +6454,41 @@ class SpreadsheetApp {
         this.updateAlignmentButtons();
         this.updateFontColorButton();
         this.updateBackgroundColorButton();
+        this.updateMergeButton();
+    }
+    
+    updateMergeButton() {
+        const mergeBtn = document.getElementById('mergeBtn');
+        if (!mergeBtn) return;
+
+        if (!this.hasSelection()) {
+            mergeBtn.classList.remove('active');
+            return;
+        }
+
+        const bounds = this.getSelectionBounds();
+        if (!bounds) {
+            mergeBtn.classList.remove('active');
+            return;
+        }
+
+        const { minRow, maxRow, minCol, maxCol, coords } = bounds;
+        const rows = maxRow - minRow + 1;
+        const cols = maxCol - minCol + 1;
+        const expectedCells = rows * cols;
+
+        // Only highlight if selection is a valid rectangle
+        if (coords.length !== expectedCells) {
+            mergeBtn.classList.remove('active');
+            return;
+        }
+
+        // Check if this exact range is merged
+        const parentCoord = `${minRow},${minCol}`;
+        const existingMerge = this.mergedCells.get(parentCoord);
+        
+        const isMerged = existingMerge && existingMerge.rows === rows && existingMerge.cols === cols;
+        mergeBtn.classList.toggle('active', isMerged);
     }
 
     _managePalette(action, type) {
@@ -8051,11 +8086,27 @@ class SpreadsheetApp {
             return;
         }
 
-        // Check if any cells in selection are already part of a merge
+        // Check if this is already a merged cell (toggle behavior)
+        const parentCoord = `${minRow},${minCol}`;
+        const existingMerge = this.mergedCells.get(parentCoord);
+        
+        if (existingMerge && existingMerge.rows === rows && existingMerge.cols === cols) {
+            // This is already merged with exact dimensions - unmerge it
+            this.saveState(`Unmerge ${rows}x${cols} cells`);
+            this.unmergeCells(minRow, minCol);
+            this.log(`Unmerged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
+            return;
+        }
+
+        // Check if any cells in selection are part of a different merge
         for (const coord of coords) {
-            if (this.cellToMergeParent.has(coord)) {
-                alert('Cannot merge cells that are already part of a merged cell. Please unmerge first.');
-                return;
+            const coordKey = `${coord.row},${coord.col}`;
+            if (this.cellToMergeParent.has(coordKey)) {
+                const parentKey = this.cellToMergeParent.get(coordKey);
+                if (parentKey !== parentCoord) {
+                    alert('Cannot merge cells that are already part of a different merged cell. Please unmerge first.');
+                    return;
+                }
             }
         }
 
@@ -8068,6 +8119,56 @@ class SpreadsheetApp {
         this.saveState(`Merge ${rows}x${cols} cells`);
         this.mergeCells(minRow, minCol, rows, cols);
         this.log(`Merged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
+    }
+    
+    unmergeCells(startRow, startCol) {
+        const parentCoord = `${startRow},${startCol}`;
+        const mergeInfo = this.mergedCells.get(parentCoord);
+        
+        if (!mergeInfo) {
+            this.log('No merge found at this location');
+            return;
+        }
+
+        // Remove all child cell mappings
+        mergeInfo.childCells.forEach(childCoord => {
+            this.cellToMergeParent.delete(childCoord);
+        });
+
+        // Remove the merge info
+        this.mergedCells.delete(parentCoord);
+
+        // Update visuals
+        this.removeUnmergeVisuals(startRow, startCol, mergeInfo.rows, mergeInfo.cols);
+    }
+    
+    removeUnmergeVisuals(startRow, startCol, rows, cols) {
+        const parentCell = this.getCellAt(startRow, startCol);
+        if (parentCell) {
+            // Reset parent cell to normal dimensions
+            parentCell.style.width = this.getColumnWidth(startCol) + 'px';
+            parentCell.style.height = this.getRowHeight(startRow) + 'px';
+            parentCell.style.zIndex = '';
+            parentCell.classList.remove('merged-cell');
+            delete parentCell.dataset.mergedRows;
+            delete parentCell.dataset.mergedCols;
+        }
+
+        // Show all child cells
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                if (r === 0 && c === 0) continue; // Skip parent
+                
+                const row = startRow + r;
+                const col = startCol + c;
+                const childCell = this.getCellAt(row, col);
+                
+                if (childCell) {
+                    childCell.style.display = '';
+                    childCell.classList.remove('merged-child');
+                }
+            }
+        }
     }
 
     isRectangularSelection(coords, minRow, maxRow, minCol, maxCol) {
