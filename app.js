@@ -8086,7 +8086,7 @@ class SpreadsheetApp {
             return;
         }
 
-        // Check if this is already a merged cell (toggle behavior)
+        // Check if this is already a merged cell with exact same dimensions (toggle behavior)
         const parentCoord = `${minRow},${minCol}`;
         const existingMerge = this.mergedCells.get(parentCoord);
         
@@ -8098,30 +8098,45 @@ class SpreadsheetApp {
             return;
         }
 
-        // Check if any cells in selection are part of a different merge
-        for (const coord of coords) {
-            const coordKey = `${coord.row},${coord.col}`;
-            if (this.cellToMergeParent.has(coordKey)) {
-                const parentKey = this.cellToMergeParent.get(coordKey);
-                if (parentKey !== parentCoord) {
-                    alert('Cannot merge cells that are already part of a different merged cell. Please unmerge first.');
-                    return;
-                }
-            }
-        }
-
         // Single cell selected - nothing to merge
         if (rows === 1 && cols === 1) {
             this.log('Single cell selected - nothing to merge');
             return;
         }
 
+        // If we're here, we're merging cells (possibly including already-merged cells)
+        // First, unmerge any existing merges within the selection
+        const mergesToUnmerge = new Set();
+        for (let row = minRow; row <= maxRow; row++) {
+            for (let col = minCol; col <= maxCol; col++) {
+                const coordKey = `${row},${col}`;
+                
+                // Check if this is a merge parent
+                if (this.mergedCells.has(coordKey)) {
+                    mergesToUnmerge.add(coordKey);
+                }
+                
+                // Check if this is a merge child
+                const parentKey = this.cellToMergeParent.get(coordKey);
+                if (parentKey) {
+                    mergesToUnmerge.add(parentKey);
+                }
+            }
+        }
+
+        // Unmerge all existing merges in the selection
+        mergesToUnmerge.forEach(mergeParent => {
+            const [parentRow, parentCol] = this.parseCoord(mergeParent);
+            this.unmergeCells(parentRow, parentCol, false); // false = don't update visuals yet
+        });
+
+        // Now merge the entire selection
         this.saveState(`Merge ${rows}x${cols} cells`);
         this.mergeCells(minRow, minCol, rows, cols);
         this.log(`Merged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
     }
     
-    unmergeCells(startRow, startCol) {
+    unmergeCells(startRow, startCol, updateVisuals = true) {
         const parentCoord = `${startRow},${startCol}`;
         const mergeInfo = this.mergedCells.get(parentCoord);
         
@@ -8138,34 +8153,29 @@ class SpreadsheetApp {
         // Remove the merge info
         this.mergedCells.delete(parentCoord);
 
-        // Update visuals
-        this.removeUnmergeVisuals(startRow, startCol, mergeInfo.rows, mergeInfo.cols);
+        // Update visuals if requested
+        if (updateVisuals) {
+            this.removeUnmergeVisuals(startRow, startCol, mergeInfo.rows, mergeInfo.cols);
+        }
     }
     
     removeUnmergeVisuals(startRow, startCol, rows, cols) {
-        const parentCell = this.getCellAt(startRow, startCol);
-        if (parentCell) {
-            // Reset parent cell to normal dimensions
-            parentCell.style.width = this.getColumnWidth(startCol) + 'px';
-            parentCell.style.height = this.getRowHeight(startRow) + 'px';
-            parentCell.style.zIndex = '';
-            parentCell.classList.remove('merged-cell');
-            delete parentCell.dataset.mergedRows;
-            delete parentCell.dataset.mergedCols;
-        }
-
-        // Show all child cells
+        // Reset ALL cells in the merged area to individual cells
         for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
-                if (r === 0 && c === 0) continue; // Skip parent
-                
                 const row = startRow + r;
                 const col = startCol + c;
-                const childCell = this.getCellAt(row, col);
+                const cell = this.getCellAt(row, col);
                 
-                if (childCell) {
-                    childCell.style.display = '';
-                    childCell.classList.remove('merged-child');
+                if (cell) {
+                    // Reset to normal dimensions
+                    cell.style.width = this.getColumnWidth(col) + 'px';
+                    cell.style.height = this.getRowHeight(row) + 'px';
+                    cell.style.zIndex = '';
+                    cell.style.display = '';
+                    cell.classList.remove('merged-cell', 'merged-child');
+                    delete cell.dataset.mergedRows;
+                    delete cell.dataset.mergedCols;
                 }
             }
         }
@@ -8187,6 +8197,26 @@ class SpreadsheetApp {
     mergeCells(startRow, startCol, rows, cols) {
         const parentCoord = `${startRow},${startCol}`;
         const childCells = new Set();
+
+        // First, ensure all cells in the range are visible and reset
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const row = startRow + r;
+                const col = startCol + c;
+                const cell = this.getCellAt(row, col);
+                
+                if (cell) {
+                    // Reset any previous merge styling
+                    cell.style.width = this.getColumnWidth(col) + 'px';
+                    cell.style.height = this.getRowHeight(row) + 'px';
+                    cell.style.zIndex = '';
+                    cell.style.display = '';
+                    cell.classList.remove('merged-cell', 'merged-child');
+                    delete cell.dataset.mergedRows;
+                    delete cell.dataset.mergedCols;
+                }
+            }
+        }
 
         // Collect all child cells (except the parent)
         for (let r = 0; r < rows; r++) {
