@@ -6080,21 +6080,7 @@ class SpreadsheetApp {
             return rawValue.trim() !== '';
         };
         
-        // Calculate the TOTAL theoretical space (as if nothing is blocking)
-        let totalLeftSpace = 0;
-        let totalRightSpace = 0;
-        
-        // Calculate total space to the left
-        for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
-            totalLeftSpace += this.getColumnWidth(c);
-        }
-        
-        // Calculate total space to the right
-        for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
-            totalRightSpace += this.getColumnWidth(c);
-        }
-        
-        // Now calculate the AVAILABLE space (stopping at blocking cells)
+        // Calculate available space for overflow
         let availableLeftSpace = 0;
         let availableRightSpace = 0;
         
@@ -6123,64 +6109,32 @@ class SpreadsheetApp {
         }
         // For right-aligned: text ends at right edge of cell, extends left
         else if (textAlign === 'right') {
-            // Use TOTAL left space for wrapper width (not just available)
-            // This ensures the text wrapper is wide enough to hold all the text
-            wrapperWidth = cellWidth + totalLeftSpace;
-            // Position wrapper so its RIGHT edge aligns with the cell's right edge
-            wrapperLeft = -totalLeftSpace;
-            // Calculate how much to clip from the left if there's blocking content
-            const blockedLeftSpace = totalLeftSpace - availableLeftSpace;
-            if (blockedLeftSpace > 0) {
-                clipLeft = blockedLeftSpace;
-            }
+            wrapperWidth = cellWidth + availableLeftSpace;
+            wrapperLeft = -availableLeftSpace;
         }
+        // For center-aligned: text is centered in cell, extends in both directions
         else if (textAlign === 'center') {
+            // FIXED: For center alignment, we keep the wrapper centered on the cell
+            // even if text doesn't fit. This matches Google Sheets behavior.
             const extraSpaceNeeded = textWidth - (cellWidth - padding);
             const halfSpace = extraSpaceNeeded / 2;
             
-            // Calculate THEORETICAL space on both sides (for stable centering)
-            let theoreticalLeftSpace = 0;
-            for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
-                theoreticalLeftSpace += this.getColumnWidth(c);
-                if (theoreticalLeftSpace >= halfSpace) break;
-            }
+            // The wrapper should be wide enough to hold all text
+            wrapperWidth = Math.max(cellWidth, textWidth + padding);
             
-            let theoreticalRightSpace = 0;
-            for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
-                theoreticalRightSpace += this.getColumnWidth(c);
-                if (theoreticalRightSpace >= halfSpace) break;
-            }
+            // Position wrapper so it's centered on the cell
+            // This means text will overflow equally on both sides (or as much as possible)
+            wrapperLeft = -(wrapperWidth - cellWidth) / 2;
             
-            // Calculate available left space for clipping
-            let availableLeftSpace = 0;
-            for (let c = col - 1; c >= Math.max(0, col - 20); c--) {
-                if (cellHasContent(row, c)) {
-                    break;
-                }
-                availableLeftSpace += this.getColumnWidth(c);
-                if (availableLeftSpace >= theoreticalLeftSpace) break;
-            }
+            // Calculate clipping based on what's actually available
+            const leftOverhang = Math.max(0, halfSpace - availableLeftSpace);
+            const rightOverhang = Math.max(0, halfSpace - availableRightSpace);
             
-            // Calculate available right space for clipping
-            let availableRightSpace = 0;
-            for (let c = col + 1; c < Math.min(this.config.maxCols, col + 21); c++) {
-                if (cellHasContent(row, c)) {
-                    break;
-                }
-                availableRightSpace += this.getColumnWidth(c);
-                if (availableRightSpace >= theoreticalRightSpace) break;
+            if (leftOverhang > 0) {
+                clipLeft = leftOverhang;
             }
-            
-            // Always use theoretical width for stable positioning
-            wrapperWidth = cellWidth + theoreticalLeftSpace + theoreticalRightSpace;
-            wrapperLeft = -theoreticalLeftSpace;
-            
-            // Calculate clipping from both sides
-            if (availableLeftSpace < theoreticalLeftSpace) {
-                clipLeft = theoreticalLeftSpace - availableLeftSpace;
-            }
-            if (availableRightSpace < theoreticalRightSpace) {
-                clipRight = theoreticalRightSpace - availableRightSpace;
+            if (rightOverhang > 0) {
+                clipRight = rightOverhang;
             }
         }
         
