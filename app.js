@@ -553,6 +553,7 @@ class SpreadsheetApp {
         // Merged cells tracking
         this.mergedCells = new Map(); // Map of parent cell coord -> {rows, cols, childCells: Set}
         this.cellToMergeParent = new Map(); // Map of child cell coord -> parent cell coord
+        this.initialMergedCells = [];
 
         // Edge scrolling state
         this.edgeScrolling = false;
@@ -633,6 +634,7 @@ class SpreadsheetApp {
         this.oauthConfig = null;
         this.accessTokenInfo = null;
         this.loadInitialDataFromDOM();
+        this.initialMergedCells = this.cloneMergedCellsState();
         this.initialCellData = this.cloneCellData(this.cellData);
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialColumnWidths = new Map(this.columnWidths);
@@ -953,6 +955,61 @@ class SpreadsheetApp {
         return existing;
     }
 
+    buildMergeSnapshotMap(snapshot) {
+        const map = new Map();
+        if (!snapshot) return map;
+
+        if (snapshot instanceof Map) {
+            snapshot.forEach((info, coord) => {
+                if (!info) return;
+                const rows = Number(info.rows);
+                const cols = Number(info.cols);
+                if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1) return;
+                map.set(coord, { rows, cols });
+            });
+            return map;
+        }
+
+        if (Array.isArray(snapshot)) {
+            snapshot.forEach(entry => {
+                if (!Array.isArray(entry) || entry.length < 2) return;
+                const [coord, info] = entry;
+                if (!coord || !info) return;
+                const rows = Number(info.rows);
+                const cols = Number(info.cols);
+                if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1) return;
+                map.set(coord, { rows, cols });
+            });
+        }
+        return map;
+    }
+
+    computeMergeDiffs(initialSnapshot, currentSnapshot) {
+        const initialMap = this.buildMergeSnapshotMap(initialSnapshot);
+        const currentMap = this.buildMergeSnapshotMap(currentSnapshot);
+        const allCoords = new Set([...initialMap.keys(), ...currentMap.keys()]);
+        const diffs = [];
+
+        allCoords.forEach(coord => {
+            const before = initialMap.get(coord);
+            const after = currentMap.get(coord);
+            if (!before && !after) return;
+            const [row, col] = this.parseCoord(coord);
+            if (!Number.isInteger(row) || !Number.isInteger(col)) return;
+
+            if (!before && after) {
+                diffs.push({ coord, row, col, type: 'added', before: null, after });
+            } else if (before && !after) {
+                diffs.push({ coord, row, col, type: 'removed', before, after: null });
+            } else if (before && after &&
+                (before.rows !== after.rows || before.cols !== after.cols)) {
+                diffs.push({ coord, row, col, type: 'modified', before, after });
+            }
+        });
+
+        return diffs;
+    }
+
     generateDiffText(maxLines = 120, maxChars = 3200) {
         if (!this.initialCellData) {
             return { text: '', truncated: false };
@@ -1025,6 +1082,18 @@ class SpreadsheetApp {
             sizeChanges.forEach(change => {
                 allLines.push(`~ Row ${row + 1} ${change}`);
             });
+        });
+
+        const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
+        mergeDiffs.forEach(diff => {
+            const address = this.getCellAddress(diff.row, diff.col);
+            if (diff.type === 'added' && diff.after) {
+                allLines.push(`+ Merge ${address} ${diff.after.rows}x${diff.after.cols}`);
+            } else if (diff.type === 'removed' && diff.before) {
+                allLines.push(`- Merge ${address} ${diff.before.rows}x${diff.before.cols}`);
+            } else if (diff.before && diff.after) {
+                allLines.push(`~ Merge ${address} ${diff.before.rows}x${diff.before.cols} -> ${diff.after.rows}x${diff.after.cols}`);
+            }
         });
 
         if (!allLines.length) {
@@ -1216,6 +1285,46 @@ class SpreadsheetApp {
             }
         });
 
+        const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
+        mergeDiffs.forEach(diff => {
+            const beforeSize = null;
+            const afterSize = null;
+            const beforeLabel = diff.before ? `${diff.before.rows}x${diff.before.cols}` : '';
+            const afterLabel = diff.after ? `${diff.after.rows}x${diff.after.cols}` : '';
+            const changeDesc = (() => {
+                if (diff.type === 'added' && afterLabel) {
+                    return `Merge created (${afterLabel})`;
+                }
+                if (diff.type === 'removed' && beforeLabel) {
+                    return `Merge removed (was ${beforeLabel})`;
+                }
+                if (diff.type === 'modified' && beforeLabel && afterLabel) {
+                    return `Merge resized ${beforeLabel} -> ${afterLabel}`;
+                }
+                return 'Merge updated';
+            })();
+
+            total += 1;
+            if (entries.length + extraEntries.length >= maxEntries) {
+                truncated = true;
+                return;
+            }
+
+            extraEntries.push({
+                coord: `merge:${diff.coord}`,
+                row: diff.row,
+                col: diff.col,
+                address: this.getCellAddress(diff.row, diff.col),
+                changeType: diff.type,
+                before: null,
+                after: null,
+                beforeSize,
+                afterSize,
+                changes: [changeDesc],
+                meta: { kind: 'merge', before: diff.before, after: diff.after }
+            });
+        });
+
         extraEntries.forEach(entry => {
             entries.push(entry);
         });
@@ -1233,6 +1342,7 @@ class SpreadsheetApp {
         this.rowHeights = new Map(this.initialRowHeights || []);
         this.columnWidths = new Map(this.initialColumnWidths || []);
         this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
+        this.applyMergedCellsSnapshot(this.initialMergedCells);
     }
 
     cloneCellRecord(record) {
@@ -1245,6 +1355,60 @@ class SpreadsheetApp {
             console.warn('Unable to clone cell record', error);
             return record;
         }
+    }
+
+    cloneMergedCellsState(source = this.mergedCells) {
+        const snapshot = [];
+        if (source instanceof Map) {
+            source.forEach((info, coord) => {
+                if (!info) return;
+                const rows = Number(info.rows);
+                const cols = Number(info.cols);
+                if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1) return;
+                snapshot.push([coord, { rows, cols }]);
+            });
+            return snapshot;
+        }
+
+        if (Array.isArray(source)) {
+            source.forEach(entry => {
+                if (!Array.isArray(entry) || entry.length < 2) return;
+                const [coord, info] = entry;
+                if (!coord || !info) return;
+                const rows = Number(info.rows);
+                const cols = Number(info.cols);
+                if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1) return;
+                snapshot.push([coord, { rows, cols }]);
+            });
+        }
+        return snapshot;
+    }
+
+    applyMergedCellsSnapshot(snapshot) {
+        const activeParents = Array.from(this.mergedCells.keys());
+        activeParents.forEach(coord => {
+            const [row, col] = this.parseCoord(coord);
+            if (Number.isInteger(row) && Number.isInteger(col)) {
+                this.unmergeCells(row, col, true);
+            }
+        });
+
+        if (!Array.isArray(snapshot)) return;
+
+        snapshot.forEach(entry => {
+            if (!Array.isArray(entry) || entry.length < 2) return;
+            const [coord, info] = entry;
+            if (!coord || !info) return;
+            const [row, col] = this.parseCoord(coord);
+            const rows = Number(info.rows);
+            const cols = Number(info.cols);
+            if (!Number.isInteger(row) || !Number.isInteger(col) ||
+                !Number.isInteger(rows) || !Number.isInteger(cols) ||
+                rows < 1 || cols < 1) {
+                return;
+            }
+            this.mergeCells(row, col, rows, cols);
+        });
     }
 
     scheduleDirtyStateUpdate() {
@@ -1336,7 +1500,8 @@ class SpreadsheetApp {
                 cellData: this.serializeMap(this.cellData),
                 rowHeights: this.serializeMap(this.rowHeights),
                 columnWidths: this.serializeMap(this.columnWidths),
-                persistedRange: { ...this.persistedRange }
+                persistedRange: { ...this.persistedRange },
+                mergedCells: this.cloneMergedCellsState()
             };
             window.localStorage.setItem(this.localDraftKey, JSON.stringify(payload));
         } catch (error) {
@@ -1405,6 +1570,12 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (Object.prototype.hasOwnProperty.call(payload, 'mergedCells')) {
+                const snapshot = this.cloneMergedCellsState(payload.mergedCells);
+                this.applyMergedCellsSnapshot(snapshot);
+                restored = true;
+                needsRefresh = true;
+            }
             if (payload.persistedRange && typeof payload.persistedRange === 'object') {
                 this.persistedRange = {
                     ...this.persistedRange,
@@ -1443,6 +1614,7 @@ class SpreadsheetApp {
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
+        this.initialMergedCells = this.cloneMergedCellsState();
         this.latestDiffEntries = [];
         this.latestDiffTotal = 0;
         this.latestDiffTruncated = false;
@@ -1558,6 +1730,8 @@ class SpreadsheetApp {
             heading = `Column ${this.getColumnName(entry.col)}`;
         } else if (entry.meta?.kind === 'row') {
             heading = `Row ${entry.row + 1}`;
+        } else if (entry.meta?.kind === 'merge') {
+            heading = `Merge ${this.getCellAddress(entry.row, entry.col)}`;
         }
 
         return [
@@ -2706,7 +2880,7 @@ class SpreadsheetApp {
             
             if (Number.isInteger(row) && Number.isInteger(col) && 
                 Number.isInteger(mergedRows) && Number.isInteger(mergedCols) &&
-                mergedRows > 1 || mergedCols > 1) {
+                (mergedRows > 1 || mergedCols > 1)) {
                 this.mergeCells(row, col, mergedRows, mergedCols);
             }
         });
@@ -2718,7 +2892,12 @@ class SpreadsheetApp {
     saveState(action) {
         this.userMadeChanges = true;
         this.hasAutoPersistedBaseline = false;
-        this.undoStack.push({ action, cellData: this.cloneCellData(this.cellData), timestamp: Date.now() });
+        this.undoStack.push({
+            action,
+            cellData: this.cloneCellData(this.cellData),
+            mergedCells: this.cloneMergedCellsState(),
+            timestamp: Date.now()
+        });
         if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
         this.redoStack = [];
         this.updateUndoRedoButtons();
@@ -2727,8 +2906,14 @@ class SpreadsheetApp {
 
     undo() {
         if (!this.undoStack.length) return;
-        this.redoStack.push({ cellData: this.cloneCellData(this.cellData), timestamp: Date.now() });
-        this.cellData = this.cloneCellData(this.undoStack.pop().cellData);
+        this.redoStack.push({
+            cellData: this.cloneCellData(this.cellData),
+            mergedCells: this.cloneMergedCellsState(),
+            timestamp: Date.now()
+        });
+        const previous = this.undoStack.pop();
+        this.cellData = this.cloneCellData(previous?.cellData);
+        this.applyMergedCellsSnapshot(previous?.mergedCells);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         
@@ -2740,8 +2925,14 @@ class SpreadsheetApp {
 
     redo() {
         if (!this.redoStack.length) return;
-        this.undoStack.push({ cellData: this.cloneCellData(this.cellData), timestamp: Date.now() });
-        this.cellData = this.cloneCellData(this.redoStack.pop().cellData);
+        this.undoStack.push({
+            cellData: this.cloneCellData(this.cellData),
+            mergedCells: this.cloneMergedCellsState(),
+            timestamp: Date.now()
+        });
+        const next = this.redoStack.pop();
+        this.cellData = this.cloneCellData(next?.cellData);
+        this.applyMergedCellsSnapshot(next?.mergedCells);
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         
@@ -8157,6 +8348,10 @@ class SpreadsheetApp {
             childCells
         });
 
+        const maxRow = startRow + rows - 1;
+        const maxCol = startCol + cols - 1;
+        this.recalculatePersistedRange(maxRow, maxCol);
+
         // Update visual representation
         this.applyMergeVisuals(startRow, startCol, rows, cols);
     }
@@ -9342,9 +9537,11 @@ class SpreadsheetApp {
             rows.push(`                                <th scope="row">${row + 1}</th>`);
             for (let col = minCol; col <= maxCol; col++) {
                 const coordKey = `${row},${col}`;
+                if (this.cellToMergeParent.has(coordKey)) continue;
                 const cellData = this.cellData.get(coordKey) || {};
                 const datasets = [`data-col="${col}"`];
                 const styles = [];
+                const extraAttributes = [];
 
                 const rawValue = cellData.value ?? '';
                 if (rawValue) {
@@ -9410,6 +9607,14 @@ class SpreadsheetApp {
                     styles.push(`text-decoration:${textDecorations.join(' ')}`);
                 }
 
+                const mergeInfo = this.mergedCells.get(coordKey);
+                if (mergeInfo && (mergeInfo.rows > 1 || mergeInfo.cols > 1)) {
+                    datasets.push(`data-merged-rows="${mergeInfo.rows}"`);
+                    datasets.push(`data-merged-cols="${mergeInfo.cols}"`);
+                    if (mergeInfo.rows > 1) extraAttributes.push(`rowspan="${mergeInfo.rows}"`);
+                    if (mergeInfo.cols > 1) extraAttributes.push(`colspan="${mergeInfo.cols}"`);
+                }
+
                 const borderStyles = this.collectBorderStylesForCell(row, col, cellData);
                 if (borderStyles.length) {
                     styles.push(...borderStyles);
@@ -9425,7 +9630,8 @@ class SpreadsheetApp {
                 }
 
                 const styleAttr = styles.filter(Boolean).length ? ` style="${styles.join(';')}"` : '';
-                rows.push(`                                <td ${datasets.join(' ')}${styleAttr}>${cellContent}</td>`);
+                const extras = extraAttributes.length ? ` ${extraAttributes.join(' ')}` : '';
+                rows.push(`                                <td ${datasets.join(' ')}${extras}${styleAttr}>${cellContent}</td>`);
             }
             rows.push('                            </tr>');
         }
