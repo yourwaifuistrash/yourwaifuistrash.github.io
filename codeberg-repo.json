@@ -1,0 +1,10 @@
+{
+  "owner": "JavaScript-less",
+  "repo": "spreadsheet",
+  "page_branch": "pages",
+  "code_branch": "spreadsheet",
+  "oauth": {
+    "clientId": "810cd0fb-6a1c-4892-9a7b-0374d72362ce",
+    "redirectUri": "https://javascript-less.codeberg.page/spreadsheet/"
+  }
+}
