@@ -2119,16 +2119,20 @@ class SpreadsheetApp {
 
     async refreshOAuthInfo() {
         if (!this.saveModalOAuth) return;
-        if (this.oauthConfig) {
-            this.saveModalOAuth.innerHTML = this.renderOAuthSummary(this.oauthConfig);
+        if (this.oauthConfig && this.repoConfig) {
+            this.saveModalOAuth.innerHTML = this.renderOAuthSummary(this.oauthConfig, this.repoConfig);
         } else {
             this.saveModalOAuth.innerHTML = '<em>Checking OAuth configuration…</em>';
         }
 
         try {
-            const config = await this.loadOauthConfig();
-            if (config?.clientId) {
-                this.saveModalOAuth.innerHTML = this.renderOAuthSummary(config);
+            const [oauthConfig, repoConfig] = await Promise.all([
+                this.loadOauthConfig(),
+                this.loadRepoConfig()
+            ]);
+            
+            if (oauthConfig?.clientId) {
+                this.saveModalOAuth.innerHTML = this.renderOAuthSummary(oauthConfig, repoConfig);
             } else {
                 this.saveModalOAuth.innerHTML = 'No OAuth credentials found. Add <code>oauth.clientId</code> to <code>codeberg-repo.json</code> (and optional <code>clientSecret</code> for confidential clients) to enable PR creation.';
             }
@@ -2138,13 +2142,16 @@ class SpreadsheetApp {
         }
     }
 
-    renderOAuthSummary(config) {
-        const redirect = config.redirectUri || `${window.location.origin}${window.location.pathname}`;
-        const clientType = config.clientSecret ? 'Confidential client' : 'Public client';
+    renderOAuthSummary(oauthConfig, repoConfig) {
+        const redirect = oauthConfig.redirectUri || `${window.location.origin}${window.location.pathname}`;
+        const clientType = oauthConfig.clientSecret ? 'Confidential client' : 'Public client';
+        const targetBranch = repoConfig?.page_branch || repoConfig?.branch || '(repository default)';
+        
         return [
-            `<strong>OAuth client</strong>: ${escapeHTML(config.clientId)}`,
+            `<strong>OAuth client</strong>: ${escapeHTML(oauthConfig.clientId)}`,
             `<strong>Redirect URI</strong>: ${escapeHTML(redirect)}`,
-            `<strong>Client type</strong>: ${clientType}`
+            `<strong>Client type</strong>: ${clientType}`,
+            `<strong>Target branch</strong>: ${escapeHTML(targetBranch)}`
         ].join('<br>');
     }
 
@@ -2534,7 +2541,7 @@ class SpreadsheetApp {
             throw error;
         }
         const defaultBranch = repoInfo.default_branch || 'main';
-        const configuredBaseBranch = (repo?.branch ?? repo?.prBaseBranch ?? '').trim();
+        const configuredBaseBranch = (repo?.page_branch ?? repo?.branch ?? repo?.prBaseBranch ?? '').trim();
         const baseBranch = configuredBaseBranch || defaultBranch;
         const permissions = repoInfo.permissions || {};
         let user;
@@ -9263,11 +9270,13 @@ class SpreadsheetApp {
                         repo: String(data.repo).trim()
                     };
 
-                    const preferredBranch = data.branch ?? data.prBaseBranch;
+                    // Support both page_branch and branch
+                    const preferredBranch = data.page_branch ?? data.branch ?? data.prBaseBranch;
                     if (preferredBranch) {
                         const branch = String(preferredBranch).trim();
                         if (branch.length) {
-                            normalized.branch = branch;
+                            normalized.page_branch = branch; // Store as page_branch
+                            normalized.branch = branch; // Also keep as branch for backward compat
                         }
                     }
 
