@@ -111,37 +111,6 @@ const TOOLBAR_AND_FORMULA_HTML = `
         </div>
 `;
 
-const HTML_PREFIX = `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spreadsheet Pro</title>
-</head>
-<body>
-    <div class="spreadsheet-container">
-        <div class="grid-container">
-            <div class="corner-cell"></div>
-            <div class="column-headers">
-                <div class="header-content" id="columnHeaderContent"></div>
-            </div>
-            <div class="row-headers">
-                <div class="header-content" id="rowHeaderContent"></div>
-            </div>
-            <div class="main-grid" id="mainGrid">
-                <div class="grid-content" id="gridContent">
-`;
-
-const HTML_SUFFIX = `
-                </div>
-            </div>
-        </div>
-    </div>
-    <script src="loader.js"></script>
-</body>
-</html>
-`;
-
 const LINK_EDITOR_HTML = `
     <div id="linkEditor" class="link-editor hidden">
         <div class="link-editor-title">Edit Link</div>
@@ -2021,7 +1990,12 @@ class SpreadsheetApp {
         return styles;
     }
 
-    gatherSaveArtifacts() {
+    async gatherSaveArtifacts() {
+        // Ensure repo config is loaded before generating HTML
+        if (!this.repoConfig) {
+            this.repoConfig = await this.loadRepoConfig();
+        }
+        
         const range = this.getUsedRange();
         this.persistedRange = { maxRow: range.maxRow, maxCol: range.maxCol };
         const tableMarkup = this.generateStaticTableHTML(range);
@@ -2145,37 +2119,41 @@ class SpreadsheetApp {
         const redirect = oauthConfig.redirectUri || `${window.location.origin}${window.location.pathname}`;
         const clientType = oauthConfig.clientSecret ? 'Confidential client' : 'Public client';
         const targetBranch = repoConfig?.page_branch || repoConfig?.branch || '(repository default)';
+        const codeBranch = repoConfig?.code_branch || repoConfig?.codeBranch || '(not set)';
         
         return [
             `<strong>OAuth client</strong>: ${escapeHTML(oauthConfig.clientId)}`,
             `<strong>Redirect URI</strong>: ${escapeHTML(redirect)}`,
             `<strong>Client type</strong>: ${clientType}`,
-            `<strong>Target branch</strong>: ${escapeHTML(targetBranch)}`
+            `<strong>Page branch</strong>: ${escapeHTML(targetBranch)}`,
+            `<strong>Code branch</strong>: ${escapeHTML(codeBranch)}`
         ].join('<br>');
     }
 
     handleDownloadOption() {
         this.setSaveModalBusy(true);
-        try {
-            this.updateSaveModalStatus('Preparing download…');
-            const artifacts = this.gatherSaveArtifacts();
-            this.downloadHTML(artifacts.fullHTML);
-            this.markChangesPersisted();
-            this.renderSaveModalDiff();
-            this.updateSaveModalStatus('Downloaded index.html.');
-        } catch (error) {
-            console.error('Download failed', error);
-            this.updateSaveModalStatus('Download failed. See console for details.', true);
-            return;
-        } finally {
-            this.setSaveModalBusy(false);
-        }
+        (async () => {
+            try {
+                this.updateSaveModalStatus('Preparing download…');
+                const artifacts = await this.gatherSaveArtifacts();
+                this.downloadHTML(artifacts.fullHTML);
+                this.markChangesPersisted();
+                this.renderSaveModalDiff();
+                this.updateSaveModalStatus('Downloaded index.html.');
+            } catch (error) {
+                console.error('Download failed', error);
+                this.updateSaveModalStatus('Download failed. See console for details.', true);
+                return;
+            } finally {
+                this.setSaveModalBusy(false);
+            }
 
-        setTimeout(() => this.hideSaveOptionsModal(), 800);
+            setTimeout(() => this.hideSaveOptionsModal(), 800);
+        })();
     }
 
     async handleIssueOption() {
-        const artifacts = this.gatherSaveArtifacts();
+        const artifacts = await this.gatherSaveArtifacts();
         this.setSaveModalBusy(true);
         try {
             this.updateSaveModalStatus('Preparing issue summary…');
@@ -2216,7 +2194,7 @@ class SpreadsheetApp {
                 }
             }
 
-            const artifacts = this.gatherSaveArtifacts();
+            const artifacts = await this.gatherSaveArtifacts(); // Make sure this is awaited
             const repo = await this.resolveCodebergRepo();
             if (!repo) {
                 this.updateSaveModalStatus('Repository could not be detected. Use download to save your work.', true);
@@ -9425,7 +9403,70 @@ class SpreadsheetApp {
     }
 
     buildFullHTMLDocument(tableMarkup) {
-        return `${HTML_PREFIX}${tableMarkup}${HTML_SUFFIX}`;
+        const config = this.repoConfig || {};
+        const codeBranch = config.code_branch || config.codeBranch;
+        const owner = config.owner;
+        const repo = config.repo;
+        
+        // Log configuration values
+        console.log('[buildFullHTMLDocument] Configuration values:');
+        console.log('  codeBranch:', codeBranch);
+        console.log('  owner:', owner);
+        console.log('  repo:', repo);
+        
+        // Build stylesheet link if we have the necessary config
+        let stylesheetLink = '';
+        let runtimeConfig = '';
+        
+        if (codeBranch && owner && repo) {
+            const stylesheetUrl = `https://${encodeURIComponent(owner)}.codeberg.page/${encodeURIComponent(repo)}/@${encodeURIComponent(codeBranch)}/style.css`;
+            stylesheetLink = `    <link rel="stylesheet" href="${stylesheetUrl}">`;
+            
+            runtimeConfig = `    <script>
+            // Configuration for loader.js to use the correct assets branch
+            window.RUNTIME_ASSET_BRANCH = ${JSON.stringify(codeBranch)};
+        </script>`;
+            
+            console.log('[buildFullHTMLDocument] ✓ Stylesheet link built successfully:');
+            console.log('  URL:', stylesheetUrl);
+        } else {
+            console.log('[buildFullHTMLDocument] ✗ Stylesheet link NOT built - missing required config values');
+        }
+        
+        const htmlStart = `<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Spreadsheet Pro</title>
+    `;
+
+        const htmlMiddle = `</head>
+    <body>
+        <div class="spreadsheet-container">
+            <div class="grid-container">
+                <div class="corner-cell"></div>
+                <div class="column-headers">
+                    <div class="header-content" id="columnHeaderContent"></div>
+                </div>
+                <div class="row-headers">
+                    <div class="header-content" id="rowHeaderContent"></div>
+                </div>
+                <div class="main-grid" id="mainGrid">
+                    <div class="grid-content" id="gridContent">
+    `;
+
+        const htmlEnd = `
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script src="loader.js"></script>
+    </body>
+    </html>
+    `;
+        
+        return htmlStart + stylesheetLink + '\n' + runtimeConfig + '\n' + htmlMiddle + tableMarkup + htmlEnd;
     }
 
     getUsedRange() {
