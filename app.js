@@ -9254,6 +9254,16 @@ class SpreadsheetApp {
                         if (branch.length) {
                             normalized.page_branch = branch; // Store as page_branch
                             normalized.branch = branch; // Also keep as branch for backward compat
+                            normalized.pageBranch = branch; // CamelCase for runtime helpers
+                        }
+                    }
+
+                    const preferredCodeBranch = data.code_branch ?? data.codeBranch;
+                    if (preferredCodeBranch) {
+                        const codeBranch = String(preferredCodeBranch).trim();
+                        if (codeBranch.length) {
+                            normalized.code_branch = codeBranch; // Snake_case for templates
+                            normalized.codeBranch = codeBranch; // CamelCase for loader/runtime
                         }
                     }
 
