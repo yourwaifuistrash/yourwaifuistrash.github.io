@@ -3438,32 +3438,74 @@ class SpreadsheetApp {
 
         this.formatPainter.awaitingCtrlRelease = false;
         
-        const bounds = this.getSelectionBounds();
-        if (!bounds) return;
-
         const selectionCoords = this.getSelectionPositions();
+        if (!selectionCoords.length) return;
         
         // Save state
         this.saveState(`Apply painted format to ${selectionCoords.length} cells`);
         
-        const { minRow, minCol } = bounds;
-        
-        // Apply format pattern only to selected cells (skip gaps)
+        // Group selected cells into contiguous clusters so each starts its own pattern origin
+        const coordSet = new Set(selectionCoords.map(({ row, col }) => `${row},${col}`));
+        const visited = new Set();
+        const clusters = [];
+
+        const dirs = [
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1]
+        ];
+
         selectionCoords.forEach(({ row, col }) => {
-            const patternRow = (row - minRow) % this.formatPainter.patternHeight;
-            const patternCol = (col - minCol) % this.formatPainter.patternWidth;
-            const patternKey = `${patternRow},${patternCol}`;
-            
-            const format = this.formatPainter.formats.get(patternKey);
-            
-            if (format) {
-                const coordKey = `${row},${col}`;
-                this.updateCellDataEntry(coordKey, data => {
-                    Object.keys(format).forEach(key => {
-                        data[key] = format[key];
-                    });
+            const key = `${row},${col}`;
+            if (visited.has(key)) return;
+            const cluster = [];
+            const stack = [{ row, col }];
+            visited.add(key);
+
+            while (stack.length) {
+                const { row: r, col: c } = stack.pop();
+                cluster.push({ row: r, col: c });
+
+                dirs.forEach(([dr, dc]) => {
+                    const nr = r + dr;
+                    const nc = c + dc;
+                    const nKey = `${nr},${nc}`;
+                    if (coordSet.has(nKey) && !visited.has(nKey)) {
+                        visited.add(nKey);
+                        stack.push({ row: nr, col: nc });
+                    }
                 });
             }
+
+            clusters.push(cluster);
+        });
+
+        // Apply format pattern per cluster (pattern restarts in each)
+        clusters.forEach(cluster => {
+            let clusterMinRow = Infinity;
+            let clusterMinCol = Infinity;
+            cluster.forEach(({ row, col }) => {
+                if (row < clusterMinRow) clusterMinRow = row;
+                if (col < clusterMinCol) clusterMinCol = col;
+            });
+
+            cluster.forEach(({ row, col }) => {
+                const patternRow = (row - clusterMinRow) % this.formatPainter.patternHeight;
+                const patternCol = (col - clusterMinCol) % this.formatPainter.patternWidth;
+                const patternKey = `${patternRow},${patternCol}`;
+                
+                const format = this.formatPainter.formats.get(patternKey);
+                
+                if (format) {
+                    const coordKey = `${row},${col}`;
+                    this.updateCellDataEntry(coordKey, data => {
+                        Object.keys(format).forEach(key => {
+                            data[key] = format[key];
+                        });
+                    });
+                }
+            });
         });
         
         // Update visible cells
