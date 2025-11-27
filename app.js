@@ -4788,7 +4788,7 @@ class SpreadsheetApp {
         const cell = this.resolveCellFromEvent(event);
         if (!cell || event.target.classList.contains('cell-editor')) return;
         event.preventDefault();
-        this.startEditingCell(cell);
+        this.startEditingCell(cell, event);
     }
 
     handleCellSelection(cell, event) {
@@ -5369,7 +5369,7 @@ class SpreadsheetApp {
         }
     }
 
-    startEditingCell(cell) {
+    startEditingCell(cell, event = null) {
         if (this.currentEditingCell === cell) return;
         if (this.currentEditingCell) {
             this.stopEditingCell();
@@ -5379,6 +5379,9 @@ class SpreadsheetApp {
         const cellKey = this.getCoord(cell);
         const cellData = this.cellData.get(cellKey);
         const currentText = cellData ? (cellData.value || '') : '';
+        const effectiveStyle = { ...this.defaultCellStyle, ...(cellData || {}) };
+        const textAlign = effectiveStyle.textAlign || 'left';
+        const verticalAlign = effectiveStyle.verticalAlign || 'bottom';
         
         cell.dataset.originalValue = currentText;
         cell.classList.add('editing');
@@ -5386,18 +5389,43 @@ class SpreadsheetApp {
         // Reset overflow styles for editing
         cell.style.pointerEvents = 'auto';
 
+        const editorWrapper = document.createElement('div');
+        editorWrapper.className = 'cell-editor-wrapper';
+        const alignItemsMap = { 'top': 'flex-start', 'middle': 'center', 'bottom': 'flex-end' };
+        const justifyContentMap = { 'left': 'flex-start', 'center': 'center', 'right': 'flex-end' };
+        editorWrapper.style.alignItems = alignItemsMap[verticalAlign] || 'flex-end';
+        editorWrapper.style.justifyContent = justifyContentMap[textAlign] || 'flex-start';
+        
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'cell-editor';
         input.value = currentText;
+        input.style.textAlign = textAlign;
+
+        // Copy computed formatting so the editor sits exactly where the text was
+        const computed = window.getComputedStyle(cell);
+        input.style.fontSize = computed.fontSize;
+        input.style.fontFamily = computed.fontFamily;
+        input.style.fontWeight = computed.fontWeight;
+        input.style.fontStyle = computed.fontStyle;
+        input.style.lineHeight = computed.lineHeight;
+        input.style.color = computed.color;
+        const textDecoration = computed.textDecorationLine || computed.textDecoration;
+        input.style.textDecoration = textDecoration && textDecoration !== 'none' ? textDecoration : 'none';
+
+        editorWrapper.appendChild(input);
         cell.innerHTML = '';
-        cell.appendChild(input);
+        cell.appendChild(editorWrapper);
         
         // Allow editor to overflow visually
         this.updateEditorOverflow(cell, input);
         
         input.focus();
-        input.select();
+        if (event) {
+            this.setEditorCaretFromClick(event, input, textAlign);
+        } else {
+            input.setSelectionRange(currentText.length, currentText.length);
+        }
 
         this.formulaInput.value = currentText;
 
@@ -5426,14 +5454,20 @@ class SpreadsheetApp {
 
     updateEditorOverflow(cell, input) {
         const { row, col } = this.getCellPos(cell);
-        const cellWidth = this.getColumnWidth(col);
+        const cellWidth = this.getEffectiveCellWidth(cell, col);
+        const padding = 16; // matches the wrapper padding for left/right
+        const availableWidth = Math.max(cellWidth - padding, 0);
         const textWidth = this.measureTextWidth(input.value, input);
+        const wrapper = cell.querySelector('.cell-editor-wrapper');
         
         // Always set cell to allow overflow during editing
         cell.style.overflow = 'visible';
         cell.style.zIndex = '10';
+        if (wrapper) {
+            wrapper.style.overflow = 'visible';
+        }
         
-        if (textWidth > cellWidth - 16) {
+        if (textWidth > availableWidth) {
             // Text doesn't fit - calculate how much width we need
             let totalWidth = cellWidth;
             
@@ -5443,7 +5477,7 @@ class SpreadsheetApp {
                 totalWidth += this.getColumnWidth(c);
                 
                 // Stop if we have enough width
-                if (textWidth <= totalWidth - 16) {
+                if (textWidth <= totalWidth - padding) {
                     break;
                 }
                 
@@ -5452,11 +5486,48 @@ class SpreadsheetApp {
             }
             
             // Set input width to accommodate the text (always allow overflow during editing)
-            input.style.width = Math.max(cellWidth, textWidth + 32) + 'px';
+            const targetWidth = Math.max(availableWidth, textWidth + padding);
+            input.style.width = targetWidth + 'px';
         } else {
-            // Text fits - use cell width
-            input.style.width = cellWidth + 'px';
+            // Text fits - use the visible content width so the text stays in place
+            input.style.width = availableWidth + 'px';
         }
+    }
+
+    setEditorCaretFromClick(event, input, textAlign) {
+        if (!event || !input) return;
+        const value = input.value || '';
+        if (!value.length) return;
+
+        const rect = input.getBoundingClientRect();
+        const style = window.getComputedStyle(input);
+        const paddingLeft = parseFloat(style.paddingLeft) || 0;
+        const paddingRight = parseFloat(style.paddingRight) || 0;
+        const contentWidth = rect.width - paddingLeft - paddingRight;
+        const textWidth = this.measureTextWidth(value, input);
+
+        let startX = paddingLeft;
+        if (textAlign === 'center') {
+            startX = paddingLeft + Math.max(0, (contentWidth - textWidth) / 2);
+        } else if (textAlign === 'right') {
+            startX = paddingLeft + Math.max(0, contentWidth - textWidth);
+        }
+
+        const clickX = event.clientX - rect.left;
+        const relativeX = Math.min(Math.max(clickX - startX, 0), textWidth);
+
+        let caretIndex = value.length;
+        let runningWidth = 0;
+        for (let i = 0; i < value.length; i++) {
+            const charWidth = this.measureTextWidth(value[i], input);
+            if (relativeX <= runningWidth + charWidth / 2) {
+                caretIndex = i;
+                break;
+            }
+            runningWidth += charWidth;
+        }
+
+        input.setSelectionRange(caretIndex, caretIndex);
     }
 
     stopEditingCell(cancel = false) {
@@ -6309,6 +6380,19 @@ class SpreadsheetApp {
         cell.style.borderBottom = bottomBorder;
         cell.style.borderLeft = leftBorder;
     }
+
+    getEffectiveCellWidth(cell, col) {
+        if (!cell) return this.getColumnWidth(col);
+        const mergedCols = parseInt(cell.dataset.mergedCols || '1', 10);
+        if (mergedCols > 1) {
+            let total = 0;
+            for (let i = 0; i < mergedCols; i++) {
+                total += this.getColumnWidth(col + i);
+            }
+            return total || (cell.offsetWidth || this.getColumnWidth(col));
+        }
+        return cell.offsetWidth || parseFloat(cell.style.width) || this.getColumnWidth(col);
+    }
     
     handleCellOverflow(cell, displayText, cellData) {
         const { row, col } = this.getCellPos(cell);
@@ -6341,7 +6425,7 @@ class SpreadsheetApp {
         }
         
         // Check if text fits within the cell
-        const cellWidth = this.getColumnWidth(col);
+        const cellWidth = this.getEffectiveCellWidth(cell, col);
         const textWidth = this.measureTextWidth(normalizedText, cell);
         const padding = 16;
         
@@ -6693,7 +6777,11 @@ class SpreadsheetApp {
         const parentCoord = `${minRow},${minCol}`;
         const existingMerge = this.mergedCells.get(parentCoord);
         
-        const isMerged = existingMerge && existingMerge.rows === rows && existingMerge.cols === cols;
+        // DOMTokenList.toggle treats an undefined "force" value as "toggle"
+        // instead of "remove", so make sure we always pass a boolean here.
+        const isMerged = Boolean(existingMerge && 
+            existingMerge.rows === rows && 
+            existingMerge.cols === cols);
         mergeBtn.classList.toggle('active', isMerged);
     }
 
@@ -7713,8 +7801,23 @@ class SpreadsheetApp {
                 cell.className = 'border-preview-cell';
                 const colIndex = i % gridBufferColumns;
                 const rowIndex = Math.floor(i / gridBufferColumns);
-                if (colIndex === 0) cell.classList.add('border-preview-cell--edge-left');
-                if (rowIndex === 0) cell.classList.add('border-preview-cell--edge-top');
+                const isLeftBufferCol = colIndex === 0;
+                const isRightBufferCol = colIndex === gridBufferColumns - 1;
+                const isTopBufferRow = rowIndex === 0;
+                const isBottomBufferRow = rowIndex === gridBufferRows - 1;
+                const isLastPreviewCol = colIndex === gridBufferColumns - 2;
+                const isLastPreviewRow = rowIndex === gridBufferRows - 2;
+
+                if (isLeftBufferCol) cell.classList.add('border-preview-cell--edge-left');
+                if (isTopBufferRow) cell.classList.add('border-preview-cell--edge-top');
+
+                // Mirror borders on the far edges so the partial cells show equal padding
+                if (isRightBufferCol) cell.classList.add('border-preview-cell--edge-right');
+                if (isBottomBufferRow) cell.classList.add('border-preview-cell--edge-bottom');
+
+                // Avoid double-thick lines where the preview meets the buffer cells
+                if (isLastPreviewCol) cell.classList.add('border-preview-cell--suppress-right');
+                if (isLastPreviewRow) cell.classList.add('border-preview-cell--suppress-bottom');
                 grid.appendChild(cell);
             }
 
@@ -7740,32 +7843,6 @@ class SpreadsheetApp {
         }
 
         const svg = borderPreview?.querySelector('.border-preview-overlay');
-        const spanXStart = stagePaddingX - 0.5;
-        const spanYStart = stagePaddingY - 0.5;
-        const spanXEnd = spanXStart + previewWidth;
-        const spanYEnd = spanYStart + previewHeight;
-        const verticalPositions = Array.from(
-            { length: previewColumns + 1 },
-            (_, idx) => spanXStart + idx * previewCellWidth
-        );
-        const horizontalPositions = Array.from(
-            { length: previewRows + 1 },
-            (_, idx) => spanYStart + idx * previewCellHeight
-        );
-        const previewEdges = {
-            left: verticalPositions[0],
-            right: verticalPositions[verticalPositions.length - 1],
-            top: horizontalPositions[0],
-            bottom: horizontalPositions[horizontalPositions.length - 1],
-            innerXs: verticalPositions.slice(1, -1),
-            innerYs: horizontalPositions.slice(1, -1)
-        };
-        const makeHorizontal = (y) => [spanXStart, y, spanXEnd, y];
-        const makeVertical = (x) => [x, spanYStart, x, spanYEnd];
-        const outerHorizontalLines = [makeHorizontal(previewEdges.top), makeHorizontal(previewEdges.bottom)];
-        const outerVerticalLines = [makeVertical(previewEdges.left), makeVertical(previewEdges.right)];
-        const innerHorizontalLines = previewEdges.innerYs.map(makeHorizontal);
-        const innerVerticalLines = previewEdges.innerXs.map(makeVertical);
 
         const clearPreviewBorders = () => {
             if (svg) svg.innerHTML = '';
@@ -7819,6 +7896,85 @@ class SpreadsheetApp {
             const s = borderStyleSelect.value;
             const c = borderColorPicker.value;
 
+            // Anchor strokes on the half-pixel grid, then fan out evenly so widths stay centered.
+            const baseAlignOffset = 0.5;
+            const outerXStart = stagePaddingX - baseAlignOffset;
+            const outerYStart = stagePaddingY - baseAlignOffset;
+            const outerXEnd = stagePaddingX + previewWidth + baseAlignOffset;
+            const outerYEnd = stagePaddingY + previewHeight + baseAlignOffset;
+            const verticalPositions = Array.from(
+                { length: previewColumns + 1 },
+                (_, idx) => idx === 0
+                    ? outerXStart
+                    : (idx === previewColumns ? outerXEnd : stagePaddingX + idx * previewCellWidth - baseAlignOffset)
+            );
+            const horizontalPositions = Array.from(
+                { length: previewRows + 1 },
+                (_, idx) => idx === 0
+                    ? outerYStart
+                    : (idx === previewRows ? outerYEnd : stagePaddingY + idx * previewCellHeight - baseAlignOffset)
+            );
+            const previewEdges = {
+                left: verticalPositions[0],
+                right: verticalPositions[verticalPositions.length - 1],
+                top: horizontalPositions[0],
+                bottom: horizontalPositions[horizontalPositions.length - 1],
+                innerXs: verticalPositions.slice(1, -1),
+                innerYs: horizontalPositions.slice(1, -1)
+            };
+            const makeHorizontal = (y) => [outerXStart, y, outerXEnd, y];
+            const makeVertical = (x) => [x, outerYStart, x, outerYEnd];
+            const outerHorizontalLines = [makeHorizontal(previewEdges.top), makeHorizontal(previewEdges.bottom)];
+            const outerVerticalLines = [makeVertical(previewEdges.left), makeVertical(previewEdges.right)];
+            const innerHorizontalLines = previewEdges.innerYs.map(makeHorizontal);
+            const innerVerticalLines = previewEdges.innerXs.map(makeVertical);
+
+            const baseLineCap = s === 'dotted' ? 'round' : 'square';
+            const baseDashPattern = getDashPattern(s, w);
+
+            const getStrokeOffsets = (effectiveWidth) => {
+                const offsets = [0];
+                for (let i = 1; i < effectiveWidth; i++) {
+                    offsets.push(i, -i);
+                }
+                return offsets;
+            };
+
+            const drawLine = (coords, effectiveWidth = w, lineCapOverride, dashPatternOverride) => {
+                const [x1, y1, x2, y2] = coords;
+                const dashPattern = dashPatternOverride ?? baseDashPattern;
+                const lineCap = lineCapOverride ?? baseLineCap;
+                const horizontal = isHorizontalLine(coords);
+                const offsets = getStrokeOffsets(Math.max(1, Math.round(effectiveWidth)));
+                offsets.forEach(offset => {
+                    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                    line.setAttribute('x1', horizontal ? x1 : x1 + offset);
+                    line.setAttribute('y1', horizontal ? y1 + offset : y1);
+                    line.setAttribute('x2', horizontal ? x2 : x2 + offset);
+                    line.setAttribute('y2', horizontal ? y2 + offset : y2);
+                    line.setAttribute('stroke', c);
+                    line.setAttribute('stroke-width', 1);
+                    line.setAttribute('stroke-linecap', lineCap);
+                    if (dashPattern) {
+                        line.setAttribute('stroke-dasharray', dashPattern);
+                    }
+                    svg.appendChild(line);
+                });
+            };
+
+            const drawCornerDot = (x, y) => {
+                const dotSize = Math.max(1, 2 * w - 1);
+                const half = dotSize / 2;
+                const dot = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                dot.setAttribute('x', x - half);
+                dot.setAttribute('y', y - half);
+                dot.setAttribute('width', dotSize);
+                dot.setAttribute('height', dotSize);
+                dot.setAttribute('fill', c);
+                dot.setAttribute('stroke', 'none');
+                svg.appendChild(dot);
+            };
+
             // Add corner dots for outer borders
             if (action === 'all' || action === 'outer') {
                 [
@@ -7826,17 +7982,7 @@ class SpreadsheetApp {
                     [previewEdges.right, previewEdges.top],
                     [previewEdges.left, previewEdges.bottom],
                     [previewEdges.right, previewEdges.bottom]
-                ].forEach(([x, y]) => {
-                    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                    dot.setAttribute('x1', x);
-                    dot.setAttribute('y1', y);
-                    dot.setAttribute('x2', x);
-                    dot.setAttribute('y2', y);
-                    dot.setAttribute('stroke', c);
-                    dot.setAttribute('stroke-width', w);
-                    dot.setAttribute('stroke-linecap', 'square');
-                    svg.appendChild(dot);
-                });
+                ].forEach(([x, y]) => drawCornerDot(x, y));
             }
 
             const lines = {
@@ -7862,29 +8008,6 @@ class SpreadsheetApp {
                 bottom: [makeHorizontal(previewEdges.bottom)]
             }[action] || [];
 
-            const shouldExtendToCorners = action === 'all' || action === 'outer';
-            const baseLineCap = s === 'dotted'
-                ? 'round'
-                : (shouldExtendToCorners ? 'square' : 'butt');
-            const baseDashPattern = getDashPattern(s, w);
-
-            const drawLine = (coords, strokeWidth, lineCapOverride, dashPatternOverride) => {
-                const [x1, y1, x2, y2] = coords;
-                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                line.setAttribute('x1', x1);
-                line.setAttribute('y1', y1);
-                line.setAttribute('x2', x2);
-                line.setAttribute('y2', y2);
-                line.setAttribute('stroke', c);
-                line.setAttribute('stroke-width', strokeWidth);
-                line.setAttribute('stroke-linecap', lineCapOverride ?? baseLineCap);
-                const dashPattern = dashPatternOverride ?? baseDashPattern;
-                if (dashPattern) {
-                    line.setAttribute('stroke-dasharray', dashPattern);
-                }
-                svg.appendChild(line);
-            };
-
             lines.forEach((coords) => {
                 if (s === 'double') {
                     const doubleSegments = getDoubleLineSegments(coords, w);
@@ -7892,14 +8015,14 @@ class SpreadsheetApp {
                         drawLine(
                             segment.coords,
                             segment.strokeWidth,
-                            shouldExtendToCorners ? 'square' : 'butt',
+                            baseLineCap,
                             null
                         );
                     });
                     return;
                 }
 
-                drawLine(coords, w);
+                drawLine(coords);
             });
         };
 
@@ -8301,6 +8424,7 @@ class SpreadsheetApp {
             this.saveState(`Unmerge ${rows}x${cols} cells`);
             this.unmergeCells(minRow, minCol);
             this.log(`Unmerged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
+            this.updateMergeButton();
             return;
         }
 
@@ -8340,6 +8464,8 @@ class SpreadsheetApp {
         this.saveState(`Merge ${rows}x${cols} cells`);
         this.mergeCells(minRow, minCol, rows, cols);
         this.log(`Merged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
+        // Refresh merge button state immediately after applying the merge
+        this.updateMergeButton();
     }
     
     unmergeCells(startRow, startCol, updateVisuals = true) {
