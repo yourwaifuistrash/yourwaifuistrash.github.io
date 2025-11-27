@@ -645,7 +645,9 @@ class SpreadsheetApp {
             active: false,
             formats: null,
             patternWidth: null,
-            patternHeight: null
+            patternHeight: null,
+            sourceCoords: null,
+            awaitingCtrlRelease: false
         };
 
         this.formulaFunctions = [
@@ -3167,6 +3169,9 @@ class SpreadsheetApp {
             cell.classList.add('primary-selected');
             this.primaryCell = cell;
         }
+        if (this.formatPainter.active && this.formatPainter.sourceCoords && this.formatPainter.sourceCoords.has(coordKey)) {
+            cell.classList.add('format-painter-source');
+        }
 
         this.gridContent.appendChild(cell);
         this.renderedCellCoords.add(coordKey);
@@ -3202,6 +3207,7 @@ class SpreadsheetApp {
             [document, 'mouseup', e => this.handleMouseUp(e)],
             [document, 'mousemove', e => this.handleDocumentMouseMove(e)],
             [document, 'keydown', e => this.handleKeyDown(e)],
+            [document, 'keyup', e => this.handleKeyUp(e)],
             [document, 'contextmenu', e => this.handleContextMenu(e)],
             [document, 'click', e => this.handleDocumentClick(e)],
             [this.columnHeaders, 'click', e => this.handleHeaderClick(e, 'column')],
@@ -3281,6 +3287,8 @@ class SpreadsheetApp {
             this.log('No cell selected for format painter');
             return;
         }
+
+        this.clearFormatPainterSourceHighlight();
         
         // Get all selected cell coordinates
         const coords = this.getSelectionPositions();
@@ -3340,10 +3348,16 @@ class SpreadsheetApp {
         });
         
         this.formatPainter.active = true;
+        this.formatPainter.awaitingCtrlRelease = false;
+        this.formatPainter.sourceCoords = new Set(coords.map(({ row, col }) => `${row},${col}`));
         
         // Update button appearance
         const btn = document.getElementById('formatPainterBtn');
         btn.classList.add('active');
+
+        // Clear live selection but leave a visual cue of the source area
+        this.clearAllSelections();
+        this.applyFormatPainterSourceHighlight();
         
         // Change cursor
         document.body.style.cursor = 'crosshair';
@@ -3356,6 +3370,8 @@ class SpreadsheetApp {
         this.formatPainter.formats = null;
         this.formatPainter.patternWidth = null;
         this.formatPainter.patternHeight = null;
+        this.formatPainter.awaitingCtrlRelease = false;
+        this.clearFormatPainterSourceHighlight();
         
         // Update button appearance
         const btn = document.getElementById('formatPainterBtn');
@@ -3365,6 +3381,32 @@ class SpreadsheetApp {
         document.body.style.cursor = '';
         
         this.log('Format painter deactivated');
+    }
+
+    applyFormatPainterSourceHighlight() {
+        if (!this.formatPainter.sourceCoords) return;
+        
+        this.formatPainter.sourceCoords.forEach(coordKey => {
+            const [row, col] = this.parseCoord(coordKey);
+            const cell = this.getCellAt(row, col);
+            if (cell) {
+                cell.classList.add('format-painter-source');
+            }
+        });
+    }
+
+    clearFormatPainterSourceHighlight() {
+        if (!this.formatPainter.sourceCoords) return;
+
+        this.formatPainter.sourceCoords.forEach(coordKey => {
+            const [row, col] = this.parseCoord(coordKey);
+            const cell = this.getCellAt(row, col);
+            if (cell) {
+                cell.classList.remove('format-painter-source');
+            }
+        });
+
+        this.formatPainter.sourceCoords = null;
     }
 
     applyPaintedFormat(cell) {
@@ -3393,36 +3435,36 @@ class SpreadsheetApp {
         if (!this.formatPainter.active || !this.formatPainter.formats) {
             return;
         }
+
+        this.formatPainter.awaitingCtrlRelease = false;
         
         const bounds = this.getSelectionBounds();
         if (!bounds) return;
+
+        const selectionCoords = this.getSelectionPositions();
         
         // Save state
-        this.saveState(`Apply painted format to ${this.selectedCellCoords.size} cells`);
+        this.saveState(`Apply painted format to ${selectionCoords.length} cells`);
         
-        const { minRow, maxRow, minCol, maxCol } = bounds;
+        const { minRow, minCol } = bounds;
         
-        // Apply format pattern to each cell in the target area
-        for (let row = minRow; row <= maxRow; row++) {
-            for (let col = minCol; col <= maxCol; col++) {
+        // Apply format pattern only to selected cells (skip gaps)
+        selectionCoords.forEach(({ row, col }) => {
+            const patternRow = (row - minRow) % this.formatPainter.patternHeight;
+            const patternCol = (col - minCol) % this.formatPainter.patternWidth;
+            const patternKey = `${patternRow},${patternCol}`;
+            
+            const format = this.formatPainter.formats.get(patternKey);
+            
+            if (format) {
                 const coordKey = `${row},${col}`;
-                
-                // Calculate which cell in the pattern to use (tiling/repeating)
-                const patternRow = (row - minRow) % this.formatPainter.patternHeight;
-                const patternCol = (col - minCol) % this.formatPainter.patternWidth;
-                const patternKey = `${patternRow},${patternCol}`;
-                
-                const format = this.formatPainter.formats.get(patternKey);
-                
-                if (format) {
-                    this.updateCellDataEntry(coordKey, data => {
-                        Object.keys(format).forEach(key => {
-                            data[key] = format[key];
-                        });
+                this.updateCellDataEntry(coordKey, data => {
+                    Object.keys(format).forEach(key => {
+                        data[key] = format[key];
                     });
-                }
+                });
             }
-        }
+        });
         
         // Update visible cells
         this.selectedCells.forEach(cell => {
@@ -4612,14 +4654,27 @@ class SpreadsheetApp {
         
         // Handle format painter application on mouse up
         if (this.formatPainter.active && this.isDragging) {
-            // Extend selection if needed to match pattern dimensions
-            this.extendSelectionForFormatPainter();
-            this.applyPaintedFormatToSelection();
+            const wasCtrlDrag = this.isCtrlDragging;
+
+            // Extend only for normal drags; ctrl/meta drags should stay sparse
+            if (!wasCtrlDrag) {
+                this.extendSelectionForFormatPainter();
+            }
+
+            const shouldWaitForCtrlRelease = event.ctrlKey || event.metaKey;
+
             this.isDragging = false;
             this.dragStartCell = null;
             this.isCtrlDragging = false;
             this.ctrlDragAction = null;
             this.ctrlDragProcessedCells.clear();
+
+            if (shouldWaitForCtrlRelease) {
+                this.formatPainter.awaitingCtrlRelease = true;
+                return;
+            }
+
+            this.applyPaintedFormatToSelection();
             return;
         }
         
@@ -5478,6 +5533,22 @@ class SpreadsheetApp {
 
         if (newScrollLeft !== viewLeft || newScrollTop !== viewTop) {
             this.mainGrid.scrollTo({ left: newScrollLeft, top: newScrollTop, behavior: 'smooth' });
+        }
+    }
+
+    handleKeyUp(event) {
+        if (!this.formatPainter.active || !this.formatPainter.awaitingCtrlRelease) return;
+
+        const key = event.key?.toLowerCase();
+        const isCtrlRelease = key === 'control' || key === 'meta';
+
+        if (isCtrlRelease && !this.isDragging) {
+            if (!this.hasSelection()) {
+                this.formatPainter.awaitingCtrlRelease = false;
+                return;
+            }
+            this.formatPainter.awaitingCtrlRelease = false;
+            this.applyPaintedFormatToSelection();
         }
     }
 

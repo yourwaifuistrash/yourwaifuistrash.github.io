@@ -654,6 +654,20 @@ body { margin: 0; padding: 0; }
   z-index: 2;
 }
 
+.cell.format-painter-source {
+  outline: 1px dashed var(--color-orange-500);
+  outline-offset: -1px;
+  z-index: 1;
+}
+
+.cell.format-painter-source::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(168, 75, 47, 0.08);
+  pointer-events: none;
+}
+
 :root[data-theme='dark'] .cell.selected {
   outline: 1px solid var(--selection-outline, rgba(255, 82, 82, 0.8));
 }
@@ -664,6 +678,14 @@ body { margin: 0; padding: 0; }
 
 :root[data-theme='dark'] .cell.primary-selected {
   outline: 2px solid var(--selection-outline, #ff5252);
+}
+
+:root[data-theme='dark'] .cell.format-painter-source {
+  outline-color: var(--color-orange-400);
+}
+
+:root[data-theme='dark'] .cell.format-painter-source::after {
+  background: rgba(230, 129, 97, 0.2);
 }
 
 .cell.editing { 
