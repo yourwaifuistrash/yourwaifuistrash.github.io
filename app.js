@@ -733,6 +733,7 @@ class SpreadsheetApp {
         this.updateFontSizeInput();
         this.updateFontColorButton();
         this.updateBackgroundColorButton();
+        this.renderSelectionOverlays();
     }
     
     // Convert cell element to coordinate string "row,col"
@@ -5290,6 +5291,48 @@ class SpreadsheetApp {
         this.updateUI();
         this.hideFormulaSuggestions();
         this.log('Cleared all selections');
+    }
+
+    // Draw unified overlays per contiguous selection to align exactly on grid lines
+    renderSelectionOverlays() {
+        if (!this.gridContent) return;
+
+        if (!this.selectionOverlayLayer) {
+            this.selectionOverlayLayer = document.createElement('div');
+            this.selectionOverlayLayer.className = 'selection-overlay-layer';
+        }
+
+        // Clear previous overlays
+        this.selectionOverlayLayer.innerHTML = '';
+
+        if (!this.hasSelection()) {
+            if (this.selectionOverlayLayer.parentNode) {
+                this.selectionOverlayLayer.remove();
+            }
+            return;
+        }
+
+        const regions = this.findContiguousRegions();
+        regions.forEach(({ minRow, maxRow, minCol, maxCol }) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'selection-overlay';
+
+            // Expand by 1px on top/left so the stroke sits exactly on the grid lines
+            const left = this.getColumnLeft(minCol) - 1;
+            const top = this.getRowTop(minRow) - 1;
+            const right = this.getColumnLeft(maxCol + 1);
+            const bottom = this.getRowTop(maxRow + 1);
+
+            overlay.style.left = `${left}px`;
+            overlay.style.top = `${top}px`;
+            overlay.style.width = `${right - left}px`;
+            overlay.style.height = `${bottom - top}px`;
+
+            this.selectionOverlayLayer.appendChild(overlay);
+        });
+
+        // Ensure overlay sits on top
+        this.gridContent.appendChild(this.selectionOverlayLayer);
     }
 
     updateCellReference() {

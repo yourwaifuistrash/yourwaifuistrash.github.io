@@ -635,8 +635,7 @@ body { margin: 0; padding: 0; }
 }
 
 .cell.selected {
-  outline: 1px solid var(--selection-outline, var(--color-primary));
-  outline-offset: -1px;
+  outline: none;
   z-index: 1;
 }
 
@@ -649,8 +648,8 @@ body { margin: 0; padding: 0; }
 }
 
 .cell.primary-selected {
-  outline: 2px solid var(--selection-outline, var(--color-primary));
-  outline-offset: -2px;
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--selection-outline, var(--color-primary));
   z-index: 2;
 }
 
@@ -669,7 +668,7 @@ body { margin: 0; padding: 0; }
 }
 
 :root[data-theme='dark'] .cell.selected {
-  outline: 1px solid var(--selection-outline, rgba(255, 82, 82, 0.8));
+  outline: none;
 }
 
 :root[data-theme='dark'] .cell.selected::after {
@@ -677,7 +676,8 @@ body { margin: 0; padding: 0; }
 }
 
 :root[data-theme='dark'] .cell.primary-selected {
-  outline: 2px solid var(--selection-outline, #ff5252);
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--selection-outline, #ff5252);
 }
 
 :root[data-theme='dark'] .cell.format-painter-source {
@@ -686,6 +686,26 @@ body { margin: 0; padding: 0; }
 
 :root[data-theme='dark'] .cell.format-painter-source::after {
   background: rgba(230, 129, 97, 0.2);
+}
+
+/* Selection overlay drawn once per contiguous selection to avoid double-thick grid lines */
+.selection-overlay-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.selection-overlay {
+  position: absolute;
+  border: 1px solid var(--selection-outline, var(--color-primary));
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 100;
+}
+
+:root[data-theme='dark'] .selection-overlay {
+  border-color: var(--selection-outline, #ff5252);
 }
 
 .cell.editing { 
