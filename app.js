@@ -3351,6 +3351,7 @@ class SpreadsheetApp {
         this.formatPainter.active = true;
         this.formatPainter.awaitingCtrlRelease = false;
         this.formatPainter.sourceCoords = new Set(coords.map(({ row, col }) => `${row},${col}`));
+        this.formatPainter.overlayRegions = this.findContiguousRegions(this.formatPainter.sourceCoords);
         
         // Update button appearance
         const btn = document.getElementById('formatPainterBtn');
@@ -3373,6 +3374,8 @@ class SpreadsheetApp {
         this.formatPainter.patternHeight = null;
         this.formatPainter.awaitingCtrlRelease = false;
         this.clearFormatPainterSourceHighlight();
+        this.formatPainter.overlayRegions = null;
+        this.renderSelectionOverlays();
         
         // Update button appearance
         const btn = document.getElementById('formatPainterBtn');
@@ -3394,6 +3397,7 @@ class SpreadsheetApp {
                 cell.classList.add('format-painter-source');
             }
         });
+        this.renderSelectionOverlays();
     }
 
     clearFormatPainterSourceHighlight() {
@@ -3408,6 +3412,7 @@ class SpreadsheetApp {
         });
 
         this.formatPainter.sourceCoords = null;
+        this.renderSelectionOverlays();
     }
 
     applyPaintedFormat(cell) {
@@ -5305,31 +5310,48 @@ class SpreadsheetApp {
         // Clear previous overlays
         this.selectionOverlayLayer.innerHTML = '';
 
-        if (!this.hasSelection()) {
+        const hasClipboardOverlay = !!(this.clipboard && this.clipboard.overlayRegions && this.clipboard.overlayRegions.length);
+        const hasFormatOverlay = !!(this.formatPainter && this.formatPainter.overlayRegions && this.formatPainter.overlayRegions.length);
+
+        if (!this.hasSelection() && !hasClipboardOverlay && !hasFormatOverlay) {
             if (this.selectionOverlayLayer.parentNode) {
                 this.selectionOverlayLayer.remove();
             }
             return;
         }
 
-        const regions = this.findContiguousRegions();
-        regions.forEach(({ minRow, maxRow, minCol, maxCol }) => {
-            const overlay = document.createElement('div');
-            overlay.className = 'selection-overlay';
+        const addOverlays = (regions, className) => {
+            regions.forEach(({ minRow, maxRow, minCol, maxCol }) => {
+                const overlay = document.createElement('div');
+                overlay.className = `selection-overlay ${className || ''}`.trim();
 
-            // Expand by 1px on top/left so the stroke sits exactly on the grid lines
-            const left = this.getColumnLeft(minCol) - 1;
-            const top = this.getRowTop(minRow) - 1;
-            const right = this.getColumnLeft(maxCol + 1);
-            const bottom = this.getRowTop(maxRow + 1);
+                // Expand by 1px on top/left so the stroke sits exactly on the grid lines
+                const left = this.getColumnLeft(minCol) - 1;
+                const top = this.getRowTop(minRow) - 1;
+                const right = this.getColumnLeft(maxCol + 1);
+                const bottom = this.getRowTop(maxRow + 1);
 
-            overlay.style.left = `${left}px`;
-            overlay.style.top = `${top}px`;
-            overlay.style.width = `${right - left}px`;
-            overlay.style.height = `${bottom - top}px`;
+                overlay.style.left = `${left}px`;
+                overlay.style.top = `${top}px`;
+                overlay.style.width = `${right - left}px`;
+                overlay.style.height = `${bottom - top}px`;
 
-            this.selectionOverlayLayer.appendChild(overlay);
-        });
+                this.selectionOverlayLayer.appendChild(overlay);
+            });
+        };
+
+        addOverlays(this.findContiguousRegions(), 'selection-overlay--active');
+
+        if (hasClipboardOverlay) {
+            const cls = this.clipboard.mode === 'cut'
+                ? 'selection-overlay--clipboard selection-overlay--clipboard-cut'
+                : 'selection-overlay--clipboard';
+            addOverlays(this.clipboard.overlayRegions, cls);
+        }
+
+        if (hasFormatOverlay) {
+            addOverlays(this.formatPainter.overlayRegions, 'selection-overlay--format');
+        }
 
         // Ensure overlay sits on top
         this.gridContent.appendChild(this.selectionOverlayLayer);
@@ -6028,6 +6050,10 @@ class SpreadsheetApp {
         document.querySelectorAll('.cell').forEach(cell => {
             cell.style.border = '';
         });
+        if (this.clipboard) {
+            this.clipboard.overlayRegions = null;
+        }
+        this.renderSelectionOverlays();
     }
 
     cutCells() { this.copyCells(true); }
@@ -6059,13 +6085,8 @@ class SpreadsheetApp {
         });
 
         // Apply visual styling for both cut and copy
-        this.selectedCells.forEach(cell => {
-            if (isCut) {
-                cell.style.border = '2px dashed var(--color-primary)';
-            } else {
-                cell.style.border = '1px dashed var(--color-primary)';
-            }
-        });
+        this.clipboard.overlayRegions = this.findContiguousRegions(new Set(this.selectedCellCoords));
+        this.renderSelectionOverlays();
 
         // Copy to system clipboard
         this.copyToSystemClipboard();
@@ -8366,9 +8387,11 @@ class SpreadsheetApp {
         this._updateCellsAndAdjacent(this.selectedCells);
     }
     
-    findContiguousRegions() {
+    findContiguousRegions(coordSet = this.selectedCellCoords) {
+        if (!coordSet || coordSet.size === 0) return [];
+
         // Convert selected coordinates to a Set for O(1) lookup
-        const selectedSet = new Set(this.selectedCellCoords);
+        const selectedSet = new Set(coordSet);
         const visited = new Set();
         const regions = [];
         
@@ -8420,7 +8443,7 @@ class SpreadsheetApp {
         };
         
         // Find all regions
-        this.selectedCellCoords.forEach(coord => {
+        selectedSet.forEach(coord => {
             if (!visited.has(coord)) {
                 const { row, col } = this.getCoordPos(coord);
                 const region = floodFill(row, col);

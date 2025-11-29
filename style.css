@@ -654,8 +654,7 @@ body { margin: 0; padding: 0; }
 }
 
 .cell.format-painter-source {
-  outline: 1px dashed var(--color-orange-500);
-  outline-offset: -1px;
+  outline: none;
   z-index: 1;
 }
 
@@ -681,7 +680,7 @@ body { margin: 0; padding: 0; }
 }
 
 :root[data-theme='dark'] .cell.format-painter-source {
-  outline-color: var(--color-orange-400);
+  outline: none;
 }
 
 :root[data-theme='dark'] .cell.format-painter-source::after {
@@ -706,6 +705,26 @@ body { margin: 0; padding: 0; }
 
 :root[data-theme='dark'] .selection-overlay {
   border-color: var(--selection-outline, #ff5252);
+}
+
+.selection-overlay--clipboard {
+  border-style: dashed;
+  border-color: var(--selection-outline, var(--color-primary));
+}
+
+.selection-overlay--clipboard-cut {
+  border-style: dashed;
+  border-width: 2px;
+  border-color: var(--selection-outline, var(--color-primary));
+}
+
+.selection-overlay--format {
+  border-style: dashed;
+  border-color: var(--color-gray-400);
+}
+
+:root[data-theme='dark'] .selection-overlay--format {
+  border-color: var(--color-gray-300);
 }
 
 .cell.editing { 
