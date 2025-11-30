@@ -735,6 +735,20 @@ body { margin: 0; padding: 0; }
   pointer-events: none;
 }
 
+/* Explicit border overlay layer to keep applied borders aligned on grid lines */
+.border-overlay-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 90;
+}
+
+.border-overlay-line {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
 .cell.editing { 
     padding: 0; 
     overflow: visible !important; 

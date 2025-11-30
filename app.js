@@ -735,6 +735,253 @@ class SpreadsheetApp {
         this.updateBackgroundColorButton();
         this.renderSelectionOverlays();
     }
+
+    renderBorderOverlays() {
+        if (!this.gridContent) return;
+
+        if (!this.borderOverlayLayer) {
+            this.borderOverlayLayer = document.createElement('div');
+            this.borderOverlayLayer.className = 'border-overlay-layer';
+        }
+
+        this.borderOverlayLayer.innerHTML = '';
+
+        const cells = Array.from(this.gridContent.querySelectorAll('.cell'));
+        if (!cells.length) {
+            if (this.borderOverlayLayer.parentNode) this.borderOverlayLayer.remove();
+            return;
+        }
+
+        const cellMap = new Map();
+        cells.forEach(cell => {
+            cellMap.set(this.getCoord(cell), cell);
+        });
+
+        const parseBorder = (borderStr) => {
+            if (!borderStr) return null;
+            const match = borderStr.match(/([\d.]+)px\s+([a-zA-Z]+)\s+(.+)/);
+            if (!match) return null;
+            const [, widthStr, style, color] = match;
+            const width = parseFloat(widthStr);
+            if (Number.isNaN(width) || width <= 0) return null;
+            return { width, thickness: width, style: style.toLowerCase(), color };
+        };
+
+        const sameBorder = (a, b) => {
+            if (!a || !b) return false;
+            return a.width === b.width && a.style === b.style && a.color === b.color;
+        };
+
+        const addLine = (x, y, w, h, info, isVertical, strokeWidth = null) => {
+            if (!info) return;
+            const sw = strokeWidth == null ? info.width : strokeWidth;
+            const line = document.createElement('div');
+            line.className = 'border-overlay-line';
+            line.style.left = `${x}px`;
+            line.style.top = `${y}px`;
+            line.style.width = `${w}px`;
+            line.style.height = `${h}px`;
+
+            if (info.style === 'dashed') {
+                const dash = sw * 2;
+                if (isVertical) {
+                    line.style.backgroundImage = `repeating-linear-gradient(to bottom, ${info.color} 0, ${info.color} ${sw}px, transparent ${sw}px, transparent ${dash}px)`;
+                } else {
+                    line.style.backgroundImage = `repeating-linear-gradient(to right, ${info.color} 0, ${info.color} ${sw}px, transparent ${sw}px, transparent ${dash}px)`;
+                }
+            } else {
+                line.style.background = info.color;
+            }
+            this.borderOverlayLayer.appendChild(line);
+        };
+
+        const getCellBounds = (cell, row, col) => {
+            const mergedCols = parseInt(cell.dataset.mergedCols || '1', 10);
+            const mergedRows = parseInt(cell.dataset.mergedRows || '1', 10);
+            let width = 0;
+            for (let c = 0; c < mergedCols; c++) {
+                width += this.getColumnWidth(col + c);
+            }
+            let height = 0;
+            for (let r = 0; r < mergedRows; r++) {
+                height += this.getRowHeight(row + r);
+            }
+            const left = this.getColumnLeft(col);
+            const top = this.getRowTop(row);
+            return { left, top, width, height };
+        };
+
+        cells.forEach(cell => {
+            const { row, col } = this.getCellPos(cell);
+            const { left, top, width, height } = getCellBounds(cell, row, col);
+
+            const topInfo = parseBorder(cell.dataset.borderTop || '');
+            const bottomInfo = parseBorder(cell.dataset.borderBottom || '');
+            const leftInfo = parseBorder(cell.dataset.borderLeft || '');
+            const rightInfo = parseBorder(cell.dataset.borderRight || '');
+
+            const hasLeftNeighbor = col > 0;
+            const hasRightNeighbor = col < this.config.maxCols - 1;
+            const hasAboveNeighbor = row > 0;
+            const hasBelowNeighbor = row < this.config.maxRows - 1;
+
+            // Top edge: draw if present and not duplicated by above cell's bottom
+            let topDrawn = false;
+            if (topInfo) {
+                const above = cellMap.get(`${row - 1},${col}`);
+                const aboveBottom = above ? parseBorder(above.dataset.borderBottom || '') : null;
+                const same = aboveBottom && JSON.stringify(aboveBottom) === JSON.stringify(topInfo);
+                if (!same || !above) {
+                    const w = Math.max(1, Math.round(topInfo.width));
+                    const startExtend = hasLeftNeighbor ? 0 : 1;
+                    const endExtend = hasRightNeighbor ? 0 : 1;
+                    // Extend 1px to the left without moving the right edge
+                    let drawLeft = left - startExtend - 1;
+                    let drawWidth = width + startExtend + endExtend + 1;
+                    if (w === 1) {
+                        const y = top - 1;
+                        addLine(drawLeft, y, drawWidth, 1, topInfo, false, 1);
+                    } else {
+                        const count = (w * 2) - 1;
+                        const center = top - 1;
+                        const startOffset = -((count - 1) / 2);
+                        for (let i = 0; i < count; i++) {
+                            const y = center + startOffset + i;
+                            addLine(drawLeft, y, drawWidth, 1, topInfo, false, 1);
+                        }
+                    }
+                    topDrawn = true;
+                }
+            }
+
+            // Left edge: draw if present and not duplicated by left cell's right
+            let leftDrawn = false;
+            if (leftInfo) {
+                const leftCell = cellMap.get(`${row},${col - 1}`);
+                const leftRight = leftCell ? parseBorder(leftCell.dataset.borderRight || '') : null;
+                const same = leftRight && JSON.stringify(leftRight) === JSON.stringify(leftInfo);
+                if (!same || !leftCell) {
+                    const w = Math.max(1, Math.round(leftInfo.width));
+                    const drawTop = top - 1;
+                    const drawHeight = height + 1;
+                    if (w === 1) {
+                        const x = left - 1;
+                        addLine(x, drawTop, 1, drawHeight, leftInfo, true, 1);
+                    } else {
+                        const count = (w * 2) - 1;
+                        const center = left - 1;
+                        const startOffset = -((count - 1) / 2);
+                        for (let i = 0; i < count; i++) {
+                            const x = center + startOffset + i;
+                            addLine(x, drawTop, 1, drawHeight, leftInfo, true, 1);
+                        }
+                    }
+                    leftDrawn = true;
+                }
+            }
+
+            // Right edge: draw if present and not duplicated by right cell's left
+            let rightDrawn = false;
+            if (rightInfo) {
+                const rightCell = cellMap.get(`${row},${col + 1}`);
+                const rightLeft = rightCell ? parseBorder(rightCell.dataset.borderLeft || '') : null;
+                const same = rightLeft && JSON.stringify(rightLeft) === JSON.stringify(rightInfo);
+                if (!same || !rightCell) {
+                    const w = Math.max(1, Math.round(rightInfo.width));
+                    const center = left + width - 1;
+                    const drawTop = top - 1;
+                    const drawHeight = height + 1;
+                    if (w === 1) {
+                        const x = center;
+                        addLine(x, drawTop, 1, drawHeight, rightInfo, true, 1);
+                    } else {
+                        const count = (w * 2) - 1;
+                        const startOffset = -((count - 1) / 2);
+                        for (let i = 0; i < count; i++) {
+                            const x = center + startOffset + i;
+                            addLine(x, drawTop, 1, drawHeight, rightInfo, true, 1);
+                        }
+                    }
+                    rightDrawn = true;
+                }
+            }
+
+            // Bottom edge: draw if present and not duplicated by below cell's top
+            let bottomDrawn = false;
+            if (bottomInfo) {
+                const below = cellMap.get(`${row + 1},${col}`);
+                const belowTop = below ? parseBorder(below.dataset.borderTop || '') : null;
+                const same = belowTop && JSON.stringify(belowTop) === JSON.stringify(bottomInfo);
+                if (!same || !below) {
+                    const w = Math.max(1, Math.round(bottomInfo.width));
+                    const center = top + height - 1;
+                    const startExtend = hasLeftNeighbor ? 0 : 1;
+                    const endExtend = hasRightNeighbor ? 0 : 1;
+                    // Extend 1px to the left without moving the right edge
+                    const drawLeft = left - startExtend - 1;
+                    const drawWidth = width + startExtend + endExtend + 1;
+                    if (w === 1) {
+                        const y = center;
+                        addLine(drawLeft, y, drawWidth, 1, bottomInfo, false, 1);
+                    } else {
+                        const count = (w * 2) - 1;
+                        const startOffset = -((count - 1) / 2);
+                        for (let i = 0; i < count; i++) {
+                            const y = center + startOffset + i;
+                            addLine(drawLeft, y, drawWidth, 1, bottomInfo, false, 1);
+                        }
+                    }
+                    bottomDrawn = true;
+                }
+            }
+
+            // Corner fills (solid only) at outer edges actually drawn, sized like preview
+            const cornerSize = w => (w <= 1 ? 1 : (Math.round(w) * 2) - 1);
+            const drawCorner = (cx, cy, infoA, infoB) => {
+                const size = cornerSize(Math.max(infoA.width, infoB.width));
+                const half = Math.floor((size - 1) / 2);
+                addLine(cx - half, cy - half, size, size, infoA, false, 1);
+            };
+
+            if (topInfo && leftInfo && topDrawn && leftDrawn && topInfo.style === 'solid' && leftInfo.style === 'solid' && (topInfo.width > 1 || leftInfo.width > 1)) {
+                drawCorner(left - 1, top - 1, topInfo, leftInfo);
+            }
+
+            if (topInfo && rightInfo && topDrawn && rightDrawn && topInfo.style === 'solid' && rightInfo.style === 'solid' && (topInfo.width > 1 || rightInfo.width > 1)) {
+                drawCorner(left + width - 1, top - 1, topInfo, rightInfo);
+            }
+
+            if (bottomInfo && leftInfo && bottomDrawn && leftDrawn && bottomInfo.style === 'solid' && leftInfo.style === 'solid' && (bottomInfo.width > 1 || leftInfo.width > 1)) {
+                drawCorner(left - 1, top + height - 1, bottomInfo, leftInfo);
+            }
+
+            if (bottomInfo && rightInfo && bottomDrawn && rightDrawn && bottomInfo.style === 'solid' && rightInfo.style === 'solid' && (bottomInfo.width > 1 || rightInfo.width > 1)) {
+                drawCorner(left + width - 1, top + height - 1, bottomInfo, rightInfo);
+            }
+
+            // Corner dots for 1px solid borders to avoid missing outer pixels
+            const cornerDot = (cx, cy, infoA, infoB) => {
+                if (infoA.style !== 'solid' || infoB.style !== 'solid') return;
+                if (Math.round(infoA.width) !== 1 || Math.round(infoB.width) !== 1) return;
+                addLine(cx, cy, 1, 1, infoA, false, 1);
+            };
+
+            if (topDrawn && leftDrawn && topInfo && leftInfo) {
+                cornerDot(left - 1, top - 1, topInfo, leftInfo);
+            }
+            if (topDrawn && rightDrawn && topInfo && rightInfo) {
+                cornerDot(left + width - 1, top - 1, topInfo, rightInfo);
+            }
+            if (bottomDrawn && leftDrawn && bottomInfo && leftInfo) {
+                cornerDot(left - 1, top + height - 1, bottomInfo, leftInfo);
+            }
+            if (bottomDrawn && rightDrawn && bottomInfo && rightInfo) {
+                cornerDot(left + width - 1, top + height - 1, bottomInfo, rightInfo);
+            }
+        });
+
+        this.gridContent.appendChild(this.borderOverlayLayer);
+    }
     
     // Convert cell element to coordinate string "row,col"
     getCoord(cell) {
@@ -2946,6 +3193,7 @@ class SpreadsheetApp {
         });
         
         this.updateUI();
+        this.renderBorderOverlays();
     }
 
     // Fixed column numbering: A, B, C, ..., Z, AA, AB, AC, ... 
@@ -3081,6 +3329,7 @@ class SpreadsheetApp {
         }
         
         this.refreshVisibleCellStyles();
+        this.renderBorderOverlays();
         
         // Restore primary cell reference if it's now visible
         if (!this.primaryCell && this.primaryCellCoord) {
@@ -3105,6 +3354,7 @@ class SpreadsheetApp {
             const data = this.cellData.get(`${row},${col}`) || {};
             this.updateCellDisplay(cell, data);
         });
+        this.renderBorderOverlays();
     }
     
     createCell(row, col) {
@@ -6487,10 +6737,18 @@ class SpreadsheetApp {
             false
         );
 
-        cell.style.borderTop = topBorder;
-        cell.style.borderRight = rightBorder;
-        cell.style.borderBottom = bottomBorder;
-        cell.style.borderLeft = leftBorder;
+        // Do not draw applied borders inline to avoid double thickness;
+        // rely on overlay for custom borders.
+        cell.style.borderTop = '';
+        cell.style.borderRight = '';
+        cell.style.borderBottom = '';
+        cell.style.borderLeft = '';
+
+        // Store resolved borders for overlay rendering
+        cell.dataset.borderTop = topBorder || '';
+        cell.dataset.borderRight = rightBorder || '';
+        cell.dataset.borderBottom = bottomBorder || '';
+        cell.dataset.borderLeft = leftBorder || '';
     }
 
     getEffectiveCellWidth(cell, col) {
@@ -8776,6 +9034,8 @@ class SpreadsheetApp {
         adjacentCells.forEach(cell => {
             this.updateCellDisplay(cell, this.cellData.get(this.getCoord(cell)) || {});
         });
+
+        this.renderBorderOverlays();
     }
 
     handleFormulaKeyDown(event) {
