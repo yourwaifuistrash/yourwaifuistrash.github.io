@@ -727,6 +727,14 @@ body { margin: 0; padding: 0; }
   border-color: var(--color-gray-300);
 }
 
+.cell.cut-preview {
+  opacity: 0.25;
+}
+
+.cell.cut-ghost {
+  pointer-events: none;
+}
+
 .cell.editing { 
     padding: 0; 
     overflow: visible !important; 

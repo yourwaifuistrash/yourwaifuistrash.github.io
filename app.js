@@ -5343,7 +5343,8 @@ class SpreadsheetApp {
         addOverlays(this.findContiguousRegions(), 'selection-overlay--active');
 
         if (hasClipboardOverlay) {
-            const cls = this.clipboard.mode === 'cut'
+            const clipboardMode = this.clipboard.visualMode || this.clipboard.mode;
+            const cls = clipboardMode === 'cut'
                 ? 'selection-overlay--clipboard selection-overlay--clipboard-cut'
                 : 'selection-overlay--clipboard';
             addOverlays(this.clipboard.overlayRegions, cls);
@@ -5743,6 +5744,14 @@ class SpreadsheetApp {
             return;
         }
 
+        // Handle Escape to clear cut/copy visuals (including cut ghosts)
+        if (event.key === 'Escape' && this.clipboard && this.clipboard.visualMode === 'cut') {
+            event.preventDefault();
+            this.clearCutCopyStyling();
+            this.clipboard = null;
+            return;
+        }
+
         // Handle Ctrl+Z for undo
         if ((event.ctrlKey || event.metaKey) && event.key === 'z' && !event.shiftKey && !isInInput) {
             event.preventDefault();
@@ -6047,11 +6056,25 @@ class SpreadsheetApp {
     }
     
     clearCutCopyStyling() {
-        document.querySelectorAll('.cell').forEach(cell => {
+        const cells = this.gridContent ? this.gridContent.querySelectorAll('.cell') : [];
+        cells.forEach(cell => {
             cell.style.border = '';
+            if (cell.dataset.cutGhost) {
+                delete cell.dataset.cutGhost;
+            }
+            cell.classList.remove('cut-preview', 'cut-ghost');
+            const coord = this.getCoord(cell);
+            const data = this.cellData.get(coord) || {};
+            this.updateCellDisplay(cell, data);
         });
+
         if (this.clipboard) {
             this.clipboard.overlayRegions = null;
+            this.clipboard.visualMode = null;
+            this.clipboard.mode = null;
+            this.clipboard.sourceCells = null;
+            this.clipboard.data = null;
+            this.clipboard.origin = null;
         }
         this.renderSelectionOverlays();
     }
@@ -6068,7 +6091,9 @@ class SpreadsheetApp {
             data: new Map(),
             mode: isCut ? 'cut' : 'copy',
             sourceCells: isCut ? new Set(this.selectedCellCoords) : null,
-            origin: null
+            origin: null,
+            overlayRegions: null,
+            visualMode: isCut ? 'cut' : 'copy'
         };
 
         const { minRow, minCol } = this._getRelativeCoords();
@@ -6086,6 +6111,9 @@ class SpreadsheetApp {
 
         // Apply visual styling for both cut and copy
         this.clipboard.overlayRegions = this.findContiguousRegions(new Set(this.selectedCellCoords));
+        if (isCut) {
+            this.selectedCells.forEach(cell => cell.classList.add('cut-preview'));
+        }
         this.renderSelectionOverlays();
 
         // Copy to system clipboard
@@ -6121,6 +6149,8 @@ class SpreadsheetApp {
                 const [row, col] = this.parseCoord(coordKey);
                 const cell = this.getCellAt(row, col);
                 if (cell) {
+                    // Preserve visible text as a ghost
+                    cell.dataset.cutGhost = cell.textContent || '';
                     cell.textContent = '';
                     cell.style.backgroundColor = '';
                     cell.style.color = '';
@@ -6130,6 +6160,8 @@ class SpreadsheetApp {
                     cell.classList.remove('bold', 'italic', 'underline', 'strikethrough',
                                         'align-left', 'align-center', 'align-right',
                                         'align-top', 'align-middle', 'align-bottom');
+                    // Re-render to show ghost content with cut styling
+                    this.updateCellDisplay(cell, {});
                 }
             });
 
@@ -6353,11 +6385,17 @@ class SpreadsheetApp {
     updateCellDisplay(cell, d = {}) {
         const coord = this.getCoord(cell);
         const { row, col } = this.getCellPos(cell);
+        const hadCutPreview = cell.classList.contains('cut-preview');
+        const hadCutGhost = cell.classList.contains('cut-ghost');
+        const hasData = d && Object.keys(d).length > 0;
+        const ghostText = !hasData && cell.dataset.cutGhost ? cell.dataset.cutGhost : null;
         
         // Handle display text based on value type
         let displayText = '';
         let isLink = false;
-        if (d.value) {
+        if (ghostText) {
+            displayText = ghostText;
+        } else if (d.value) {
             if (d.value.startsWith("'")) {
                 displayText = d.value.substring(1);
             } else if (d.value.startsWith('=')) {
@@ -6381,7 +6419,15 @@ class SpreadsheetApp {
         this.handleCellOverflow(cell, displayText, d);
         
         const effective = { ...this.defaultCellStyle, ...d };
-        
+
+        // If we now have real data, clear any stale ghost markers
+        if (hasData && cell.dataset.cutGhost) {
+            delete cell.dataset.cutGhost;
+        }
+
+        const keepCutPreview = ghostText || hadCutPreview;
+        const keepCutGhost = ghostText || hadCutGhost;
+
         cell.className = ['cell',
             effective.bold && 'bold',
             effective.italic && 'italic',
@@ -6391,7 +6437,9 @@ class SpreadsheetApp {
             effective.verticalAlign && `align-${effective.verticalAlign}`,
             this.selectedCellCoords.has(coord) && 'selected',
             this.primaryCellCoord === coord && 'primary-selected',
-            isLink && 'cell-link'
+            isLink && 'cell-link',
+            keepCutPreview && 'cut-preview',
+            keepCutGhost && 'cut-ghost'
         ].filter(Boolean).join(' ');
         
         cell.style.backgroundColor = effective.backgroundColor || '';
