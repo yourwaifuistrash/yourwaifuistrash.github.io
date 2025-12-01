@@ -100,7 +100,7 @@ const TOOLBAR_AND_FORMULA_HTML = `
                     <div class="toolbar-profile__avatar" id="codebergAvatar">
                         <span class="toolbar-profile__initials" id="codebergAvatarInitials">CB</span>
                         <img id="codebergAvatarImg" class="toolbar-profile__image hidden" alt="Codeberg avatar">
-                        <span class="toolbar-profile__badge hidden" id="codebergProfileBadge" aria-hidden="true">🌐</span>
+                        <span class="toolbar-profile__badge hidden" id="codebergProfileBadge" aria-hidden="true"></span>
                         <div class="toolbar-profile__repo" id="codebergRepoAvatar">
                             <span class="toolbar-profile__repo-initials" id="codebergRepoAvatarInitials">RP</span>
                             <img id="codebergRepoAvatarImg" class="toolbar-profile__repo-image hidden" alt="Repository avatar">
@@ -628,6 +628,9 @@ class SpreadsheetApp {
         this.codebergProfileName = document.getElementById('codebergProfileName');
         this.codebergProfileHint = document.getElementById('codebergProfileHint');
         this.codebergProfileMeta = document.getElementById('codebergProfileMeta');
+        if (this.codebergProfileMeta) {
+            this.codebergProfileMeta.style.display = 'none';
+        }
         this.codebergRepo = null;
         this.repoConfigPromise = null;
         this.repoConfig = null;
@@ -10172,11 +10175,12 @@ class SpreadsheetApp {
         const repoOwner = repo?.owner || '';
         const isLocal = this.isLikelyLocalhost();
         let userLogin = null;
+        let ownerAvatarUrl = null;
         if (isLocal) {
-        this.applyCodebergAvatar({
-            avatarUrl: this.getPlaceholderAvatarData(),
-            name: repoName || 'Local preview',
-            hint: repoOwner || 'Offline',
+            this.applyCodebergAvatar({
+                avatarUrl: this.getPlaceholderAvatarData(),
+                name: repoName || 'Local preview',
+                hint: repoOwner || 'Offline',
             initialsSource: '',
             statusIcon: null,
             statusTitle: 'Local preview / offline',
@@ -10221,13 +10225,26 @@ class SpreadsheetApp {
         if (!avatarUrl && owner && !isLocal) {
             const ownerProfile = await this.fetchCodebergOwnerProfile(owner);
             if (ownerProfile?.avatarUrl) avatarUrl = ownerProfile.avatarUrl;
+            if (ownerProfile?.avatarUrl) ownerAvatarUrl = ownerProfile.avatarUrl;
             if (!repoName && ownerProfile?.name) name = ownerProfile.name;
             if (ownerProfile?.hint) hint = ownerProfile.hint;
             initialsSource = ownerProfile?.name || initialsSource;
+            if (!avatarUrl) {
+                avatarUrl = this.buildAccountAvatarUrl(owner);
+            }
         }
 
         if (repoName && repoOwner) {
             repoAvatarUrl = await this.fetchRepoAvatar({ owner: repoOwner, repo: repoName });
+            if (!repoAvatarUrl) {
+                repoAvatarUrl = this.buildRepoAvatarUrl({ owner: repoOwner, repo: repoName });
+            }
+        }
+        if (!repoAvatarUrl && ownerAvatarUrl) {
+            repoAvatarUrl = ownerAvatarUrl;
+        }
+        if (!repoAvatarUrl && repoName && repoOwner) {
+            repoAvatarUrl = this.buildRepoAvatarUrl({ owner: repoOwner, repo: repoName });
         }
 
         this.applyCodebergAvatar({
@@ -10291,6 +10308,16 @@ class SpreadsheetApp {
             console.warn('Failed to fetch repo avatar', error);
             return null;
         }
+    }
+
+    buildAccountAvatarUrl(owner) {
+        if (!owner) return null;
+        return `https://codeberg.org/${encodeURIComponent(owner)}.png?size=64`;
+    }
+
+    buildRepoAvatarUrl({ owner, repo }) {
+        if (!owner || !repo) return null;
+        return `https://codeberg.org/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}.png?size=64`;
     }
 
     applyCodebergRepoAvatar({ avatarUrl, repoName, owner, status } = {}) {
@@ -10380,9 +10407,12 @@ class SpreadsheetApp {
                 this.codebergProfileBadge.textContent = statusIcon;
                 this.codebergProfileBadge.title = statusTitle || '';
                 this.codebergProfileBadge.classList.remove('hidden');
+                this.codebergProfileBadge.classList.add('is-visible');
             } else {
                 this.codebergProfileBadge.classList.add('hidden');
+                this.codebergProfileBadge.classList.remove('is-visible');
                 this.codebergProfileBadge.removeAttribute('title');
+                this.codebergProfileBadge.textContent = '';
             }
         }
         if (this.codebergProfileContainer) {
