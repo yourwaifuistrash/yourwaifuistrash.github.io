@@ -560,6 +560,9 @@ class SpreadsheetApp {
         this.customBackgroundColors = [];
         this.customFontColors = [];
         this.customBorderColors = [];
+        this.customColorPickerPointerDown = false;
+        this.customColorPickerReleaseGuard = false;
+        this.customColorPickerReleaseGuardTimer = null;
 
         // Grid data
         this.cellData = new Map();
@@ -4925,6 +4928,18 @@ class SpreadsheetApp {
     handleMouseUp(event) {
         // Stop edge scrolling
         this.stopEdgeScrolling();
+        // Keep custom color picker open if the mouseup happens after dragging outside of it
+        if (this.customColorPickerPointerDown) {
+            this.customColorPickerPointerDown = false;
+            this.customColorPickerReleaseGuard = true;
+            if (this.customColorPickerReleaseGuardTimer) {
+                clearTimeout(this.customColorPickerReleaseGuardTimer);
+            }
+            this.customColorPickerReleaseGuardTimer = setTimeout(() => {
+                this.customColorPickerReleaseGuard = false;
+                this.customColorPickerReleaseGuardTimer = null;
+            }, 0);
+        }
         
         if (this.isResizing) {
             this.isResizing = false;
@@ -7024,7 +7039,8 @@ class SpreadsheetApp {
         const clickedInColorPalette = event.target.closest('#colorPalette');
         const clickedInFontColorPalette = event.target.closest('#fontColorPalette');
         const clickedInPalette = clickedInColorPalette || clickedInFontColorPalette;
-        const clickedInCustomPicker = event.target.closest('.custom-color-picker') || event.target.closest('input[type="color"]');
+        const clickedInCustomPickerElement = event.target.closest('.custom-color-picker') || event.target.closest('input[type="color"]');
+        const clickedInCustomPicker = clickedInCustomPickerElement || this.customColorPickerReleaseGuard;
         const clickedColorButton = event.target.closest('#colorBtn');
         const clickedFontColorButton = event.target.closest('#fontColorBtn');
         
@@ -7050,8 +7066,8 @@ class SpreadsheetApp {
                 this.customColorPickerActive = false;
             }
         } else if (clickedInCustomPicker) {
-            // Clicked in custom picker - do nothing, keep both open
-        } else if (clickedInPalette && !clickedInCustomPicker) {
+            // Clicked in custom picker or just finished a drag there - keep both open
+        } else if (clickedInPalette) {
             // Clicked in palette but not in custom picker - close custom picker only if not clicking the color input
             if (this.customColorPicker && !event.target.closest('input[type="color"]')) {
                 this.customColorPicker.classList.add('hidden');
@@ -7087,8 +7103,7 @@ class SpreadsheetApp {
         }
         
         if (this.customColorPicker && 
-            !event.target.closest('.custom-color-picker') && 
-            !event.target.closest('input[type="color"]')) {
+            !clickedInCustomPicker) {
             this.customColorPicker?.classList.add('hidden');
         }
     }
@@ -7526,6 +7541,11 @@ class SpreadsheetApp {
         `;
 
         document.body.appendChild(picker);
+
+        picker.addEventListener('mousedown', (e) => {
+            if (e.button !== 0) return;
+            this.customColorPickerPointerDown = true;
+        });
 
         // Initialize canvas and event listeners
         this.initCustomColorPicker(picker);
