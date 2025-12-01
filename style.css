@@ -336,6 +336,7 @@ body { margin: 0; padding: 0; }
   display: flex;
   flex-direction: column;
   min-width: 0;
+  display: none;
 }
 
 .toolbar-profile__name {
