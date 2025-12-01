@@ -3531,7 +3531,8 @@ class SpreadsheetApp {
                     this.beginZoomEdit();
                 }
             }],
-            ['#themeToggleBtn', 'click', () => this.toggleTheme()]
+            ['#themeToggleBtn', 'click', () => this.toggleTheme()],
+            [this.codebergProfileContainer, 'click', e => this.handleProfileSignInClick(e)]
         ];
         
         events.forEach(([sel, evt, fn]) => {
@@ -10133,6 +10134,25 @@ class SpreadsheetApp {
         }
         if (!options?.skipProfileRefresh && this.codebergProfileContainer) {
             this.refreshCodebergProfileBadge().catch(err => console.warn('Failed to refresh Codeberg avatar after clearing token', err));
+        }
+    }
+
+    async handleProfileSignInClick(event) {
+        if (event) event.preventDefault();
+        if (this.isLikelyLocalhost()) return;
+        const existing = this.getStoredAccessToken();
+        if (existing?.token) return;
+
+        this.codebergProfileContainer?.classList.add('toolbar-profile--loading');
+        try {
+            const token = await this.ensureAccessToken('create-pr');
+            if (token) {
+                await this.refreshCodebergProfileBadge();
+            }
+        } catch (error) {
+            console.warn('Profile sign-in failed', error);
+        } finally {
+            this.codebergProfileContainer?.classList.remove('toolbar-profile--loading');
         }
     }
 
