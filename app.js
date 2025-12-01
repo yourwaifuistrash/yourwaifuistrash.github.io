@@ -610,6 +610,8 @@ class SpreadsheetApp {
         this.oauthConfig = null;
         this.accessTokenInfo = null;
         this.loadInitialDataFromDOM();
+        this.recomputeColorUsageFromData();
+        this.initialColorUsage = this.cloneColorUsage();
         this.initialMergedCells = this.cloneMergedCellsState();
         this.initialCellData = this.cloneCellData(this.cellData);
         this.initialRowHeights = new Map(this.rowHeights);
@@ -1845,6 +1847,7 @@ class SpreadsheetApp {
     }
 
     markChangesPersisted() {
+        this.initialColorUsage = this.cloneColorUsage();
         this.initialCellData = this.cloneCellData(this.cellData);
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialColumnWidths = new Map(this.columnWidths);
@@ -1910,6 +1913,11 @@ class SpreadsheetApp {
         this.repositionCells();
         this.updateHeaderPositions();
         this.refreshAllVisibleCells();
+        this.refreshColorPalette();
+        this.refreshFontColorPalette();
+        if (typeof this.refreshBorderColorSections === 'function') {
+            this.refreshBorderColorSections();
+        }
         this.markChangesPersisted();
     }
 
@@ -7460,7 +7468,8 @@ class SpreadsheetApp {
         
         // Colors in use section
         const colorsInUse = getColorsInUseFn();
-        if (colorsInUse.length > 0) {
+        const usageHasEntries = (this.colorUsage[this._mapPropToUsageType(type)] || []).length > 0;
+        if (colorsInUse.length > 0 || usageHasEntries) {
             this._appendColorSection(container, 'Colors in use', colorsInUse, applyColorFn, hidePaletteFn, refreshPaletteFn, type);
         }
 
@@ -8028,7 +8037,7 @@ class SpreadsheetApp {
             usageGrid.classList.add('color-section-grid');
             usageGrid.style.marginTop = 'var(--space-4)';
 
-            const usageOrderedColors = this._getUsageOrderedColors(type, colors);
+            const usageOrderedColors = this._getUsageOrderedColors(type, colors, true);
             usageOrderedColors.forEach(color => {
                 const swatch = this._createColorSwatch(color, applyColorFn, hidePaletteFn);
                 usageGrid.appendChild(swatch);
@@ -8101,14 +8110,14 @@ class SpreadsheetApp {
         usageList.unshift(normalized);
     }
 
-    _getUsageOrderedColors(type, colors) {
+    _getUsageOrderedColors(type, colors, includeMissing = false) {
         const usageType = this._mapPropToUsageType(type);
         const usageList = this.colorUsage[usageType] || [];
         const colorSet = new Set(colors.map(c => c.toUpperCase()));
         const ordered = [];
 
         usageList.forEach(c => {
-            if (colorSet.has(c) && !ordered.includes(c)) {
+            if ((includeMissing || colorSet.has(c)) && !ordered.includes(c)) {
                 ordered.push(c);
             }
         });
@@ -8121,6 +8130,21 @@ class SpreadsheetApp {
         });
 
         return ordered;
+    }
+
+    recomputeColorUsageFromData() {
+        const normalize = (list = []) => Array.from(new Set(list.map(c => String(c).toUpperCase())));
+        this.colorUsage.background = normalize(this._getColorsInUse('backgroundColor'));
+        this.colorUsage.font = normalize(this._getColorsInUse('fontColor'));
+        this.colorUsage.border = normalize(this._getColorsInUse('borders'));
+    }
+
+    cloneColorUsage(source = this.colorUsage) {
+        return {
+            background: [...(source?.background || [])],
+            font: [...(source?.font || [])],
+            border: [...(source?.border || [])]
+        };
     }
 
     getBackgroundColorsInUse() { return this._getColorsInUse('backgroundColor'); }
