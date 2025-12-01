@@ -4888,10 +4888,9 @@ class SpreadsheetApp {
         const { row: cellRow, col: cellCol } = this.getCellPos(cell);
         const gridRect = this.mainGrid.getBoundingClientRect();
         const zoom = this.zoomLevel || 1;
-        const offsetX = (event.clientX - gridRect.left) / zoom;
-        const offsetY = (event.clientY - gridRect.top) / zoom;
-        const x = offsetX + this.mainGrid.scrollLeft;
-        const y = offsetY + this.mainGrid.scrollTop;
+        // Translate pointer to unscaled grid coordinates (scroll offsets are in CSS px, so divide by zoom)
+        const x = (event.clientX - gridRect.left + this.mainGrid.scrollLeft) / zoom;
+        const y = (event.clientY - gridRect.top + this.mainGrid.scrollTop) / zoom;
         const actualCol = this.getIndexAtCoordinate(x, this.getColumnWidth, this.config.maxCols);
         const actualRow = this.getIndexAtCoordinate(y, this.getRowHeight, this.config.maxRows);
         console.log(`Mouse over: resolved=${String.fromCharCode(65+cellCol)}${cellRow+1}, actual=${String.fromCharCode(65+actualCol)}${actualRow+1}`);
@@ -5165,10 +5164,9 @@ class SpreadsheetApp {
     getCellFromClientPoint(clientX, clientY) {
         const gridRect = this.mainGrid.getBoundingClientRect();
         const zoom = this.zoomLevel || 1;
-        const offsetX = (clientX - gridRect.left) / zoom;
-        const offsetY = (clientY - gridRect.top) / zoom;
-        const x = offsetX + this.mainGrid.scrollLeft;
-        const y = offsetY + this.mainGrid.scrollTop;
+        // Convert viewport coordinates to unscaled grid space
+        const x = (clientX - gridRect.left + this.mainGrid.scrollLeft) / zoom;
+        const y = (clientY - gridRect.top + this.mainGrid.scrollTop) / zoom;
 
         if (x < 0 || y < 0) {
             return null;
