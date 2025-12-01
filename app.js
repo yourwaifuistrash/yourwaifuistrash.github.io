@@ -7942,6 +7942,13 @@ class SpreadsheetApp {
             applyColorFn(color);
             hidePaletteFn();
         });
+        swatch.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.copyColorToClipboard(color);
+            }
+        });
         return swatch;
     }
 
@@ -7955,6 +7962,15 @@ class SpreadsheetApp {
         swatch.addEventListener('click', () => {
             applyColorFn(color);
             hidePaletteFn();
+        });
+        
+        // Middle click to copy hex
+        swatch.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.copyColorToClipboard(color);
+            }
         });
         
         // Right click to remove color
@@ -8020,6 +8036,29 @@ class SpreadsheetApp {
 
             container.appendChild(usageGrid);
         }
+    }
+
+    copyColorToClipboard(color) {
+        if (!color) return;
+        const text = color.toUpperCase();
+        if (navigator?.clipboard?.writeText) {
+            navigator.clipboard.writeText(text).catch(() => {
+                this._fallbackCopyText(text);
+            });
+        } else {
+            this._fallbackCopyText(text);
+        }
+    }
+
+    _fallbackCopyText(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try { document.execCommand('copy'); } catch (err) { /* no-op */ }
+        document.body.removeChild(textarea);
     }
 
     _getColorsInUse(prop) {
