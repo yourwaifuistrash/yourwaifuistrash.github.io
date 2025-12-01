@@ -3726,38 +3726,8 @@ class SpreadsheetApp {
             });
         });
         
-        // Update visible cells
-        this.selectedCells.forEach(cell => {
-            const cellKey = this.getCoord(cell);
-            const cellData = this.cellData.get(cellKey);
-            this.updateCellDisplay(cell, cellData || {});
-        });
-        
-        // IMPORTANT: Also update adjacent cells to show overlapping borders
-        const adjacentCellsToUpdate = new Set();
-        
-        this.selectedCells.forEach(cell => {
-            const { row, col } = this.getCellPos(cell);
-            
-            // Check adjacent cells
-            const adjacent = [
-                this.getCellAt(row - 1, col), // above
-                this.getCellAt(row + 1, col), // below
-                this.getCellAt(row, col - 1), // left
-                this.getCellAt(row, col + 1)  // right
-            ];
-            
-            adjacent.forEach(adjCell => {
-                if (adjCell) adjacentCellsToUpdate.add(adjCell);
-            });
-        });
-        
-        // Refresh adjacent cells to update their visual borders
-        adjacentCellsToUpdate.forEach(cell => {
-            const cellKey = this.getCoord(cell);
-            const cellData = this.cellData.get(cellKey) || {};
-            this.updateCellDisplay(cell, cellData);
-        });
+        // Refresh painted cells and their neighbors so border overlays update immediately
+        this._updateCellsAndAdjacent(this.selectedCells);
         
         // Refresh color palettes
         this.refreshPalettes();
@@ -6194,6 +6164,8 @@ class SpreadsheetApp {
         this.saveState(`Paste ${this.clipboard.data.size} cells`);
 
         // If it was a cut operation and this is the first paste, clear the original cells
+        const cutCellsToUpdate = new Set();
+
         if (this.clipboard.mode === 'cut' && this.clipboard.sourceCells) {
             this.clipboard.sourceCells.forEach(coordKey => {
                 // Clear the cell data
@@ -6216,6 +6188,7 @@ class SpreadsheetApp {
                                         'align-top', 'align-middle', 'align-bottom');
                     // Re-render to show ghost content with cut styling
                     this.updateCellDisplay(cell, {});
+                    cutCellsToUpdate.add(cell);
                 }
             });
 
@@ -6271,6 +6244,11 @@ class SpreadsheetApp {
         this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
         this.refreshPalettes();
 
+        // Ensure cut origins redraw without stale borders
+        if (cutCellsToUpdate.size) {
+            this._updateCellsAndAdjacent(cutCellsToUpdate);
+        }
+
         // Ensure the pasted range is selected and formula bar shows the latest value immediately
         const newSelection = [];
         this.clipboard.data.forEach((_, relativeKey) => {
@@ -6291,6 +6269,8 @@ class SpreadsheetApp {
                 this.primaryCellCoord = `${firstCell.dataset.row},${firstCell.dataset.col}`;
                 this.updateFormulaBar();
             }
+            
+            this._updateCellsAndAdjacent(newSelection);
         } else {
             this.updateFormulaBar();
         }
