@@ -10153,16 +10153,17 @@ class SpreadsheetApp {
         const isLocal = this.isLikelyLocalhost();
         let userLogin = null;
         if (isLocal) {
-            this.applyCodebergAvatar({
-                avatarUrl: this.getPlaceholderAvatarData(),
-                name: repoName || 'Local preview',
-                hint: repoOwner || 'Offline',
-                initialsSource: '',
-                statusIcon: null,
-                statusTitle: 'Local preview / offline',
-                isLocal: true,
-                hideInitials: true
-            });
+        this.applyCodebergAvatar({
+            avatarUrl: this.getPlaceholderAvatarData(),
+            name: repoName || 'Local preview',
+            hint: repoOwner || 'Offline',
+            initialsSource: '',
+            statusIcon: null,
+            statusTitle: 'Local preview / offline',
+            isLocal: true,
+            hideInitials: true,
+            status: 'offline'
+        });
             this.applyCodebergRepoAvatar({
                 avatarUrl: this.getOfflineRepoAvatarData(),
                 repoName,
@@ -10216,7 +10217,8 @@ class SpreadsheetApp {
             initialsSource,
             statusIcon: null,
             statusTitle: isLocal ? 'Local preview / offline' : '',
-            isLocal
+            isLocal,
+            status: this.resolveProfileStatus({ isLocal, userLogin, repoOwner })
         });
         this.applyCodebergRepoAvatar({
             avatarUrl: repoAvatarUrl,
@@ -10314,7 +10316,14 @@ class SpreadsheetApp {
         return same ? 'user' : 'org';
     }
 
-    applyCodebergAvatar({ avatarUrl, name, hint, initialsSource, statusIcon, statusTitle, isLocal, hideInitials } = {}) {
+    resolveProfileStatus({ isLocal, userLogin, repoOwner }) {
+        if (isLocal) return 'offline';
+        if (userLogin) return 'user';
+        if (repoOwner) return 'org';
+        return null;
+    }
+
+    applyCodebergAvatar({ avatarUrl, name, hint, initialsSource, statusIcon, statusTitle, isLocal, hideInitials, status } = {}) {
         if (!this.codebergProfileContainer) return;
 
         const initials = hideInitials ? '' : this.buildInitials(initialsSource || name || hint || 'CB');
@@ -10358,6 +10367,14 @@ class SpreadsheetApp {
         }
         if (this.codebergProfileContainer) {
             this.codebergProfileContainer.classList.toggle('toolbar-profile--local', Boolean(isLocal));
+        }
+
+        if (this.codebergAvatarImg && this.codebergAvatarImg.parentElement) {
+            const avatar = this.codebergAvatarImg.parentElement;
+            avatar.classList.remove('toolbar-profile__avatar--offline', 'toolbar-profile__avatar--user', 'toolbar-profile__avatar--org');
+            if (status === 'offline') avatar.classList.add('toolbar-profile__avatar--offline');
+            if (status === 'user') avatar.classList.add('toolbar-profile__avatar--user');
+            if (status === 'org') avatar.classList.add('toolbar-profile__avatar--org');
         }
     }
 

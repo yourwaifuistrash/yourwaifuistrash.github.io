@@ -21,6 +21,9 @@
   --color-red-500: #c0152f;
   --color-orange-400: #e68161;
   --color-orange-500: #a84b2f;
+  --repo-status-offline: #cbd5e1;
+  --repo-status-user: #34d399;
+  --repo-status-org: #ef4444;
 
   /* Semantic tokens */
   --color-background: var(--color-cream-50);
@@ -216,11 +219,23 @@ body { margin: 0; padding: 0; }
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--color-bg-1);
-  border: 1px solid var(--color-border);
+  background: transparent;
+  border: 2px solid var(--repo-status-offline);
   overflow: visible;
   flex-shrink: 0;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);
+  box-shadow: none;
+}
+
+.toolbar-profile__avatar--offline {
+  border: 2px solid var(--repo-status-offline);
+}
+
+.toolbar-profile__avatar--user {
+  border: 2px solid var(--repo-status-user);
+}
+
+.toolbar-profile__avatar--org {
+  border: 2px solid var(--repo-status-org);
 }
 
 .toolbar-profile__image {
