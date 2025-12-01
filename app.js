@@ -757,8 +757,26 @@ class SpreadsheetApp {
         }
 
         const cellMap = new Map();
+        const renderCells = new Set();
+        const representativeCells = new Map();
         cells.forEach(cell => {
-            cellMap.set(this.getCoord(cell), cell);
+            const { row, col } = this.getCellPos(cell);
+            const mergeParent = this.getMergeParent(row, col);
+            const mergeKey = mergeParent ? `${mergeParent.row},${mergeParent.col}` : `${row},${col}`;
+            const parentCell = mergeParent ? this.getCellAt(mergeParent.row, mergeParent.col) : null;
+
+            let renderCell = representativeCells.get(mergeKey);
+            if (parentCell && parentCell !== renderCell) {
+                renderCell = parentCell;
+                representativeCells.set(mergeKey, parentCell);
+            }
+            if (!renderCell) {
+                renderCell = cell;
+                representativeCells.set(mergeKey, renderCell);
+            }
+
+            cellMap.set(`${row},${col}`, renderCell);
+            renderCells.add(renderCell);
         });
 
         const parseBorder = (borderStr) => {
@@ -809,24 +827,44 @@ class SpreadsheetApp {
         };
 
         const getCellBounds = (cell, row, col) => {
-            const mergedCols = parseInt(cell.dataset.mergedCols || '1', 10);
-            const mergedRows = parseInt(cell.dataset.mergedRows || '1', 10);
+            let baseRow = row;
+            let baseCol = col;
+            let mergedRows = parseInt(cell.dataset.mergedRows || '1', 10);
+            let mergedCols = parseInt(cell.dataset.mergedCols || '1', 10);
+
+            const mergeParent = this.getMergeParent(row, col);
+            if (mergeParent) {
+                baseRow = mergeParent.row;
+                baseCol = mergeParent.col;
+                const mergeInfo = this.mergedCells.get(`${baseRow},${baseCol}`);
+                if (mergeInfo) {
+                    mergedRows = mergeInfo.rows;
+                    mergedCols = mergeInfo.cols;
+                }
+            }
+
             let width = 0;
             for (let c = 0; c < mergedCols; c++) {
-                width += this.getColumnWidth(col + c);
+                width += this.getColumnWidth(baseCol + c);
             }
             let height = 0;
             for (let r = 0; r < mergedRows; r++) {
-                height += this.getRowHeight(row + r);
+                height += this.getRowHeight(baseRow + r);
             }
-            const left = this.getColumnLeft(col);
-            const top = this.getRowTop(row);
-            return { left, top, width, height };
+            const left = this.getColumnLeft(baseCol);
+            const top = this.getRowTop(baseRow);
+            return { left, top, width, height, mergedRows, mergedCols, baseRow, baseCol };
         };
 
-        cells.forEach(cell => {
-            const { row, col } = this.getCellPos(cell);
-            const { left, top, width, height } = getCellBounds(cell, row, col);
+        renderCells.forEach(cell => {
+            let { row, col } = this.getCellPos(cell);
+            const mergeParent = this.getMergeParent(row, col);
+            if (mergeParent) {
+                row = mergeParent.row;
+                col = mergeParent.col;
+            }
+
+            const { left, top, width, height, mergedRows, mergedCols } = getCellBounds(cell, row, col);
 
             const topInfo = parseBorder(cell.dataset.borderTop || '');
             const bottomInfo = parseBorder(cell.dataset.borderBottom || '');
@@ -834,14 +872,15 @@ class SpreadsheetApp {
             const rightInfo = parseBorder(cell.dataset.borderRight || '');
 
             const hasLeftNeighbor = col > 0;
-            const hasRightNeighbor = col < this.config.maxCols - 1;
+            const hasRightNeighbor = (col + mergedCols - 1) < this.config.maxCols - 1;
             const hasAboveNeighbor = row > 0;
-            const hasBelowNeighbor = row < this.config.maxRows - 1;
+            const hasBelowNeighbor = (row + mergedRows - 1) < this.config.maxRows - 1;
 
             // Top edge: draw if present and not duplicated by above cell's bottom
             let topDrawn = false;
             if (topInfo) {
-                const above = cellMap.get(`${row - 1},${col}`);
+                let above = cellMap.get(`${row - 1},${col}`);
+                if (above === cell) above = null;
                 const aboveBottom = above ? parseBorder(above.dataset.borderBottom || '') : null;
                 const same = aboveBottom && JSON.stringify(aboveBottom) === JSON.stringify(topInfo);
                 if (!same || !above) {
@@ -870,7 +909,8 @@ class SpreadsheetApp {
             // Left edge: draw if present and not duplicated by left cell's right
             let leftDrawn = false;
             if (leftInfo) {
-                const leftCell = cellMap.get(`${row},${col - 1}`);
+                let leftCell = cellMap.get(`${row},${col - 1}`);
+                if (leftCell === cell) leftCell = null;
                 const leftRight = leftCell ? parseBorder(leftCell.dataset.borderRight || '') : null;
                 const same = leftRight && JSON.stringify(leftRight) === JSON.stringify(leftInfo);
                 if (!same || !leftCell) {
@@ -896,7 +936,8 @@ class SpreadsheetApp {
             // Right edge: draw if present and not duplicated by right cell's left
             let rightDrawn = false;
             if (rightInfo) {
-                const rightCell = cellMap.get(`${row},${col + 1}`);
+                let rightCell = cellMap.get(`${row},${col + 1}`);
+                if (rightCell === cell) rightCell = null;
                 const rightLeft = rightCell ? parseBorder(rightCell.dataset.borderLeft || '') : null;
                 const same = rightLeft && JSON.stringify(rightLeft) === JSON.stringify(rightInfo);
                 if (!same || !rightCell) {
@@ -922,7 +963,8 @@ class SpreadsheetApp {
             // Bottom edge: draw if present and not duplicated by below cell's top
             let bottomDrawn = false;
             if (bottomInfo) {
-                const below = cellMap.get(`${row + 1},${col}`);
+                let below = cellMap.get(`${row + 1},${col}`);
+                if (below === cell) below = null;
                 const belowTop = below ? parseBorder(below.dataset.borderTop || '') : null;
                 const same = belowTop && JSON.stringify(belowTop) === JSON.stringify(bottomInfo);
                 if (!same || !below) {
@@ -6479,9 +6521,23 @@ class SpreadsheetApp {
         cell.style.color = effective.fontColor || '';
         cell.style.fontSize = effective.fontSize ? effective.fontSize + 'px' : '';
         
+        const mergeParent = this.getMergeParent(row, col);
+        const borderDataCoord = mergeParent ? `${mergeParent.row},${mergeParent.col}` : coord;
+        const borderData = mergeParent ? (this.cellData.get(borderDataCoord) || d) : d;
+
         const neighborKey = (r, c) => `${r},${c}`;
+        const isSameMerge = (nRow, nCol) => {
+            if (!mergeParent) return false;
+            const neighborParent = this.getMergeParent(nRow, nCol);
+            return neighborParent &&
+                neighborParent.row === mergeParent.row &&
+                neighborParent.col === mergeParent.col;
+        };
         const getNeighborInfo = (nRow, nCol) => {
             if (nRow < 0 || nCol < 0 || nRow >= this.config.maxRows || nCol >= this.config.maxCols) {
+                return { data: null, rendered: false };
+            }
+            if (isSameMerge(nRow, nCol)) {
                 return { data: null, rendered: false };
             }
             return {
@@ -6496,25 +6552,25 @@ class SpreadsheetApp {
         const rightInfo = getNeighborInfo(row, col + 1);
 
         const topBorder = this._resolveSharedBorder(
-            d.borders?.top || '',
+            borderData?.borders?.top || '',
             aboveInfo.data?.borders?.bottom,
             aboveInfo.rendered,
             true
         );
         const bottomBorder = this._resolveSharedBorder(
-            d.borders?.bottom || '',
+            borderData?.borders?.bottom || '',
             belowInfo.data?.borders?.top,
             belowInfo.rendered,
             false
         );
         const leftBorder = this._resolveSharedBorder(
-            d.borders?.left || '',
+            borderData?.borders?.left || '',
             leftInfo.data?.borders?.right,
             leftInfo.rendered,
             true
         );
         const rightBorder = this._resolveSharedBorder(
-            d.borders?.right || '',
+            borderData?.borders?.right || '',
             rightInfo.data?.borders?.left,
             rightInfo.rendered,
             false
@@ -8566,39 +8622,113 @@ class SpreadsheetApp {
         
         // Apply borders to each region independently
         regions.forEach(region => {
-            const { minRow: minR, maxRow: maxR, minCol: minC, maxCol: maxC, cells } = region;
-            
-            const rules = {
-                all: () => ['top', 'right', 'bottom', 'left'],
-                outer: (r, c) => [[r === minR, 'top'], [r === maxR, 'bottom'], [c === minC, 'left'], [c === maxC, 'right']].filter(x => x[0]).map(x => x[1]),
-                inner: (r, c) => [[r > minR, 'top'], [r < maxR, 'bottom'], [c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
-                horizontal: r => [[r > minR, 'top'], [r < maxR, 'bottom']].filter(x => x[0]).map(x => x[1]),
-                vertical: (r, c) => [[c > minC, 'left'], [c < maxC, 'right']].filter(x => x[0]).map(x => x[1]),
-                left: (r, c) => c === minC ? ['left'] : [],
-                right: (r, c) => c === maxC ? ['right'] : [],
-                top: r => r === minR ? ['top'] : [],
-                bottom: r => r === maxR ? ['bottom'] : [],
-                clear: () => null
-            };
-            
+            const { cells } = region;
+
+            // Collapse selected coordinates into visual blocks (merge parents or individual cells)
+            const blocks = new Map();
             cells.forEach(coord => {
                 const { row, col } = this.getCoordPos(coord);
-                this.updateCellDataEntry(coord, data => {
-                    if (action === 'clear') {
-                        delete data.borders;
-                        return;
-                    }
+                const parentCoord = this.cellToMergeParent.get(coord) || (this.mergedCells.has(coord) ? coord : null);
+                const key = parentCoord || coord;
+                if (blocks.has(key)) return;
 
-                    const sides = rules[action](row, col) || [];
-                    if (!sides.length) {
-                        return;
-                    }
-
-                    if (!data.borders) data.borders = {};
-                    sides.forEach(side => {
-                        data.borders[side] = borderVal;
-                    });
+                const mergeInfo = parentCoord ? this.mergedCells.get(parentCoord) : this.mergedCells.get(coord);
+                const [baseRow, baseCol] = parentCoord ? this.parseCoord(parentCoord) : [row, col];
+                blocks.set(key, {
+                    key,
+                    row: baseRow,
+                    col: baseCol,
+                    rows: mergeInfo?.rows || 1,
+                    cols: mergeInfo?.cols || 1
                 });
+            });
+
+            if (action === 'clear') {
+                cells.forEach(coord => {
+                    this.updateCellDataEntry(coord, data => { delete data.borders; });
+                });
+                return;
+            }
+
+            // Region bounds based on visual blocks (respect merged spans)
+            let minRow = Infinity, maxRow = -Infinity, minCol = Infinity, maxCol = -Infinity;
+            blocks.forEach(block => {
+                minRow = Math.min(minRow, block.row);
+                maxRow = Math.max(maxRow, block.row + block.rows - 1);
+                minCol = Math.min(minCol, block.col);
+                maxCol = Math.max(maxCol, block.col + block.cols - 1);
+            });
+
+            const sidesForBlock = (block) => {
+                const topRow = block.row;
+                const bottomRow = block.row + block.rows - 1;
+                const leftCol = block.col;
+                const rightCol = block.col + block.cols - 1;
+
+                switch (action) {
+                    case 'all':
+                        return ['top', 'right', 'bottom', 'left'];
+                    case 'outer':
+                        return [
+                            ...(topRow === minRow ? ['top'] : []),
+                            ...(bottomRow === maxRow ? ['bottom'] : []),
+                            ...(leftCol === minCol ? ['left'] : []),
+                            ...(rightCol === maxCol ? ['right'] : [])
+                        ];
+                    case 'inner':
+                        return [
+                            ...(topRow > minRow ? ['top'] : []),
+                            ...(bottomRow < maxRow ? ['bottom'] : []),
+                            ...(leftCol > minCol ? ['left'] : []),
+                            ...(rightCol < maxCol ? ['right'] : [])
+                        ];
+                    case 'horizontal':
+                        return [
+                            ...(topRow > minRow ? ['top'] : []),
+                            ...(bottomRow < maxRow ? ['bottom'] : [])
+                        ];
+                    case 'vertical':
+                        return [
+                            ...(leftCol > minCol ? ['left'] : []),
+                            ...(rightCol < maxCol ? ['right'] : [])
+                        ];
+                    case 'left':
+                        return leftCol === minCol ? ['left'] : [];
+                    case 'right':
+                        return rightCol === maxCol ? ['right'] : [];
+                    case 'top':
+                        return topRow === minRow ? ['top'] : [];
+                    case 'bottom':
+                        return bottomRow === maxRow ? ['bottom'] : [];
+                    default:
+                        return [];
+                }
+            };
+
+            const clearChildBorders = (block) => {
+                if (block.rows === 1 && block.cols === 1) return;
+                for (let r = block.row; r < block.row + block.rows; r++) {
+                    for (let c = block.col; c < block.col + block.cols; c++) {
+                        const coord = `${r},${c}`;
+                        if (coord === block.key) continue;
+                        this.updateCellDataEntry(coord, data => {
+                            delete data.borders;
+                        });
+                    }
+                }
+            };
+
+            blocks.forEach(block => {
+                const sides = sidesForBlock(block);
+                if (sides.length) {
+                    this.updateCellDataEntry(block.key, data => {
+                        if (!data.borders) data.borders = {};
+                        sides.forEach(side => {
+                            data.borders[side] = borderVal;
+                        });
+                    });
+                }
+                clearChildBorders(block);
             });
         });
         
@@ -8795,6 +8925,9 @@ class SpreadsheetApp {
                 }
             }
         }
+
+        // Ensure border overlay updates right after unmerge
+        this.renderBorderOverlays();
     }
 
     isRectangularSelection(coords, minRow, maxRow, minCol, maxCol) {
@@ -8902,6 +9035,9 @@ class SpreadsheetApp {
                 }
             }
         }
+
+        // Redraw borders immediately so merged areas reflect new geometry
+        this.renderBorderOverlays();
     }
 
     isCellMerged(row, col) {
