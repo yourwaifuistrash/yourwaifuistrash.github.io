@@ -5663,36 +5663,46 @@ class SpreadsheetApp {
     }
 
     stopEditingCell(cancel = false) {
-        if (!this.currentEditingCell) return;
+        const cell = this.currentEditingCell;
+        if (!cell) return;
 
-        const input = this.currentEditingCell.querySelector('.cell-editor');
-        if (!input) return;
+        const input = cell.querySelector('.cell-editor');
+        const oldValue = cell.dataset.originalValue || '';
+        const newValue = cancel ? oldValue : (input ? input.value : oldValue);
 
-        const oldValue = this.currentEditingCell.dataset.originalValue || '';
-        const newValue = cancel ? oldValue : input.value;
+        // Clear reference early to avoid re-entrancy leaving us with a null handle mid-cleanup
+        this.currentEditingCell = null;
 
-        const cellKey = this.getCoord(this.currentEditingCell);
-        const { row, col } = this.getCellPos(this.currentEditingCell);
+        // If the editor vanished (e.g. DOM rebuild) just clean up and bail
+        if (!input) {
+            cell.classList.remove('editing');
+            delete cell.dataset.originalValue;
+            this.formulaInput.value = oldValue;
+            return;
+        }
+
+        const cellKey = this.getCoord(cell);
+        const { row, col } = this.getCellPos(cell);
         
         // Display based on value type
         if (newValue.startsWith("'")) {
             // Escaped text - display without the apostrophe
-            this.currentEditingCell.textContent = newValue.substring(1);
+            cell.textContent = newValue.substring(1);
         } else if (newValue.startsWith('=')) {
             // Formula - display result
             const result = this.parseFormula(newValue, row, col);
-            this.currentEditingCell.textContent = result;
+            cell.textContent = result;
         } else {
             // Regular text
-            this.currentEditingCell.textContent = newValue;
+            cell.textContent = newValue;
         }
         
-        this.currentEditingCell.classList.remove('editing');
-        delete this.currentEditingCell.dataset.originalValue;
+        cell.classList.remove('editing');
+        delete cell.dataset.originalValue;
         
         if (!cancel && oldValue !== newValue) {
             // Save state before making changes
-            this.saveState(`Edit cell ${this.currentEditingCell.dataset.address}`);
+            this.saveState(`Edit cell ${cell.dataset.address}`);
         }
         
         const updatedData = this.updateCellDataEntry(cellKey, data => {
@@ -5707,14 +5717,14 @@ class SpreadsheetApp {
         this.formulaInput.value = newValue;
 
         if (!cancel && oldValue !== newValue) {
-            this.log(`Cell ${this.currentEditingCell.dataset.address} edited: "${oldValue}" → "${newValue}"`);
+            this.log(`Cell ${cell.dataset.address} edited: "${oldValue}" → "${newValue}"`);
             
             // Recalculate all cells that might depend on this cell
             this.recalculateAllFormulas();
         }
         
         // Refresh the cell display to apply overflow logic
-        this.updateCellDisplay(this.currentEditingCell, updatedData || {});
+        this.updateCellDisplay(cell, updatedData || {});
         
         // IMPORTANT: Refresh cells in BOTH directions that might have overflowing text
         // affected by this cell's new content
@@ -5728,8 +5738,6 @@ class SpreadsheetApp {
                 }
             }
         }
-
-        this.currentEditingCell = null;
     }
 
     recalculateAllFormulas() {
