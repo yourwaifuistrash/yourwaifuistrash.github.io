@@ -2116,68 +2116,53 @@ class SpreadsheetApp {
     }
 
     getChangedColumns() {
-        const columns = new Set();
-        const collectKeys = (source) => {
-            if (!source) return;
-            if (source instanceof Map) {
-                source.forEach((_, key) => {
-                    const col = Number(key);
-                    if (Number.isInteger(col)) columns.add(col);
-                });
-            } else if (Array.isArray(source)) {
-                source.forEach(entry => {
-                    if (!entry) return;
-                    const col = Number(entry[0]);
-                    if (Number.isInteger(col)) columns.add(col);
-                });
-            } else {
-                Object.keys(source).forEach(key => {
-                    const col = Number(key);
-                    if (Number.isInteger(col)) columns.add(col);
-                });
-            }
-        };
-
-        collectKeys(this.initialColumnWidths);
-        collectKeys(this.columnWidths);
-
-        return Array.from(columns).filter(col => {
-            const beforeWidth = this.getSnapshotColumnWidth(this.initialColumnWidths, col);
-            const afterWidth = this.getColumnWidth(col);
-            return Math.abs(beforeWidth - afterWidth) >= 0.1;
-        }).sort((a, b) => a - b);
+        return this.getChangedIndices({
+            initial: this.initialColumnWidths,
+            current: this.columnWidths,
+            getSnapshotSize: index => this.getSnapshotColumnWidth(this.initialColumnWidths, index),
+            getSize: index => this.getColumnWidth(index)
+        });
     }
 
     getChangedRows() {
-        const rows = new Set();
+        return this.getChangedIndices({
+            initial: this.initialRowHeights,
+            current: this.rowHeights,
+            getSnapshotSize: index => this.getSnapshotRowHeight(this.initialRowHeights, index),
+            getSize: index => this.getRowHeight(index)
+        });
+    }
+
+    getChangedIndices({ initial, current, getSnapshotSize, getSize }) {
+        const indices = new Set();
         const collectKeys = (source) => {
             if (!source) return;
             if (source instanceof Map) {
                 source.forEach((_, key) => {
-                    const row = Number(key);
-                    if (Number.isInteger(row)) rows.add(row);
+                    const index = Number(key);
+                    if (Number.isInteger(index)) indices.add(index);
                 });
             } else if (Array.isArray(source)) {
                 source.forEach(entry => {
                     if (!entry) return;
-                    const row = Number(entry[0]);
-                    if (Number.isInteger(row)) rows.add(row);
+                    const index = Number(entry[0]);
+                    if (Number.isInteger(index)) indices.add(index);
                 });
             } else {
                 Object.keys(source).forEach(key => {
-                    const row = Number(key);
-                    if (Number.isInteger(row)) rows.add(row);
+                    const index = Number(key);
+                    if (Number.isInteger(index)) indices.add(index);
                 });
             }
         };
 
-        collectKeys(this.initialRowHeights);
-        collectKeys(this.rowHeights);
+        collectKeys(initial);
+        collectKeys(current);
 
-        return Array.from(rows).filter(row => {
-            const beforeHeight = this.getSnapshotRowHeight(this.initialRowHeights, row);
-            const afterHeight = this.getRowHeight(row);
-            return Math.abs(beforeHeight - afterHeight) >= 0.1;
+        return Array.from(indices).filter(index => {
+            const before = getSnapshotSize(index);
+            const after = getSize(index);
+            return Math.abs(before - after) >= 0.1;
         }).sort((a, b) => a - b);
     }
 
