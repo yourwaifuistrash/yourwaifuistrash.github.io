@@ -5378,8 +5378,9 @@ class SpreadsheetApp {
 
         const hasClipboardOverlay = !!(this.clipboard && this.clipboard.overlayRegions && this.clipboard.overlayRegions.length);
         const hasFormatOverlay = !!(this.formatPainter && this.formatPainter.overlayRegions && this.formatPainter.overlayRegions.length);
+        const mergedPassThroughRegions = this.getMergedSelectionPassThroughRegions();
 
-        if (!this.hasSelection() && !hasClipboardOverlay && !hasFormatOverlay) {
+        if (!this.hasSelection() && !hasClipboardOverlay && !hasFormatOverlay && !mergedPassThroughRegions.length) {
             if (this.selectionOverlayLayer.parentNode) {
                 this.selectionOverlayLayer.remove();
             }
@@ -5405,6 +5406,23 @@ class SpreadsheetApp {
                 this.selectionOverlayLayer.appendChild(overlay);
             });
         };
+
+        mergedPassThroughRegions.forEach(({ row, col, rows, cols }) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'selection-overlay selection-overlay--merged-pass';
+
+            const left = this.getColumnLeft(col);
+            const top = this.getRowTop(row);
+            const right = this.getColumnLeft(col + cols);
+            const bottom = this.getRowTop(row + rows);
+
+            overlay.style.left = `${left}px`;
+            overlay.style.top = `${top}px`;
+            overlay.style.width = `${right - left}px`;
+            overlay.style.height = `${bottom - top}px`;
+
+            this.selectionOverlayLayer.appendChild(overlay);
+        });
 
         addOverlays(this.findContiguousRegions(), 'selection-overlay--active');
 
@@ -8807,6 +8825,46 @@ class SpreadsheetApp {
             }
         });
         
+        return regions;
+    }
+
+    // Identify merged cells where the selection covers hidden children via header selections
+    getMergedSelectionPassThroughRegions() {
+        if (!this.hasSelection() || !this.mergedCells.size) return [];
+
+        const regions = [];
+
+        this.mergedCells.forEach((mergeInfo, parentCoord) => {
+            // If the parent is already selected, the normal selection styling is enough
+            if (this.selectedCellCoords.has(parentCoord)) return;
+
+            const [parentRow, parentCol] = this.parseCoord(parentCoord);
+            const selectedParts = [];
+
+            for (let r = 0; r < mergeInfo.rows; r++) {
+                for (let c = 0; c < mergeInfo.cols; c++) {
+                    const row = parentRow + r;
+                    const col = parentCol + c;
+                    const coord = `${row},${col}`;
+                    if (this.selectedCellCoords.has(coord)) selectedParts.push({ row, col });
+                }
+            }
+
+            if (!selectedParts.length) return;
+
+            const minRow = Math.min(...selectedParts.map(item => item.row));
+            const maxRow = Math.max(...selectedParts.map(item => item.row));
+            const minCol = Math.min(...selectedParts.map(item => item.col));
+            const maxCol = Math.max(...selectedParts.map(item => item.col));
+
+            regions.push({
+                row: minRow,
+                col: minCol,
+                rows: maxRow - minRow + 1,
+                cols: maxCol - minCol + 1
+            });
+        });
+
         return regions;
     }
     
