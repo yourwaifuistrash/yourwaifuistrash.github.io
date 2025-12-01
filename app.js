@@ -563,6 +563,11 @@ class SpreadsheetApp {
         this.customColorPickerPointerDown = false;
         this.customColorPickerReleaseGuard = false;
         this.customColorPickerReleaseGuardTimer = null;
+        this.colorUsage = {
+            background: [],
+            font: [],
+            border: []
+        };
 
         // Grid data
         this.cellData = new Map();
@@ -7968,6 +7973,7 @@ class SpreadsheetApp {
     }
     
     _appendColorSection(container, title, colors, applyColorFn, hidePaletteFn, refreshPaletteFn, type) {
+        const isColorsInUseSection = title === 'Colors in use';
         const sectionTitle = document.createElement('div');
         sectionTitle.textContent = title;
         sectionTitle.style.fontSize = 'var(--font-size-xs)';
@@ -7991,6 +7997,29 @@ class SpreadsheetApp {
         });
         
         container.appendChild(grid);
+        
+        if (isColorsInUseSection) {
+            const usageTitle = document.createElement('div');
+            usageTitle.textContent = 'Currently used colors';
+            usageTitle.style.fontSize = 'var(--font-size-xs)';
+            usageTitle.style.color = 'var(--color-text-secondary)';
+            usageTitle.style.marginTop = 'var(--space-12)';
+            usageTitle.style.marginBottom = 'var(--space-4)';
+            usageTitle.style.fontWeight = 'var(--font-weight-medium)';
+            container.appendChild(usageTitle);
+
+            const usageGrid = document.createElement('div');
+            usageGrid.classList.add('color-section-grid');
+            usageGrid.style.marginTop = 'var(--space-4)';
+
+            const usageOrderedColors = this._getUsageOrderedColors(type, colors);
+            usageOrderedColors.forEach(color => {
+                const swatch = this._createColorSwatch(color, applyColorFn, hidePaletteFn);
+                usageGrid.appendChild(swatch);
+            });
+
+            container.appendChild(usageGrid);
+        }
     }
 
     _getColorsInUse(prop) {
@@ -8012,6 +8041,49 @@ class SpreadsheetApp {
         return Array.from(colors).sort();
     }
 
+    _mapPropToUsageType(propOrType) {
+        if (propOrType === 'backgroundColor' || propOrType === 'background') return 'background';
+        if (propOrType === 'fontColor' || propOrType === 'font') return 'font';
+        if (propOrType === 'borders' || propOrType === 'border') return 'border';
+        return 'background';
+    }
+
+    _recordColorUsage(type, color) {
+        if (!color) return;
+        const normalized = String(color).toUpperCase();
+        const usageType = this._mapPropToUsageType(type);
+        const usageList = this.colorUsage[usageType];
+        if (!usageList) return;
+        if (usageList[0] === normalized) return;
+        const existingIdx = usageList.indexOf(normalized);
+        if (existingIdx > -1) {
+            usageList.splice(existingIdx, 1);
+        }
+        usageList.unshift(normalized);
+    }
+
+    _getUsageOrderedColors(type, colors) {
+        const usageType = this._mapPropToUsageType(type);
+        const usageList = this.colorUsage[usageType] || [];
+        const colorSet = new Set(colors.map(c => c.toUpperCase()));
+        const ordered = [];
+
+        usageList.forEach(c => {
+            if (colorSet.has(c) && !ordered.includes(c)) {
+                ordered.push(c);
+            }
+        });
+
+        colors.forEach(c => {
+            const upper = c.toUpperCase();
+            if (!ordered.includes(upper)) {
+                ordered.push(upper);
+            }
+        });
+
+        return ordered;
+    }
+
     getBackgroundColorsInUse() { return this._getColorsInUse('backgroundColor'); }
     getFontColorsInUse() { return this._getColorsInUse('fontColor'); }
     getBorderColorsInUse() { return this._getColorsInUse('borders'); }
@@ -8026,6 +8098,9 @@ class SpreadsheetApp {
 
     _applyColor(prop, styleProp, color, updateFn) {
         if (!this.hasSelection()) return;
+        if (color) {
+            this._recordColorUsage(prop, color);
+        }
         const applyToAll = this.isFullGridSelection();
         this.saveState(`Apply ${prop}${applyToAll ? ' (all cells)' : ''}`);
 
@@ -8672,6 +8747,9 @@ class SpreadsheetApp {
 
     applyBorder(action, style, width, color) {
         if (!this.hasSelection()) return;
+        if (action !== 'clear' && color) {
+            this._recordColorUsage('border', color);
+        }
         this.saveState(`Apply ${action} border`);
         
         const borderVal = action === 'clear' ? '' : `${width} ${style} ${color}`;
