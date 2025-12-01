@@ -1285,35 +1285,17 @@ class SpreadsheetApp {
             }
         });
 
-        this.getChangedColumns().forEach(col => {
-            const beforeSize = {
-                width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
-                height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
-            };
-            const afterSize = {
-                width: this.getColumnWidth(col),
-                height: this.getRowHeight(0)
-            };
-            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
-            sizeChanges.forEach(change => {
-                allLines.push(`~ Column ${this.getColumnName(col)} ${change}`);
+        const appendSizeChangeLines = (kind) => {
+            this.forEachDimensionSizeChange(kind, ({ index, sizeChanges, isColumn }) => {
+                sizeChanges.forEach(change => {
+                    const label = isColumn ? `Column ${this.getColumnName(index)}` : `Row ${index + 1}`;
+                    allLines.push(`~ ${label} ${change}`);
+                });
             });
-        });
+        };
 
-        this.getChangedRows().forEach(row => {
-            const beforeSize = {
-                width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
-                height: this.getSnapshotRowHeight(this.initialRowHeights, row)
-            };
-            const afterSize = {
-                width: this.getColumnWidth(0),
-                height: this.getRowHeight(row)
-            };
-            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
-            sizeChanges.forEach(change => {
-                allLines.push(`~ Row ${row + 1} ${change}`);
-            });
-        });
+        appendSizeChangeLines('column');
+        appendSizeChangeLines('row');
 
         const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
         mergeDiffs.forEach(diff => {
@@ -1424,26 +1406,9 @@ class SpreadsheetApp {
         const entryMap = new Map(entries.map(entry => [entry.coord, entry]));
         const extraEntries = [];
 
-        const appendDimensionChanges = (indices, kind) => {
-            const isColumn = kind === 'column';
-            indices.forEach(index => {
+        const appendDimensionChanges = kind => {
+            this.forEachDimensionSizeChange(kind, ({ index, beforeSize, afterSize, sizeChanges, isColumn }) => {
                 const coordKey = `${kind}:${index}`;
-                const beforeSize = isColumn ? {
-                    width: this.getSnapshotColumnWidth(this.initialColumnWidths, index),
-                    height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
-                } : {
-                    width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
-                    height: this.getSnapshotRowHeight(this.initialRowHeights, index)
-                };
-                const afterSize = isColumn ? {
-                    width: this.getColumnWidth(index),
-                    height: this.getRowHeight(0)
-                } : {
-                    width: this.getColumnWidth(0),
-                    height: this.getRowHeight(index)
-                };
-                const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
-                if (!sizeChanges.length) return;
                 const hasCoordinate = entryMap.has(coordKey);
                 const existing = hasCoordinate ? entryMap.get(coordKey) : null;
                 if (existing) {
@@ -1480,8 +1445,8 @@ class SpreadsheetApp {
             });
         };
 
-        appendDimensionChanges(this.getChangedColumns(), 'column');
-        appendDimensionChanges(this.getChangedRows(), 'row');
+        appendDimensionChanges('column');
+        appendDimensionChanges('row');
 
         const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
         mergeDiffs.forEach(diff => {
@@ -2124,6 +2089,35 @@ class SpreadsheetApp {
             current: this.rowHeights,
             getSnapshotSize: index => this.getSnapshotRowHeight(this.initialRowHeights, index),
             getSize: index => this.getRowHeight(index)
+        });
+    }
+
+    getDimensionSizes(kind, index) {
+        const isColumn = kind === 'column';
+        const beforeSize = isColumn ? {
+            width: this.getSnapshotColumnWidth(this.initialColumnWidths, index),
+            height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
+        } : {
+            width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
+            height: this.getSnapshotRowHeight(this.initialRowHeights, index)
+        };
+        const afterSize = isColumn ? {
+            width: this.getColumnWidth(index),
+            height: this.getRowHeight(0)
+        } : {
+            width: this.getColumnWidth(0),
+            height: this.getRowHeight(index)
+        };
+        return { beforeSize, afterSize, isColumn };
+    }
+
+    forEachDimensionSizeChange(kind, handler) {
+        const indices = kind === 'column' ? this.getChangedColumns() : this.getChangedRows();
+        indices.forEach(index => {
+            const { beforeSize, afterSize, isColumn } = this.getDimensionSizes(kind, index);
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            if (!sizeChanges.length) return;
+            handler({ index, beforeSize, afterSize, sizeChanges, isColumn });
         });
     }
 
