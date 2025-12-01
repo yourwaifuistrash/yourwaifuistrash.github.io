@@ -101,6 +101,10 @@ const TOOLBAR_AND_FORMULA_HTML = `
                         <span class="toolbar-profile__initials" id="codebergAvatarInitials">CB</span>
                         <img id="codebergAvatarImg" class="toolbar-profile__image hidden" alt="Codeberg avatar">
                         <span class="toolbar-profile__badge hidden" id="codebergProfileBadge" aria-hidden="true">🌐</span>
+                        <div class="toolbar-profile__repo" id="codebergRepoAvatar">
+                            <span class="toolbar-profile__repo-initials" id="codebergRepoAvatarInitials">RP</span>
+                            <img id="codebergRepoAvatarImg" class="toolbar-profile__repo-image hidden" alt="Repository avatar">
+                        </div>
                     </div>
                     <div class="toolbar-profile__meta" id="codebergProfileMeta">
                         <div class="toolbar-profile__name" id="codebergProfileName">Codeberg</div>
@@ -618,6 +622,9 @@ class SpreadsheetApp {
         this.codebergAvatarImg = document.getElementById('codebergAvatarImg');
         this.codebergAvatarInitials = document.getElementById('codebergAvatarInitials');
         this.codebergProfileBadge = document.getElementById('codebergProfileBadge');
+        this.codebergRepoAvatar = document.getElementById('codebergRepoAvatar');
+        this.codebergRepoAvatarImg = document.getElementById('codebergRepoAvatarImg');
+        this.codebergRepoAvatarInitials = document.getElementById('codebergRepoAvatarInitials');
         this.codebergProfileName = document.getElementById('codebergProfileName');
         this.codebergProfileHint = document.getElementById('codebergProfileHint');
         this.codebergProfileMeta = document.getElementById('codebergProfileMeta');
@@ -10138,26 +10145,34 @@ class SpreadsheetApp {
         }
 
         const owner = repo?.owner || '';
+        const repoName = repo?.repo || '';
+        const repoOwner = repo?.owner || '';
         const isLocal = this.isLikelyLocalhost();
         if (isLocal) {
             this.applyCodebergAvatar({
                 avatarUrl: this.getPlaceholderAvatarData(),
-                name: 'Local preview',
-                hint: 'Offline',
+                name: repoName || 'Local preview',
+                hint: repoOwner || 'Offline',
                 initialsSource: '',
                 statusIcon: null,
                 statusTitle: 'Local preview / offline',
                 isLocal: true,
                 hideInitials: true
             });
+            this.applyCodebergRepoAvatar({
+                avatarUrl: this.getOfflineRepoAvatarData(),
+                repoName,
+                owner: repoOwner
+            });
             this.codebergProfileContainer.classList.remove('toolbar-profile--loading');
             return;
         }
 
         let avatarUrl = null;
-        let name = owner || 'Codeberg';
-        let hint = owner ? 'Codeberg org' : 'Codeberg';
+        let name = repoName || owner || 'Codeberg';
+        let hint = repoOwner || owner || 'Codeberg';
         let initialsSource = name;
+        let repoAvatarUrl = null;
         const tokenInfo = this.getStoredAccessToken();
 
         if (tokenInfo?.token) {
@@ -10165,8 +10180,7 @@ class SpreadsheetApp {
                 const user = await this.callCodebergApi('/user', tokenInfo.token);
                 if (user) {
                     avatarUrl = user.avatar_url || null;
-                    name = (user.full_name || user.login || name || '').trim() || name;
-                    hint = 'Signed in';
+                    hint = repoOwner || (user.login ? `@${user.login}` : 'Signed in');
                     initialsSource = user.full_name || user.login || name;
                 }
             } catch (error) {
@@ -10180,9 +10194,13 @@ class SpreadsheetApp {
         if (!avatarUrl && owner && !isLocal) {
             const ownerProfile = await this.fetchCodebergOwnerProfile(owner);
             if (ownerProfile?.avatarUrl) avatarUrl = ownerProfile.avatarUrl;
-            if (ownerProfile?.name) name = ownerProfile.name;
+            if (!repoName && ownerProfile?.name) name = ownerProfile.name;
             if (ownerProfile?.hint) hint = ownerProfile.hint;
             initialsSource = ownerProfile?.name || initialsSource;
+        }
+
+        if (repoName && repoOwner) {
+            repoAvatarUrl = await this.fetchRepoAvatar({ owner: repoOwner, repo: repoName });
         }
 
         this.applyCodebergAvatar({
@@ -10193,6 +10211,11 @@ class SpreadsheetApp {
             statusIcon: null,
             statusTitle: isLocal ? 'Local preview / offline' : '',
             isLocal
+        });
+        this.applyCodebergRepoAvatar({
+            avatarUrl: repoAvatarUrl,
+            repoName,
+            owner: repoOwner
         });
         this.codebergProfileContainer.classList.remove('toolbar-profile--loading');
     }
@@ -10223,6 +10246,53 @@ class SpreadsheetApp {
             }
         }
         return null;
+    }
+
+    async fetchRepoAvatar(repo) {
+        if (!repo?.owner || !repo?.repo) return null;
+        const path = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`;
+        try {
+            const response = await fetch(`${CODEBERG_API_BASE}${path}`, {
+                headers: { 'Accept': 'application/json' }
+            });
+            if (!response.ok) return null;
+            const data = await response.json();
+            return data?.avatar_url || null;
+        } catch (error) {
+            console.warn('Failed to fetch repo avatar', error);
+            return null;
+        }
+    }
+
+    applyCodebergRepoAvatar({ avatarUrl, repoName, owner } = {}) {
+        if (!this.codebergRepoAvatar) return;
+
+        const initials = this.buildInitials(repoName || owner || 'RP');
+        const hasRepoInfo = Boolean(repoName || owner || avatarUrl);
+
+        this.codebergRepoAvatar.classList.toggle('hidden', !hasRepoInfo);
+
+        if (this.codebergRepoAvatarInitials) {
+            this.codebergRepoAvatarInitials.textContent = initials;
+            this.codebergRepoAvatarInitials.classList.toggle('hidden', Boolean(avatarUrl));
+        }
+
+        if (this.codebergRepoAvatarImg) {
+            if (avatarUrl) {
+                this.codebergRepoAvatarImg.src = avatarUrl;
+                this.codebergRepoAvatarImg.alt = repoName ? `${repoName} avatar` : 'Repository avatar';
+                this.codebergRepoAvatarImg.classList.remove('hidden');
+            } else {
+                this.codebergRepoAvatarImg.removeAttribute('src');
+                this.codebergRepoAvatarImg.classList.add('hidden');
+            }
+        }
+
+        const labelParts = [];
+        if (repoName) labelParts.push(repoName);
+        if (owner) labelParts.push(owner);
+        const label = labelParts.join(' · ') || 'Repository avatar';
+        this.codebergRepoAvatar.setAttribute('title', label);
     }
 
     applyCodebergAvatar({ avatarUrl, name, hint, initialsSource, statusIcon, statusTitle, isLocal, hideInitials } = {}) {
@@ -10293,8 +10363,14 @@ class SpreadsheetApp {
     }
 
     getPlaceholderAvatarData() {
-        // Offline placeholder using an embedded SVG (no network fetch)
+        // Offline placeholder using an embedded globe SVG (no network fetch)
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><path fill="#006ca2" d="M64 .29C28.87.29.29 28.87.28 64 .29 99.13 28.87 127.71 64 127.71c35.13 0 63.71-28.59 63.71-63.71C127.71 28.87 99.13.29 64 .29zm25.2 84.96c-6.24-1.85-13.4-3.09-21.59-3.38V67.61h24.18c-.26 6.62-1.21 12.45-2.59 17.64zM38.75 42.74c6.26 1.86 13.43 3.11 21.64 3.4v14.25H36.16c.25-6.63 1.2-12.46 2.59-17.65zm-2.53 24.87h24.17v14.25c-8.17.29-15.31 1.52-21.55 3.37-1.4-5.19-2.36-11.01-2.62-17.62zm55.57-7.22H67.61V46.13c8.17-.29 15.31-1.52 21.55-3.37 1.4 5.2 2.37 11.02 2.63 17.63zm28.58 0h-21.3c-.26-7.53-1.35-14.17-2.96-20.05 5.73-2.35 10.52-5.19 14.49-8.17 5.58 8.14 9.1 17.79 9.77 28.22zm-14.23-33.91c-3.39 2.51-7.44 4.93-12.28 6.96-4.3-11.24-10.54-19.06-16.1-24.23 11.15 2.8 20.95 8.95 28.38 17.27zm-19.22 9.4c-5.58 1.64-11.97 2.75-19.31 3.03V10.3c5.43 3.88 13.95 11.8 19.31 25.58zM60.39 10.22v28.69c-7.38-.28-13.82-1.41-19.43-3.07 5.37-13.9 13.96-21.78 19.43-25.62zM50.24 9.21c-5.55 5.17-11.79 12.99-16.09 24.23-4.84-2.03-8.89-4.45-12.28-6.96 7.42-8.32 17.23-14.47 28.37-17.27zM17.41 32.17c3.97 2.97 8.77 5.82 14.49 8.16-1.61 5.88-2.7 12.52-2.96 20.05H7.64c.66-10.42 4.19-20.07 9.77-28.21zm11.53 35.44c.26 7.53 1.36 14.17 2.96 20.06-5.73 2.34-10.52 5.19-14.49 8.16-5.58-8.14-9.11-17.79-9.78-28.22h21.31zm-7.06 33.91c3.38-2.51 7.43-4.92 12.28-6.96 4.3 11.23 10.53 19.06 16.09 24.23-11.15-2.8-20.96-8.95-28.37-17.27zm19.2-9.4c5.58-1.64 11.97-2.75 19.3-3.03v28.62c-5.41-3.88-13.93-11.81-19.3-25.59zm26.53 25.65V89.09c7.37.28 13.79 1.4 19.38 3.05-5.36 13.9-13.91 21.79-19.38 25.63zm10.16 1.02c5.55-5.17 11.79-12.99 16.09-24.23 4.84 2.03 8.89 4.45 12.27 6.96-7.42 8.32-17.22 14.47-28.36 17.27zm32.83-22.96c-3.97-2.97-8.77-5.82-14.49-8.16 1.61-5.89 2.7-12.52 2.96-20.06h21.3c-.66 10.43-4.19 20.08-9.77 28.22z"/></svg>`;
+        return `data:image/svg+xml;base64,${btoa(svg)}`;
+    }
+
+    getOfflineRepoAvatarData() {
+        // No-entry badge for repo overlay in offline mode (data URI)
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="265" height="265" fill-rule="evenodd" viewBox="0 0 265 265"><path d="M251.75 132.5c0-65.86-53.39-119.25-119.25-119.25S13.25 66.64 13.25 132.5 66.64 251.75 132.5 251.75s119.25-53.39 119.25-119.25" fill="#fff"/><path d="M238.369 132.5c0-58.47-47.399-105.869-105.869-105.869a105.42 105.42 0 0 0-67.175 24.04l149.366 148.554c14.802-18.209 23.678-41.429 23.678-66.725zM50.309 65.775c-14.801 18.21-23.678 41.429-23.678 66.725 0 58.47 47.399 105.869 105.869 105.869 25.503 0 48.899-9.019 67.175-24.04zM265 132.5C265 59.322 205.678 0 132.5 0S0 59.322 0 132.5 59.322 265 132.5 265 265 205.678 265 132.5" fill="#b71f2e"/></svg>`;
         return `data:image/svg+xml;base64,${btoa(svg)}`;
     }
 
