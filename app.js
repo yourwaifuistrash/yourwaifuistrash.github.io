@@ -96,6 +96,16 @@ const TOOLBAR_AND_FORMULA_HTML = `
                 <button class="btn btn--sm toolbar-btn toolbar-btn--theme" id="themeToggleBtn" title="Toggle theme">
                     <span id="themeToggleIcon">🌙</span>
                 </button>
+                <div class="toolbar-profile" id="codebergProfile" title="Codeberg profile">
+                    <div class="toolbar-profile__avatar" id="codebergAvatar">
+                        <span class="toolbar-profile__initials" id="codebergAvatarInitials">CB</span>
+                        <img id="codebergAvatarImg" class="toolbar-profile__image hidden" alt="Codeberg avatar">
+                    </div>
+                    <div class="toolbar-profile__meta">
+                        <div class="toolbar-profile__name" id="codebergProfileName">Codeberg</div>
+                        <div class="toolbar-profile__hint" id="codebergProfileHint">Not signed in</div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -603,6 +613,11 @@ class SpreadsheetApp {
         this.fontColorPalette = document.getElementById('fontColorPalette');
         this.linkEditor = document.getElementById('linkEditor');
         this.borderMenu = document.getElementById('borderMenu');
+        this.codebergProfileContainer = document.getElementById('codebergProfile');
+        this.codebergAvatarImg = document.getElementById('codebergAvatarImg');
+        this.codebergAvatarInitials = document.getElementById('codebergAvatarInitials');
+        this.codebergProfileName = document.getElementById('codebergProfileName');
+        this.codebergProfileHint = document.getElementById('codebergProfileHint');
         this.codebergRepo = null;
         this.repoConfigPromise = null;
         this.repoConfig = null;
@@ -716,6 +731,9 @@ class SpreadsheetApp {
         this.formulaSuggestionState = this.createDefaultFormulaSuggestionState();
 
         this.init();
+        this.refreshCodebergProfileBadge().catch(error => {
+            console.warn('Failed to load Codeberg profile avatar', error);
+        });
     }
 
     init() {
@@ -10088,15 +10106,147 @@ class SpreadsheetApp {
         } catch (error) {
             console.warn('Failed to persist OAuth token', error);
         }
+        if (this.codebergProfileContainer) {
+            this.refreshCodebergProfileBadge().catch(err => console.warn('Failed to refresh Codeberg avatar after storing token', err));
+        }
     }
 
-    clearStoredAccessToken() {
+    clearStoredAccessToken(options = {}) {
         this.accessTokenInfo = null;
         try {
             localStorage.removeItem('codeberg-oauth-token');
         } catch (error) {
             console.warn('Failed to clear OAuth token', error);
         }
+        if (!options?.skipProfileRefresh && this.codebergProfileContainer) {
+            this.refreshCodebergProfileBadge().catch(err => console.warn('Failed to refresh Codeberg avatar after clearing token', err));
+        }
+    }
+
+    async refreshCodebergProfileBadge() {
+        if (!this.codebergProfileContainer) return;
+
+        this.codebergProfileContainer.classList.add('toolbar-profile--loading');
+        let repo = null;
+        try {
+            repo = await this.resolveCodebergRepo();
+        } catch (error) {
+            console.warn('Failed to resolve Codeberg repo for avatar', error);
+        }
+
+        const owner = repo?.owner || '';
+        let avatarUrl = null;
+        let name = owner || 'Codeberg';
+        let hint = owner ? 'Codeberg org' : 'Codeberg';
+        let initialsSource = name;
+        const tokenInfo = this.getStoredAccessToken();
+
+        if (tokenInfo?.token) {
+            try {
+                const user = await this.callCodebergApi('/user', tokenInfo.token);
+                if (user) {
+                    avatarUrl = user.avatar_url || null;
+                    name = (user.full_name || user.login || name || '').trim() || name;
+                    hint = 'Signed in';
+                    initialsSource = user.full_name || user.login || name;
+                }
+            } catch (error) {
+                console.warn('Failed to load Codeberg user profile', error);
+                if (`${error?.message || ''}`.includes('401')) {
+                    this.clearStoredAccessToken({ skipProfileRefresh: true });
+                }
+            }
+        }
+
+        if (!avatarUrl && owner) {
+            const ownerProfile = await this.fetchCodebergOwnerProfile(owner);
+            if (ownerProfile?.avatarUrl) avatarUrl = ownerProfile.avatarUrl;
+            if (ownerProfile?.name) name = ownerProfile.name;
+            if (ownerProfile?.hint) hint = ownerProfile.hint;
+            initialsSource = ownerProfile?.name || initialsSource;
+        }
+
+        this.applyCodebergAvatar({
+            avatarUrl,
+            name,
+            hint,
+            initialsSource
+        });
+        this.codebergProfileContainer.classList.remove('toolbar-profile--loading');
+    }
+
+    async fetchCodebergOwnerProfile(owner) {
+        if (!owner) return null;
+        const endpoints = [
+            { path: `/orgs/${encodeURIComponent(owner)}`, hint: 'Codeberg org' },
+            { path: `/users/${encodeURIComponent(owner)}`, hint: 'Codeberg user' }
+        ];
+
+        for (const endpoint of endpoints) {
+            try {
+                const response = await fetch(`${CODEBERG_API_BASE}${endpoint.path}`, {
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!response.ok) continue;
+                const data = await response.json();
+                const avatarUrl = data?.avatar_url || null;
+                const displayName = (data?.full_name || data?.username || data?.login || owner || '').trim() || owner;
+                return {
+                    avatarUrl,
+                    name: displayName,
+                    hint: endpoint.hint
+                };
+            } catch (error) {
+                console.warn('Failed to fetch Codeberg owner profile', error);
+            }
+        }
+        return null;
+    }
+
+    applyCodebergAvatar({ avatarUrl, name, hint, initialsSource } = {}) {
+        if (!this.codebergProfileContainer) return;
+
+        const initials = this.buildInitials(initialsSource || name || hint || 'CB');
+
+        if (this.codebergAvatarInitials) {
+            this.codebergAvatarInitials.textContent = initials;
+            this.codebergAvatarInitials.classList.toggle('hidden', Boolean(avatarUrl));
+        }
+
+        if (this.codebergAvatarImg) {
+            if (avatarUrl) {
+                this.codebergAvatarImg.src = avatarUrl;
+                this.codebergAvatarImg.alt = name ? `${name} avatar` : 'Codeberg avatar';
+                this.codebergAvatarImg.classList.remove('hidden');
+            } else {
+                this.codebergAvatarImg.removeAttribute('src');
+                this.codebergAvatarImg.classList.add('hidden');
+            }
+        }
+
+        if (this.codebergProfileName) {
+            this.codebergProfileName.textContent = name || 'Codeberg';
+        }
+        if (this.codebergProfileHint) {
+            this.codebergProfileHint.textContent = hint || '';
+        }
+
+        const label = name || hint || 'Codeberg profile';
+        this.codebergProfileContainer.setAttribute('title', label);
+    }
+
+    buildInitials(source) {
+        const safe = `${source ?? ''}`.trim();
+        if (!safe) return 'CB';
+        const parts = safe.split(/\s+/).filter(Boolean);
+        if (!parts.length) return 'CB';
+        if (parts.length === 1) {
+            return parts[0].slice(0, 2).toUpperCase() || 'CB';
+        }
+        const first = parts[0][0] || '';
+        const last = parts[parts.length - 1][0] || '';
+        const initials = `${first}${last}`.toUpperCase();
+        return initials || 'CB';
     }
 
     buildCodebergIssueUrl(repo, diffText, diffTruncated) {
