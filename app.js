@@ -1430,88 +1430,52 @@ class SpreadsheetApp {
         const entryMap = new Map(entries.map(entry => [entry.coord, entry]));
         const extraEntries = [];
 
-        this.getChangedColumns().forEach(col => {
-            const coordKey = `column:${col}`;
-            const beforeSize = {
-                width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
-                height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
-            };
-            const afterSize = {
-                width: this.getColumnWidth(col),
-                height: this.getRowHeight(0)
-            };
-            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
-            if (!sizeChanges.length) return;
-            const hasCoordinate = entryMap.has(coordKey);
-            const existing = hasCoordinate ? entryMap.get(coordKey) : null;
-            if (existing) {
-                existing.beforeSize = existing.beforeSize || beforeSize;
-                existing.afterSize = existing.afterSize || afterSize;
-                existing.changes = Array.isArray(existing.changes) ? existing.changes : [];
-                sizeChanges.forEach(change => {
-                    if (!existing.changes.includes(change)) existing.changes.push(change);
-                });
-            } else {
-                total += 1;
-                if (entries.length + extraEntries.length < maxEntries) {
-                    const entry = {
-                        coord: coordKey,
-                        row: 0,
-                        col,
-                        address: this.getCellAddress(0, col),
-                        changeType: 'modified',
-                        before: null,
-                        after: null,
-                        beforeSize,
-                        afterSize,
-                        changes: sizeChanges,
-                        meta: { kind: 'column', index: col }
-                    };
-                    extraEntries.push(entry);
-                    entryMap.set(coordKey, entry);
-                } else {
-                    truncated = true;
-                    entryMap.set(coordKey, null);
+        const appendDimensionChanges = (indices, kind) => {
+            const isColumn = kind === 'column';
+            indices.forEach(index => {
+                const coordKey = `${kind}:${index}`;
+                const beforeSize = isColumn ? {
+                    width: this.getSnapshotColumnWidth(this.initialColumnWidths, index),
+                    height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
+                } : {
+                    width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
+                    height: this.getSnapshotRowHeight(this.initialRowHeights, index)
+                };
+                const afterSize = isColumn ? {
+                    width: this.getColumnWidth(index),
+                    height: this.getRowHeight(0)
+                } : {
+                    width: this.getColumnWidth(0),
+                    height: this.getRowHeight(index)
+                };
+                const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+                if (!sizeChanges.length) return;
+                const hasCoordinate = entryMap.has(coordKey);
+                const existing = hasCoordinate ? entryMap.get(coordKey) : null;
+                if (existing) {
+                    existing.beforeSize = existing.beforeSize || beforeSize;
+                    existing.afterSize = existing.afterSize || afterSize;
+                    existing.changes = Array.isArray(existing.changes) ? existing.changes : [];
+                    sizeChanges.forEach(change => {
+                        if (!existing.changes.includes(change)) existing.changes.push(change);
+                    });
+                    return;
                 }
-            }
-        });
 
-        this.getChangedRows().forEach(row => {
-            const coordKey = `row:${row}`;
-            const beforeSize = {
-                width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
-                height: this.getSnapshotRowHeight(this.initialRowHeights, row)
-            };
-            const afterSize = {
-                width: this.getColumnWidth(0),
-                height: this.getRowHeight(row)
-            };
-            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
-            if (!sizeChanges.length) return;
-            const hasCoordinate = entryMap.has(coordKey);
-            const existing = hasCoordinate ? entryMap.get(coordKey) : null;
-            if (existing) {
-                existing.beforeSize = existing.beforeSize || beforeSize;
-                existing.afterSize = existing.afterSize || afterSize;
-                existing.changes = Array.isArray(existing.changes) ? existing.changes : [];
-                sizeChanges.forEach(change => {
-                    if (!existing.changes.includes(change)) existing.changes.push(change);
-                });
-            } else {
                 total += 1;
                 if (entries.length + extraEntries.length < maxEntries) {
                     const entry = {
                         coord: coordKey,
-                        row,
-                        col: 0,
-                        address: this.getCellAddress(row, 0),
+                        row: isColumn ? 0 : index,
+                        col: isColumn ? index : 0,
+                        address: this.getCellAddress(isColumn ? 0 : index, isColumn ? index : 0),
                         changeType: 'modified',
                         before: null,
                         after: null,
                         beforeSize,
                         afterSize,
                         changes: sizeChanges,
-                        meta: { kind: 'row', index: row }
+                        meta: { kind, index }
                     };
                     extraEntries.push(entry);
                     entryMap.set(coordKey, entry);
@@ -1519,8 +1483,11 @@ class SpreadsheetApp {
                     truncated = true;
                     entryMap.set(coordKey, null);
                 }
-            }
-        });
+            });
+        };
+
+        appendDimensionChanges(this.getChangedColumns(), 'column');
+        appendDimensionChanges(this.getChangedRows(), 'row');
 
         const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
         mergeDiffs.forEach(diff => {
