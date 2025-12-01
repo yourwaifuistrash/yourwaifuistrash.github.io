@@ -783,11 +783,20 @@ class SpreadsheetApp {
             line.style.height = `${h}px`;
 
             if (info.style === 'dashed') {
-                const dash = sw * 2;
+                const dash = sw * 3;
+                const gap = sw * 2;
                 if (isVertical) {
-                    line.style.backgroundImage = `repeating-linear-gradient(to bottom, ${info.color} 0, ${info.color} ${sw}px, transparent ${sw}px, transparent ${dash}px)`;
+                    line.style.backgroundImage = `repeating-linear-gradient(to bottom, ${info.color} 0, ${info.color} ${dash}px, transparent ${dash}px, transparent ${dash + gap}px)`;
                 } else {
-                    line.style.backgroundImage = `repeating-linear-gradient(to right, ${info.color} 0, ${info.color} ${sw}px, transparent ${sw}px, transparent ${dash}px)`;
+                    line.style.backgroundImage = `repeating-linear-gradient(to right, ${info.color} 0, ${info.color} ${dash}px, transparent ${dash}px, transparent ${dash + gap}px)`;
+                }
+            } else if (info.style === 'dotted') {
+                const dot = sw;
+                const gap = Math.max(dot + 1, Math.round(sw * 2));
+                if (isVertical) {
+                    line.style.backgroundImage = `repeating-linear-gradient(to bottom, ${info.color} 0, ${info.color} ${dot}px, transparent ${dot}px, transparent ${dot + gap}px)`;
+                } else {
+                    line.style.backgroundImage = `repeating-linear-gradient(to right, ${info.color} 0, ${info.color} ${dot}px, transparent ${dot}px, transparent ${dot + gap}px)`;
                 }
             } else {
                 line.style.background = info.color;
