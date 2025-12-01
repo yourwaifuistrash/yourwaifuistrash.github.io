@@ -255,13 +255,25 @@ body { margin: 0; padding: 0; }
   height: 18px;
   border-radius: 50%;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 2px solid var(--color-border);
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
   z-index: 2;
+}
+
+.toolbar-profile__repo--offline {
+  border-color: #cbd5e1;
+}
+
+.toolbar-profile__repo--user {
+  border-color: #34d399;
+}
+
+.toolbar-profile__repo--org {
+  border-color: #ef4444;
 }
 
 .toolbar-profile__repo-image {

@@ -664,6 +664,7 @@ class SpreadsheetApp {
         this.hasRestoredDraft = false;
         this.hasAutoPersistedBaseline = false;
         this.userMadeChanges = false;
+        this.currentUserLogin = null;
         this.restoreDraftIfAvailable();
         this.updateSaveIndicator(false);
         this.updateDirtyState({ persist: false });
@@ -10111,6 +10112,7 @@ class SpreadsheetApp {
 
     storeAccessToken(info) {
         this.accessTokenInfo = info;
+        this.currentUserLogin = info?.userLogin || this.currentUserLogin;
         try {
             localStorage.setItem('codeberg-oauth-token', JSON.stringify(info));
         } catch (error) {
@@ -10123,6 +10125,7 @@ class SpreadsheetApp {
 
     clearStoredAccessToken(options = {}) {
         this.accessTokenInfo = null;
+        this.currentUserLogin = null;
         try {
             localStorage.removeItem('codeberg-oauth-token');
         } catch (error) {
@@ -10148,6 +10151,7 @@ class SpreadsheetApp {
         const repoName = repo?.repo || '';
         const repoOwner = repo?.owner || '';
         const isLocal = this.isLikelyLocalhost();
+        let userLogin = null;
         if (isLocal) {
             this.applyCodebergAvatar({
                 avatarUrl: this.getPlaceholderAvatarData(),
@@ -10182,6 +10186,8 @@ class SpreadsheetApp {
                     avatarUrl = user.avatar_url || null;
                     hint = repoOwner || (user.login ? `@${user.login}` : 'Signed in');
                     initialsSource = user.full_name || user.login || name;
+                    userLogin = user.login || null;
+                    this.currentUserLogin = userLogin;
                 }
             } catch (error) {
                 console.warn('Failed to load Codeberg user profile', error);
@@ -10215,7 +10221,8 @@ class SpreadsheetApp {
         this.applyCodebergRepoAvatar({
             avatarUrl: repoAvatarUrl,
             repoName,
-            owner: repoOwner
+            owner: repoOwner,
+            status: this.resolveRepoBadgeStatus({ isLocal, repoOwner, userLogin })
         });
         this.codebergProfileContainer.classList.remove('toolbar-profile--loading');
     }
@@ -10264,13 +10271,17 @@ class SpreadsheetApp {
         }
     }
 
-    applyCodebergRepoAvatar({ avatarUrl, repoName, owner } = {}) {
+    applyCodebergRepoAvatar({ avatarUrl, repoName, owner, status } = {}) {
         if (!this.codebergRepoAvatar) return;
 
         const initials = this.buildInitials(repoName || owner || 'RP');
         const hasRepoInfo = Boolean(repoName || owner || avatarUrl);
 
         this.codebergRepoAvatar.classList.toggle('hidden', !hasRepoInfo);
+        this.codebergRepoAvatar.classList.remove('toolbar-profile__repo--offline', 'toolbar-profile__repo--user', 'toolbar-profile__repo--org');
+        if (status === 'offline') this.codebergRepoAvatar.classList.add('toolbar-profile__repo--offline');
+        if (status === 'user') this.codebergRepoAvatar.classList.add('toolbar-profile__repo--user');
+        if (status === 'org') this.codebergRepoAvatar.classList.add('toolbar-profile__repo--org');
 
         if (this.codebergRepoAvatarInitials) {
             this.codebergRepoAvatarInitials.textContent = initials;
@@ -10293,6 +10304,14 @@ class SpreadsheetApp {
         if (owner) labelParts.push(owner);
         const label = labelParts.join(' · ') || 'Repository avatar';
         this.codebergRepoAvatar.setAttribute('title', label);
+    }
+
+    resolveRepoBadgeStatus({ isLocal, repoOwner, userLogin }) {
+        if (isLocal) return 'offline';
+        if (!repoOwner) return null;
+        if (!userLogin) return null;
+        const same = repoOwner.toLowerCase() === userLogin.toLowerCase();
+        return same ? 'user' : 'org';
     }
 
     applyCodebergAvatar({ avatarUrl, name, hint, initialsSource, statusIcon, statusTitle, isLocal, hideInitials } = {}) {
