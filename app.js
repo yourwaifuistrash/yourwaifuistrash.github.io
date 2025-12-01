@@ -10148,7 +10148,7 @@ class SpreadsheetApp {
 
         this.codebergProfileContainer?.classList.add('toolbar-profile--loading');
         try {
-            const token = await this.ensureAccessToken('create-pr');
+            const token = await this.ensureAccessToken('login');
             if (token) {
                 await this.refreshCodebergProfileBadge();
             }
