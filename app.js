@@ -1839,8 +1839,7 @@ class SpreadsheetApp {
         this.repositionCells();
         this.updateHeaderPositions();
         this.refreshAllVisibleCells();
-        this.refreshColorPalette();
-        this.refreshFontColorPalette();
+        this.refreshPalettes();
         if (typeof this.refreshBorderColorSections === 'function') {
             this.refreshBorderColorSections();
         }
@@ -3117,8 +3116,7 @@ class SpreadsheetApp {
         this.updateUndoRedoButtons();
         
         // Refresh both color palettes to update "colors in use"
-        this.refreshColorPalette();
-        this.refreshFontColorPalette();
+        this.refreshPalettes();
         this.updateDirtyState();
     }
 
@@ -3136,8 +3134,7 @@ class SpreadsheetApp {
         this.updateUndoRedoButtons();
         
         // Refresh both color palettes to update "colors in use"
-        this.refreshColorPalette();
-        this.refreshFontColorPalette();
+        this.refreshPalettes();
         this.updateDirtyState();
     }
 
@@ -3763,8 +3760,7 @@ class SpreadsheetApp {
         });
         
         // Refresh color palettes
-        this.refreshColorPalette();
-        this.refreshFontColorPalette();
+        this.refreshPalettes();
         
         // Deactivate after single use
         this.deactivateFormatPainter();
@@ -6440,8 +6436,7 @@ class SpreadsheetApp {
         });
 
         this.log(`Pasted ${this.clipboard.data.size} cells at ${this.primaryCell.dataset.address}`);
-        this.refreshColorPalette();
-        this.refreshFontColorPalette();
+        this.refreshPalettes();
 
         // Ensure the pasted range is selected and formula bar shows the latest value immediately
         const newSelection = [];
@@ -6976,8 +6971,7 @@ class SpreadsheetApp {
         this.updateUI();
         
         // Refresh both color palettes to update "colors in use"
-        this.refreshColorPalette();
-        this.refreshFontColorPalette();
+        this.refreshPalettes();
         
         this.log(`Cleared formatting from ${this.selectedCellCoords.size} cells`);
     }
@@ -7182,10 +7176,10 @@ class SpreadsheetApp {
             'colorPaletteGrid',
             'background',
             this.customBackgroundColors,
-            this.getBackgroundColorsInUse.bind(this),
+            () => this._getColorsInUse('backgroundColor'),
             this.applyBackgroundColor.bind(this),
             this.hideColorPalette.bind(this),
-            this.refreshColorPalette.bind(this)
+            this.setupColorPalette.bind(this)
         );
     }
 
@@ -7194,10 +7188,10 @@ class SpreadsheetApp {
             'fontColorPaletteGrid',
             'font',
             this.customFontColors,
-            this.getFontColorsInUse.bind(this),
+            () => this._getColorsInUse('fontColor'),
             this.applyFontColor.bind(this),
             this.hideFontColorPalette.bind(this),
-            this.refreshFontColorPalette.bind(this)
+            this.setupFontColorPalette.bind(this)
         );
     }
 
@@ -8091,11 +8085,8 @@ class SpreadsheetApp {
     getFontColorsInUse() { return this._getColorsInUse('fontColor'); }
     getBorderColorsInUse() { return this._getColorsInUse('borders'); }
     
-    refreshColorPalette() {
+    refreshPalettes() {
         this.setupColorPalette();
-    }
-
-    refreshFontColorPalette() {
         this.setupFontColorPalette();
     }
 
@@ -8138,11 +8129,11 @@ class SpreadsheetApp {
 
     applyBackgroundColor(c) { 
         this._applyColor('backgroundColor', 'backgroundColor', c, this.updateBackgroundColorButton); 
-        this.refreshColorPalette();
+        this.setupColorPalette();
     }
     applyFontColor(c) { 
         this._applyColor('fontColor', 'color', c, this.updateFontColorButton); 
-        this.refreshFontColorPalette();
+        this.setupFontColorPalette();
     }
     
     _getCommonCellProperty(property) {
