@@ -713,13 +713,7 @@ class SpreadsheetApp {
         this.formulaFunctionOps = Object.fromEntries(this.formulaFunctions.map(fn => [fn.name, fn.evaluate]));
 
         this.formulaSuggestionsPanel = document.getElementById('formulaSuggestions');
-        this.formulaSuggestionState = {
-            items: [],
-            activeIndex: -1,
-            token: null,
-            hint: null,
-            visible: false
-        };
+        this.formulaSuggestionState = this.createDefaultFormulaSuggestionState();
 
         this.init();
     }
@@ -9370,13 +9364,7 @@ class SpreadsheetApp {
 
     hideFormulaSuggestions() {
         if (!this.formulaSuggestionsPanel) return;
-        this.formulaSuggestionState = {
-            items: [],
-            activeIndex: -1,
-            token: null,
-            hint: null,
-            visible: false
-        };
+        this.formulaSuggestionState = this.createDefaultFormulaSuggestionState();
         this.formulaSuggestionsPanel.classList.add('hidden');
         this.formulaSuggestionsPanel.innerHTML = '';
     }
@@ -9394,6 +9382,16 @@ class SpreadsheetApp {
     applyActiveSuggestion() {
         if (this.formulaSuggestionState.activeIndex < 0) return;
         this.applyFormulaSuggestion(this.formulaSuggestionState.activeIndex);
+    }
+
+    createDefaultFormulaSuggestionState() {
+        return {
+            items: [],
+            activeIndex: -1,
+            token: null,
+            hint: null,
+            visible: false
+        };
     }
 
     applyFormulaSuggestion(index) {
