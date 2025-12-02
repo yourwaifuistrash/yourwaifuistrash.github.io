@@ -101,9 +101,9 @@ const TOOLBAR_AND_FORMULA_HTML = `
                         <span class="toolbar-profile__initials" id="codebergAvatarInitials">CB</span>
                         <img id="codebergAvatarImg" class="toolbar-profile__image hidden" alt="Codeberg avatar">
                         <span class="toolbar-profile__badge hidden" id="codebergProfileBadge" aria-hidden="true"></span>
-                        <div class="toolbar-profile__repo" id="codebergRepoAvatar">
-                            <span class="toolbar-profile__repo-initials" id="codebergRepoAvatarInitials">RP</span>
-                            <img id="codebergRepoAvatarImg" class="toolbar-profile__repo-image hidden" alt="Repository avatar">
+                        <div class="toolbar-profile__repo" id="codebergOrgAvatar">
+                            <span class="toolbar-profile__repo-initials" id="codebergOrgAvatarInitials">RP</span>
+                            <img id="codebergOrgAvatarImg" class="toolbar-profile__repo-image hidden" alt="Organization avatar">
                         </div>
                     </div>
                     <div class="toolbar-profile__meta" id="codebergProfileMeta">
@@ -622,9 +622,9 @@ class SpreadsheetApp {
         this.codebergAvatarImg = document.getElementById('codebergAvatarImg');
         this.codebergAvatarInitials = document.getElementById('codebergAvatarInitials');
         this.codebergProfileBadge = document.getElementById('codebergProfileBadge');
-        this.codebergRepoAvatar = document.getElementById('codebergRepoAvatar');
-        this.codebergRepoAvatarImg = document.getElementById('codebergRepoAvatarImg');
-        this.codebergRepoAvatarInitials = document.getElementById('codebergRepoAvatarInitials');
+        this.codebergOrgAvatar = document.getElementById('codebergOrgAvatar');
+        this.codebergOrgAvatarImg = document.getElementById('codebergOrgAvatarImg');
+        this.codebergOrgAvatarInitials = document.getElementById('codebergOrgAvatarInitials');
         this.codebergProfileName = document.getElementById('codebergProfileName');
         this.codebergProfileHint = document.getElementById('codebergProfileHint');
         this.codebergProfileMeta = document.getElementById('codebergProfileMeta');
@@ -10176,6 +10176,7 @@ class SpreadsheetApp {
         const isLocal = this.isLikelyLocalhost();
         let userLogin = null;
         let ownerAvatarUrl = null;
+        let orgAvatarUrl = null;
         let isLoggedIn = false;
         let repoAvatarUrl = null;
         if (isLocal) {
@@ -10190,13 +10191,13 @@ class SpreadsheetApp {
             hideInitials: true,
             status: 'offline'
         });
-            this.applyCodebergRepoAvatar({
-                avatarUrl: this.getOfflineRepoAvatarData(),
-                repoName,
-                owner: repoOwner,
-                status: 'offline',
-                visible: true
-            });
+        this.applyCodebergOrgAvatar({
+            avatarUrl: this.getOfflineRepoAvatarData(),
+            repoName,
+            owner: repoOwner,
+            status: 'offline',
+            visible: true
+        });
             this.codebergProfileContainer.classList.remove('toolbar-profile--loading');
             return;
         }
@@ -10230,21 +10231,19 @@ class SpreadsheetApp {
             const ownerProfile = await this.fetchCodebergOwnerProfile(owner);
             if (ownerProfile?.avatarUrl) avatarUrl = ownerProfile.avatarUrl;
             if (ownerProfile?.avatarUrl) ownerAvatarUrl = ownerProfile.avatarUrl;
+            if (ownerProfile?.avatarUrl) orgAvatarUrl = ownerProfile.avatarUrl;
             if (!repoName && ownerProfile?.name) name = ownerProfile.name;
             if (ownerProfile?.hint) hint = ownerProfile.hint;
             initialsSource = ownerProfile?.name || initialsSource;
             if (!avatarUrl) {
                 avatarUrl = this.buildAccountAvatarUrl(owner);
             }
+            if (!orgAvatarUrl) orgAvatarUrl = this.buildAccountAvatarUrl(owner);
         }
 
-        // Prefer repo avatar; fall back to owner/org avatar; only show when logged in or offline
-        if (repoName && repoOwner) {
-            repoAvatarUrl = await this.fetchRepoAvatar({ owner: repoOwner, repo: repoName });
-            if (!repoAvatarUrl && ownerAvatarUrl) repoAvatarUrl = ownerAvatarUrl;
-            if (!repoAvatarUrl) repoAvatarUrl = this.buildRepoAvatarUrl({ owner: repoOwner, repo: repoName });
-        } else if (ownerAvatarUrl) {
-            repoAvatarUrl = ownerAvatarUrl;
+        // For overlay: offline uses no-entry icon; logged-in uses org/owner avatar; logged-out hides overlay
+        if (isLoggedIn) {
+            repoAvatarUrl = orgAvatarUrl || ownerAvatarUrl || this.buildAccountAvatarUrl(owner);
         }
 
         this.applyCodebergAvatar({
@@ -10257,7 +10256,7 @@ class SpreadsheetApp {
             isLocal,
             status: this.resolveProfileStatus({ isLocal, userLogin, repoOwner })
         });
-        this.applyCodebergRepoAvatar({
+        this.applyCodebergOrgAvatar({
             avatarUrl: repoAvatarUrl,
             repoName,
             owner: repoOwner,
@@ -10321,42 +10320,56 @@ class SpreadsheetApp {
         return `https://codeberg.org/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}.png?size=64`;
     }
 
-    applyCodebergRepoAvatar({ avatarUrl, repoName, owner, status, visible } = {}) {
-        if (!this.codebergRepoAvatar) return;
+    applyCodebergOrgAvatar({ avatarUrl, repoName, owner, status, visible } = {}) {
+        if (!this.codebergOrgAvatar) return;
 
         const initials = this.buildInitials(repoName || owner || 'RP');
         const hasRepoInfo = Boolean(repoName || owner || avatarUrl);
         const show = Boolean(visible) && hasRepoInfo;
 
-        this.codebergRepoAvatar.classList.toggle('hidden', !show);
-        this.codebergRepoAvatar.classList.remove('toolbar-profile__repo--offline', 'toolbar-profile__repo--user', 'toolbar-profile__repo--org');
-        if (show) {
-            if (status === 'offline') this.codebergRepoAvatar.classList.add('toolbar-profile__repo--offline');
-            if (status === 'user') this.codebergRepoAvatar.classList.add('toolbar-profile__repo--user');
-            if (status === 'org') this.codebergRepoAvatar.classList.add('toolbar-profile__repo--org');
+        if (!show) {
+            this.codebergOrgAvatar.classList.add('hidden');
+            this.codebergOrgAvatar.classList.remove('toolbar-profile__repo--offline', 'toolbar-profile__repo--user', 'toolbar-profile__repo--org');
+            this.codebergOrgAvatar.style.display = 'none';
+            if (this.codebergOrgAvatarImg) {
+                this.codebergOrgAvatarImg.removeAttribute('src');
+                this.codebergOrgAvatarImg.classList.add('hidden');
+            }
+            if (this.codebergOrgAvatarInitials) {
+                this.codebergOrgAvatarInitials.classList.add('hidden');
+            }
+            this.codebergOrgAvatar.removeAttribute('title');
+            return;
         }
 
-        if (this.codebergRepoAvatarInitials) {
-            this.codebergRepoAvatarInitials.textContent = initials;
-            this.codebergRepoAvatarInitials.classList.toggle('hidden', Boolean(avatarUrl) || !show);
+        this.codebergOrgAvatar.classList.remove('hidden');
+        this.codebergOrgAvatar.style.display = '';
+        this.codebergOrgAvatar.classList.remove('toolbar-profile__repo--offline', 'toolbar-profile__repo--user', 'toolbar-profile__repo--org');
+        if (status === 'offline') this.codebergOrgAvatar.classList.add('toolbar-profile__repo--offline');
+        if (status === 'user') this.codebergOrgAvatar.classList.add('toolbar-profile__repo--user');
+        if (status === 'org') this.codebergOrgAvatar.classList.add('toolbar-profile__repo--org');
+
+        if (this.codebergOrgAvatarInitials) {
+            this.codebergOrgAvatarInitials.textContent = initials;
+            this.codebergOrgAvatarInitials.classList.toggle('hidden', Boolean(avatarUrl));
         }
 
-        if (this.codebergRepoAvatarImg) {
-            if (show && avatarUrl) {
-                this.codebergRepoAvatarImg.src = avatarUrl;
-                this.codebergRepoAvatarImg.alt = repoName ? `${repoName} avatar` : 'Repository avatar';
-                this.codebergRepoAvatarImg.classList.remove('hidden');
+        if (this.codebergOrgAvatarImg) {
+            if (avatarUrl) {
+                this.codebergOrgAvatarImg.src = avatarUrl;
+                this.codebergOrgAvatarImg.alt = repoName ? `${repoName} avatar` : 'Organization avatar';
+                this.codebergOrgAvatarImg.classList.remove('hidden');
             } else {
-                this.codebergRepoAvatarImg.removeAttribute('src');
-                this.codebergRepoAvatarImg.classList.add('hidden');
+                this.codebergOrgAvatarImg.removeAttribute('src');
+                this.codebergOrgAvatarImg.classList.add('hidden');
             }
         }
 
         const labelParts = [];
         if (repoName) labelParts.push(repoName);
         if (owner) labelParts.push(owner);
-        const label = labelParts.join(' · ') || 'Repository avatar';
-        this.codebergRepoAvatar.setAttribute('title', label);
+        const label = labelParts.join(' · ') || 'Organization avatar';
+        this.codebergOrgAvatar.setAttribute('title', label);
     }
 
     resolveRepoBadgeStatus({ isLocal, repoOwner, userLogin }) {
