@@ -98,7 +98,6 @@ const TOOLBAR_AND_FORMULA_HTML = `
                 </button>
                 <div class="toolbar-profile" id="codebergProfile" title="Codeberg profile">
                     <div class="toolbar-profile__avatar" id="codebergAvatar">
-                        <span class="toolbar-profile__initials" id="codebergAvatarInitials">CB</span>
                         <img id="codebergAvatarImg" class="toolbar-profile__image hidden" alt="Codeberg avatar">
                         <span class="toolbar-profile__badge hidden" id="codebergProfileBadge" aria-hidden="true"></span>
                         <div class="toolbar-profile__repo" id="codebergOrgAvatar">
