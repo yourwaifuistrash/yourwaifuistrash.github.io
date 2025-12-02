@@ -21,7 +21,7 @@
   --color-red-500: #c0152f;
   --color-orange-400: #e68161;
   --color-orange-500: #a84b2f;
-  --repo-status-offline: #cbd5e1;
+  --repo-status-offline: #2c2c2c;
   --repo-status-user: #34d399;
   --repo-status-org: #ef4444;
 
@@ -286,7 +286,7 @@ body { margin: 0; padding: 0; }
 }
 
 .toolbar-profile__repo--offline {
-  border-color: #cbd5e1;
+  border-color: #2c2c2c;
 }
 
 .toolbar-profile__repo--user {
@@ -370,13 +370,10 @@ body { margin: 0; padding: 0; }
 }
 
 :root[data-theme='dark'] .toolbar-profile__avatar {
-  background: rgba(255, 255, 255, 0.04);
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 }
 
 :root[data-theme='dark'] .toolbar-profile__repo {
-  background: var(--color-surface);
-  border-color: rgba(255, 255, 255, 0.24);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
 }
 
