@@ -2228,7 +2228,7 @@ class SpreadsheetApp {
         });
 
         const rowsToProcess = targetRows
-            ? new Set([...targetRows, ...Array.from(this.autoRowHeights.keys(), k => Number(k))])
+            ? new Set(targetRows)
             : new Set([...rowMaxFont.keys(), ...Array.from(this.autoRowHeights.keys(), k => Number(k))]);
 
         let changed = this.defaultAutoRowHeight !== prevDefaultHeight;
@@ -7003,6 +7003,7 @@ class SpreadsheetApp {
         textWrapper.style.paddingRight = 'var(--space-8)';
         textWrapper.style.paddingTop = 'var(--space-6)';
         textWrapper.style.paddingBottom = 'var(--space-6)';
+        textWrapper.style.maxHeight = '100%';
         
         // Map vertical alignment
         const alignItemsMap = {
@@ -7031,10 +7032,9 @@ class SpreadsheetApp {
         cell.textContent = '';
         cell.appendChild(textWrapper);
         
-        // Apply clip-path if needed (for clipping from either or both sides)
-        if (clipLeft > 0 || clipRight > 0) {
-            textWrapper.style.clipPath = `inset(0 ${clipRight}px 0 ${clipLeft}px)`;
-        }
+        // Clip vertically to the cell height while still allowing horizontal overflow
+        const clipPath = `inset(0 ${clipRight}px 0 ${clipLeft}px)`;
+        textWrapper.style.clipPath = clipPath;
     }
 
     measureTextWidth(text, cell) {
