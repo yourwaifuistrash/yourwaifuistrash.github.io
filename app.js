@@ -587,6 +587,7 @@ class SpreadsheetApp {
         this.cellData = new Map();
         this.rowHeights = new Map(); // Store custom row heights
         this.autoRowHeights = new Map(); // Store auto-calculated row heights (non-explicit)
+        this.rowHeightModes = new Map(); // Track whether a row height is 'explicit' or 'implicit'
         this.columnWidths = new Map(); // Store custom column widths
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
@@ -595,6 +596,7 @@ class SpreadsheetApp {
         this.initialAutoRowHeights = new Map();
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
         this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
+        this.initialRowHeightModes = new Map();
         this.fullSheetSelection = false;
         this.blockNextNativeContextMenu = false;
         this.initializeRowHeightMetrics();
@@ -653,6 +655,7 @@ class SpreadsheetApp {
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
         this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
+        this.initialRowHeightModes = new Map(this.rowHeightModes);
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         
@@ -1465,6 +1468,8 @@ class SpreadsheetApp {
                 width: this.getColumnWidth(col),
                 height: this.getRowHeight(row)
             };
+            const beforeMode = this.getRowHeightMode(this.initialRowHeightModes, row, 'implicit');
+            const afterMode = this.getRowHeightMode(this.rowHeightModes, row, 'implicit');
             let baseChanges = [];
             if (changeType === 'added') {
                 baseChanges = this.compareCellData({}, after || {});
@@ -1473,7 +1478,11 @@ class SpreadsheetApp {
             } else if (!beforeEmpty && !afterEmpty) {
                 baseChanges = this.compareCellData(before, after);
             }
-            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize, {
+                dimensionKind: 'row',
+                modeBefore: beforeMode,
+                modeAfter: afterMode
+            });
             const combinedChanges = baseChanges.concat(sizeChanges);
 
             const includeEntry = changeType !== 'modified' || combinedChanges.length > 0;
@@ -1507,10 +1516,15 @@ class SpreadsheetApp {
 
         const appendDimensionChanges = kind => {
             this.forEachDimensionSizeChange(kind, ({ index, beforeSize, afterSize, sizeChanges, isColumn }) => {
+                const modeBefore = kind === 'row' ? this.getRowHeightMode(this.initialRowHeightModes, index, 'implicit') : null;
+                const modeAfter = kind === 'row' ? this.getRowHeightMode(this.rowHeightModes, index, 'implicit') : null;
+                const rowAwareSizeChanges = kind === 'row'
+                    ? this.describeSizeDifferences(beforeSize, afterSize, { dimensionKind: 'row', modeBefore, modeAfter })
+                    : this.describeSizeDifferences(beforeSize, afterSize);
                 if (kind === 'row') {
                     const duplicate = Array.from(entryMap.values()).some(entry => {
                         if (!entry || entry.row !== index) return false;
-                        return Array.isArray(entry.changes) && sizeChanges.some(change => entry.changes.includes(change));
+                        return Array.isArray(entry.changes) && rowAwareSizeChanges.some(change => entry.changes.includes(change));
                     });
                     if (duplicate) return;
                 }
@@ -1522,7 +1536,7 @@ class SpreadsheetApp {
                     existing.beforeSize = existing.beforeSize || beforeSize;
                     existing.afterSize = existing.afterSize || afterSize;
                     existing.changes = Array.isArray(existing.changes) ? existing.changes : [];
-                    sizeChanges.forEach(change => {
+                    rowAwareSizeChanges.forEach(change => {
                         if (!existing.changes.includes(change)) existing.changes.push(change);
                     });
                     return;
@@ -1540,7 +1554,7 @@ class SpreadsheetApp {
                         after: null,
                         beforeSize,
                         afterSize,
-                        changes: sizeChanges,
+                        changes: rowAwareSizeChanges,
                         meta: { kind, index }
                     };
                     extraEntries.push(entry);
@@ -1638,6 +1652,7 @@ class SpreadsheetApp {
         this.autoRowHeights = new Map(this.initialAutoRowHeights || []);
         this.defaultAutoRowHeight = this.initialDefaultRowHeight || this.config.cellHeight;
         this.defaultCellStyle = this.cloneDefaultCellStyle(this.initialDefaultCellStyle);
+        this.rowHeightModes = new Map(this.initialRowHeightModes || []);
         this.columnWidths = new Map(this.initialColumnWidths || []);
         this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
         this.applyMergedCellsSnapshot(this.initialMergedCells);
@@ -1797,6 +1812,7 @@ class SpreadsheetApp {
                 timestamp: Date.now(),
                 cellData: this.serializeMap(this.cellData),
                 rowHeights: this.serializeMap(this.rowHeights),
+                rowHeightModes: this.serializeMap(this.rowHeightModes),
                 autoRowHeights: this.serializeMap(this.autoRowHeights),
                 columnWidths: this.serializeMap(this.columnWidths),
                 persistedRange: { ...this.persistedRange },
@@ -1866,6 +1882,11 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (payload.rowHeightModes) {
+                this.rowHeightModes = this.deserializeMap(payload.rowHeightModes);
+                restored = true;
+                needsRefresh = true;
+            }
             if (payload.autoRowHeights) {
                 this.autoRowHeights = this.deserializeMap(payload.autoRowHeights);
                 restored = true;
@@ -1931,6 +1952,7 @@ class SpreadsheetApp {
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
         this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
+        this.initialRowHeightModes = new Map(this.rowHeightModes);
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialMergedCells = this.cloneMergedCellsState();
@@ -2187,6 +2209,48 @@ class SpreadsheetApp {
         return Number.isFinite(fallback) && fallback > 0 ? fallback : this.config.cellHeight;
     }
 
+    getRowHeightMode(mapLike, row, fallback = 'implicit') {
+        if (!mapLike) return fallback;
+        const readValue = (value) => {
+            if (typeof value === 'string' && value.length) return value;
+            return null;
+        };
+
+        if (mapLike instanceof Map) {
+            if (mapLike.has(row)) {
+                const value = readValue(mapLike.get(row));
+                if (value) return value;
+            }
+            const strKey = String(row);
+            if (mapLike.has(strKey)) {
+                const value = readValue(mapLike.get(strKey));
+                if (value) return value;
+            }
+            return fallback;
+        }
+
+        if (Array.isArray(mapLike)) {
+            for (let i = 0; i < mapLike.length; i++) {
+                const [entryKey, entryValue] = mapLike[i] || [];
+                if (entryKey === row || entryKey === String(row)) {
+                    const value = readValue(entryValue);
+                    if (value) return value;
+                }
+            }
+            return fallback;
+        }
+
+        if (typeof mapLike === 'object') {
+            const key = Object.prototype.hasOwnProperty.call(mapLike, row) ? row :
+                (Object.prototype.hasOwnProperty.call(mapLike, String(row)) ? String(row) : null);
+            if (key !== null) {
+                const value = readValue(mapLike[key]);
+                if (value) return value;
+            }
+        }
+        return fallback;
+    }
+
     getValueFromMapLike(mapLike, key, fallback) {
         if (!mapLike) return fallback;
         if (mapLike instanceof Map) {
@@ -2281,6 +2345,7 @@ class SpreadsheetApp {
         this.cellData.forEach((data, key) => {
             const { row } = this.getCoordPos(key);
             if (targetRows && !targetRows.has(row)) return;
+            if (this.rowHeightModes.get(row) === 'explicit') return;
             const existing = rowMaxFont.get(row);
             const currentMax = Number.isFinite(existing) ? existing : defaultFontSize;
             const cellFont = Number(data?.fontSize);
@@ -2294,7 +2359,7 @@ class SpreadsheetApp {
 
         let changed = this.defaultAutoRowHeight !== prevDefaultHeight;
         rowsToProcess.forEach(row => {
-            if (this.rowHeights.has(row)) {
+            if (this.rowHeights.has(row) || this.rowHeightModes.get(row) === 'explicit') {
                 if (this.autoRowHeights.delete(row)) changed = true;
                 return;
             }
@@ -2306,10 +2371,12 @@ class SpreadsheetApp {
             if (desiredHeight > this.defaultAutoRowHeight) {
                 if (existing !== desiredHeight) {
                     this.autoRowHeights.set(row, desiredHeight);
+                    this.rowHeightModes.set(row, 'implicit');
                     changed = true;
                 }
             } else if (this.autoRowHeights.has(row)) {
                 this.autoRowHeights.delete(row);
+                this.rowHeightModes.delete(row);
                 changed = true;
             }
         });
@@ -2327,7 +2394,7 @@ class SpreadsheetApp {
         this.renderBorderOverlays();
     }
 
-    describeSizeDifferences(beforeSize, afterSize) {
+    describeSizeDifferences(beforeSize, afterSize, { dimensionKind = null, modeBefore = null, modeAfter = null } = {}) {
         const changes = [];
         if (!beforeSize || !afterSize) return changes;
         const beforeWidth = Number.isFinite(beforeSize.width) ? beforeSize.width : null;
@@ -2338,7 +2405,12 @@ class SpreadsheetApp {
         const beforeHeight = Number.isFinite(beforeSize.height) ? beforeSize.height : null;
         const afterHeight = Number.isFinite(afterSize.height) ? afterSize.height : null;
         if (beforeHeight !== null && afterHeight !== null && beforeHeight !== afterHeight) {
-            changes.push(`row height: ${Math.round(beforeHeight)}px → ${Math.round(afterHeight)}px`);
+            let change = `row height: ${Math.round(beforeHeight)}px → ${Math.round(afterHeight)}px`;
+            if (dimensionKind === 'row') {
+                const afterLabel = (modeAfter || 'implicit');
+                change += ` (${afterLabel})`;
+            }
+            changes.push(change);
         }
         return changes;
     }
@@ -3293,6 +3365,7 @@ class SpreadsheetApp {
         this.columnWidths = new Map();
         this.rowHeights = new Map();
         this.autoRowHeights = new Map();
+        this.rowHeightModes = new Map();
 
         const headerCells = fallbackTable.querySelectorAll('thead th[data-col]');
         headerCells.forEach(th => {
@@ -3312,8 +3385,15 @@ class SpreadsheetApp {
             const row = Number.isInteger(rowAttr) ? rowAttr : rowIndex;
             detectedMaxRow = Math.max(detectedMaxRow, row);
             const rowHeightAttr = parseFloat(tr.getAttribute('data-height'));
-            if (Number.isFinite(rowHeightAttr) && rowHeightAttr > 0 && Math.abs(rowHeightAttr - this.config.cellHeight) >= 0.001) {
-                this.rowHeights.set(row, rowHeightAttr);
+            const rowHeightModeAttr = tr.getAttribute('data-height-mode');
+            if (Number.isFinite(rowHeightAttr) && rowHeightAttr > 0) {
+                if (rowHeightModeAttr === 'implicit') {
+                    this.autoRowHeights.set(row, rowHeightAttr);
+                    this.rowHeightModes.set(row, 'implicit');
+                } else if (rowHeightModeAttr === 'explicit' || Math.abs(rowHeightAttr - this.config.cellHeight) >= 0.001) {
+                    this.rowHeights.set(row, rowHeightAttr);
+                    this.rowHeightModes.set(row, 'explicit');
+                }
             }
 
             const cells = tr.querySelectorAll('td');
@@ -4556,6 +4636,7 @@ class SpreadsheetApp {
             sizeMap.set(this.resizeIndex, newSize);
             if (this.resizeType === 'row' && this.autoRowHeights instanceof Map) {
                 this.autoRowHeights.delete(this.resizeIndex);
+                this.rowHeightModes.set(this.resizeIndex, 'explicit');
             }
             this.updateLayout(this.resizeIndex, this.resizeType);
             this.updateResizeIndicator(newSize, event);
@@ -5381,6 +5462,7 @@ class SpreadsheetApp {
         if (isRow) {
             this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, effectiveCount, limit);
             this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, effectiveCount, limit);
+            this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, effectiveCount, limit);
         } else {
             this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, effectiveCount, limit);
         }
@@ -5426,6 +5508,7 @@ class SpreadsheetApp {
         if (isRow) {
             this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, -effectiveCount, limit, effectiveCount);
             this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, -effectiveCount, limit, effectiveCount);
+            this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, -effectiveCount, limit, effectiveCount);
         } else {
             this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, -effectiveCount, limit, effectiveCount);
         }
@@ -10986,7 +11069,9 @@ class SpreadsheetApp {
 
         for (let row = minRow; row <= maxRow; row++) {
             const rowHeight = this.getRowHeight(row);
-            rows.push(`                            <tr data-row="${row}" data-height="${rowHeight}">`);
+            const rowHeightMode = this.getRowHeightMode(this.rowHeightModes, row, null);
+            const rowHeightModeAttr = rowHeightMode ? ` data-height-mode="${rowHeightMode}"` : '';
+            rows.push(`                            <tr data-row="${row}" data-height="${rowHeight}"${rowHeightModeAttr}>`);
             rows.push(`                                <th scope="row">${row + 1}</th>`);
             for (let col = minCol; col <= maxCol; col++) {
                 const coordKey = `${row},${col}`;
