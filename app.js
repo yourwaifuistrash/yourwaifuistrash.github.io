@@ -594,6 +594,7 @@ class SpreadsheetApp {
         this.defaultAutoRowHeight = this.config?.cellHeight || 32;
         this.initialAutoRowHeights = new Map();
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
+        this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
         this.fullSheetSelection = false;
         this.blockNextNativeContextMenu = false;
         this.initializeRowHeightMetrics();
@@ -651,6 +652,7 @@ class SpreadsheetApp {
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
+        this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         
@@ -1114,6 +1116,15 @@ class SpreadsheetApp {
         return clone;
     }
 
+    cloneDefaultCellStyle(source = this.defaultCellStyle) {
+        if (!source || typeof source !== 'object') return {};
+        try {
+            return JSON.parse(JSON.stringify(source));
+        } catch (error) {
+            return { ...source };
+        }
+    }
+
     initializeDynamicDimensions() {
         const requiredRows = (this.persistedRange?.maxRow ?? 0) + 1;
         const requiredCols = (this.persistedRange?.maxCol ?? 0) + 1;
@@ -1454,7 +1465,14 @@ class SpreadsheetApp {
                 width: this.getColumnWidth(col),
                 height: this.getRowHeight(row)
             };
-            const baseChanges = (!beforeEmpty && !afterEmpty) ? this.compareCellData(before, after) : [];
+            let baseChanges = [];
+            if (changeType === 'added') {
+                baseChanges = this.compareCellData({}, after || {});
+            } else if (changeType === 'removed') {
+                baseChanges = this.compareCellData(before || {}, {});
+            } else if (!beforeEmpty && !afterEmpty) {
+                baseChanges = this.compareCellData(before, after);
+            }
             const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
             const combinedChanges = baseChanges.concat(sizeChanges);
 
@@ -1529,6 +1547,31 @@ class SpreadsheetApp {
         appendDimensionChanges('column');
         appendDimensionChanges('row');
 
+        const defaultStyleChanges = this.describeDefaultStyleDifferences(this.initialDefaultCellStyle, this.defaultCellStyle);
+        if (defaultStyleChanges.length) {
+            total += 1;
+            if (entries.length + extraEntries.length < maxEntries) {
+                const entry = {
+                    coord: 'default:style',
+                    row: 0,
+                    col: 0,
+                    address: 'Default cell style',
+                    changeType: 'modified',
+                    before: this.cloneDefaultCellStyle(this.initialDefaultCellStyle),
+                    after: this.cloneDefaultCellStyle(this.defaultCellStyle),
+                    beforeSize: null,
+                    afterSize: null,
+                    changes: defaultStyleChanges,
+                    meta: { kind: 'defaultStyle' }
+                };
+                extraEntries.push(entry);
+                entryMap.set('default:style', entry);
+            } else {
+                truncated = true;
+                entryMap.set('default:style', null);
+            }
+        }
+
         const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
         mergeDiffs.forEach(diff => {
             const beforeSize = null;
@@ -1586,6 +1629,7 @@ class SpreadsheetApp {
         this.rowHeights = new Map(this.initialRowHeights || []);
         this.autoRowHeights = new Map(this.initialAutoRowHeights || []);
         this.defaultAutoRowHeight = this.initialDefaultRowHeight || this.config.cellHeight;
+        this.defaultCellStyle = this.cloneDefaultCellStyle(this.initialDefaultCellStyle);
         this.columnWidths = new Map(this.initialColumnWidths || []);
         this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
         this.applyMergedCellsSnapshot(this.initialMergedCells);
@@ -1749,7 +1793,8 @@ class SpreadsheetApp {
                 columnWidths: this.serializeMap(this.columnWidths),
                 persistedRange: { ...this.persistedRange },
                 mergedCells: this.cloneMergedCellsState(),
-                defaultAutoRowHeight: this.defaultAutoRowHeight
+                defaultAutoRowHeight: this.defaultAutoRowHeight,
+                defaultCellStyle: this.cloneDefaultCellStyle()
             };
             window.localStorage.setItem(this.localDraftKey, JSON.stringify(payload));
         } catch (error) {
@@ -1840,6 +1885,11 @@ class SpreadsheetApp {
             if (Number.isFinite(payload.defaultAutoRowHeight)) {
                 this.defaultAutoRowHeight = payload.defaultAutoRowHeight;
             }
+            if (payload.defaultCellStyle && typeof payload.defaultCellStyle === 'object') {
+                this.defaultCellStyle = this.cloneDefaultCellStyle(payload.defaultCellStyle);
+                restored = true;
+                needsRefresh = true;
+            }
         } catch (error) {
             console.error('Unable to restore draft', error);
         } finally {
@@ -1872,6 +1922,7 @@ class SpreadsheetApp {
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
+        this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialMergedCells = this.cloneMergedCellsState();
@@ -1996,6 +2047,8 @@ class SpreadsheetApp {
             heading = `Row ${entry.row + 1}`;
         } else if (entry.meta?.kind === 'merge') {
             heading = `Merge ${this.getCellAddress(entry.row, entry.col)}`;
+        } else if (entry.meta?.kind === 'defaultStyle') {
+            heading = 'Default cell style';
         }
 
         return [
@@ -2279,6 +2332,18 @@ class SpreadsheetApp {
         if (beforeHeight !== null && afterHeight !== null && beforeHeight !== afterHeight) {
             changes.push(`row height: ${Math.round(beforeHeight)}px → ${Math.round(afterHeight)}px`);
         }
+        return changes;
+    }
+
+    describeDefaultStyleDifferences(before = {}, after = {}) {
+        const changes = [];
+        const fields = [['fontSize', 'font size']];
+        fields.forEach(([key, label]) => {
+            const beforeVal = this.normalizeField(before[key], key);
+            const afterVal = this.normalizeField(after[key], key);
+            if (beforeVal === afterVal) return;
+            changes.push(`${label}: ${beforeVal} → ${afterVal}`);
+        });
         return changes;
     }
 
