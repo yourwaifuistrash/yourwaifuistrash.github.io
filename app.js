@@ -586,12 +586,17 @@ class SpreadsheetApp {
         // Grid data
         this.cellData = new Map();
         this.rowHeights = new Map(); // Store custom row heights
+        this.autoRowHeights = new Map(); // Store auto-calculated row heights (non-explicit)
         this.columnWidths = new Map(); // Store custom column widths
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
         this.defaultCellStyle = {};
+        this.defaultAutoRowHeight = this.config?.cellHeight || 32;
+        this.initialAutoRowHeights = new Map();
+        this.initialDefaultRowHeight = this.defaultAutoRowHeight;
         this.fullSheetSelection = false;
         this.blockNextNativeContextMenu = false;
+        this.initializeRowHeightMetrics();
 
         // DOM elements
         this.gridContainer = this.container.querySelector('.grid-container');
@@ -638,13 +643,16 @@ class SpreadsheetApp {
         this.accessTokenInfo = null;
         this.loadInitialDataFromDOM();
         this.recomputeColorUsageFromData();
+        this.initializeDynamicDimensions();
+        this.recalculateAutoRowHeights();
         this.initialColorUsage = this.cloneColorUsage();
         this.initialMergedCells = this.cloneMergedCellsState();
         this.initialCellData = this.cloneCellData(this.cellData);
         this.initialRowHeights = new Map(this.rowHeights);
+        this.initialAutoRowHeights = new Map(this.autoRowHeights);
+        this.initialDefaultRowHeight = this.defaultAutoRowHeight;
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
-        this.initializeDynamicDimensions();
         
         // Select cell A1 by default
         setTimeout(() => {
@@ -1440,7 +1448,7 @@ class SpreadsheetApp {
             const changeType = beforeEmpty ? 'added' : afterEmpty ? 'removed' : 'modified';
             const beforeSize = {
                 width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
-                height: this.getSnapshotRowHeight(this.initialRowHeights, row)
+                height: this.getSnapshotRowHeight(this.initialRowHeights, row, this.initialAutoRowHeights, this.initialDefaultRowHeight)
             };
             const afterSize = {
                 width: this.getColumnWidth(col),
@@ -1576,6 +1584,8 @@ class SpreadsheetApp {
     restoreBaselineState() {
         this.cellData = this.cloneCellData(this.initialCellData);
         this.rowHeights = new Map(this.initialRowHeights || []);
+        this.autoRowHeights = new Map(this.initialAutoRowHeights || []);
+        this.defaultAutoRowHeight = this.initialDefaultRowHeight || this.config.cellHeight;
         this.columnWidths = new Map(this.initialColumnWidths || []);
         this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
         this.applyMergedCellsSnapshot(this.initialMergedCells);
@@ -1735,9 +1745,11 @@ class SpreadsheetApp {
                 timestamp: Date.now(),
                 cellData: this.serializeMap(this.cellData),
                 rowHeights: this.serializeMap(this.rowHeights),
+                autoRowHeights: this.serializeMap(this.autoRowHeights),
                 columnWidths: this.serializeMap(this.columnWidths),
                 persistedRange: { ...this.persistedRange },
-                mergedCells: this.cloneMergedCellsState()
+                mergedCells: this.cloneMergedCellsState(),
+                defaultAutoRowHeight: this.defaultAutoRowHeight
             };
             window.localStorage.setItem(this.localDraftKey, JSON.stringify(payload));
         } catch (error) {
@@ -1801,6 +1813,11 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (payload.autoRowHeights) {
+                this.autoRowHeights = this.deserializeMap(payload.autoRowHeights);
+                restored = true;
+                needsRefresh = true;
+            }
             if (payload.columnWidths) {
                 this.columnWidths = this.deserializeMap(payload.columnWidths);
                 restored = true;
@@ -1820,6 +1837,9 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (Number.isFinite(payload.defaultAutoRowHeight)) {
+                this.defaultAutoRowHeight = payload.defaultAutoRowHeight;
+            }
         } catch (error) {
             console.error('Unable to restore draft', error);
         } finally {
@@ -1837,6 +1857,7 @@ class SpreadsheetApp {
                 this.userMadeChanges = false;
             }
             if (needsRefresh) {
+                this.recalculateAutoRowHeights();
                 this.updateGridSize();
                 this.repositionCells();
                 this.updateHeaderPositions();
@@ -1849,6 +1870,8 @@ class SpreadsheetApp {
         this.initialColorUsage = this.cloneColorUsage();
         this.initialCellData = this.cloneCellData(this.cellData);
         this.initialRowHeights = new Map(this.rowHeights);
+        this.initialAutoRowHeights = new Map(this.autoRowHeights);
+        this.initialDefaultRowHeight = this.defaultAutoRowHeight;
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialMergedCells = this.cloneMergedCellsState();
@@ -2090,8 +2113,17 @@ class SpreadsheetApp {
         return this.getValueFromMapLike(mapLike, col, this.config.cellWidth);
     }
 
-    getSnapshotRowHeight(mapLike, row) {
-        return this.getValueFromMapLike(mapLike, row, this.config.cellHeight);
+    getSnapshotRowHeight(mapLike, row, autoMap = null, defaultHeight = this.initialDefaultRowHeight ?? this.config.cellHeight) {
+        const explicit = this.getValueFromMapLike(mapLike, row, null);
+        if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+        if (autoMap) {
+            const auto = this.getValueFromMapLike(autoMap, row, null);
+            if (Number.isFinite(auto) && auto > 0) return auto;
+        }
+
+        const fallback = Number(defaultHeight);
+        return Number.isFinite(fallback) && fallback > 0 ? fallback : this.config.cellHeight;
     }
 
     getValueFromMapLike(mapLike, key, fallback) {
@@ -2130,6 +2162,110 @@ class SpreadsheetApp {
         return fallback;
     }
 
+    initializeRowHeightMetrics() {
+        this.cellLineHeightMultiplier = 1.2;
+        this.baseFontSizePx = this.readCssNumber('--font-size-sm', 12);
+        const padding = this.readCssNumber('--space-6', 6);
+        this.cellVerticalPaddingPx = Number.isFinite(padding) ? padding * 2 : 12;
+        const baseline = (this.baseFontSizePx * this.cellLineHeightMultiplier) + this.cellVerticalPaddingPx;
+        this.rowHeightSlackPx = Math.max(0, (this.config?.cellHeight || baseline) - baseline);
+        this.defaultAutoRowHeight = this.computeRowHeightForFontSize(this.getDefaultFontSizeForAutoHeight());
+        if (!this.initialDefaultRowHeight) {
+            this.initialDefaultRowHeight = this.defaultAutoRowHeight;
+        }
+    }
+
+    readCssNumber(varName, fallback) {
+        try {
+            const root = document.documentElement;
+            if (!root) return fallback;
+            const raw = getComputedStyle(root).getPropertyValue(varName);
+            const parsed = parseFloat(raw);
+            return Number.isFinite(parsed) ? parsed : fallback;
+        } catch (error) {
+            return fallback;
+        }
+    }
+
+    getDefaultFontSizeForAutoHeight() {
+        const defaultFontSize = Number(this.defaultCellStyle?.fontSize);
+        if (Number.isFinite(defaultFontSize) && defaultFontSize > 0) return defaultFontSize;
+        return this.baseFontSizePx || 12;
+    }
+
+    computeRowHeightForFontSize(fontSize) {
+        const size = Number(fontSize);
+        const effectiveSize = Number.isFinite(size) && size > 0 ? size : this.getDefaultFontSizeForAutoHeight();
+        const height = (effectiveSize * this.cellLineHeightMultiplier) + this.cellVerticalPaddingPx + (this.rowHeightSlackPx || 0);
+        const minHeight = this.config?.cellHeight || height;
+        return Math.max(minHeight, Math.ceil(height));
+    }
+
+    recalculateAutoRowHeights(rows = null) {
+        const targetRows = rows instanceof Set ? new Set(Array.from(rows).map(r => Number(r))) :
+            Array.isArray(rows) ? new Set(rows.map(r => Number(r))) :
+            (Number.isFinite(rows) ? new Set([Number(rows)]) : null);
+
+        const prevDefaultHeight = this.defaultAutoRowHeight;
+        const defaultFontSize = this.getDefaultFontSizeForAutoHeight();
+        this.defaultAutoRowHeight = this.computeRowHeightForFontSize(defaultFontSize);
+
+        const rowMaxFont = new Map();
+        if (targetRows) {
+            targetRows.forEach(row => rowMaxFont.set(row, defaultFontSize));
+        } else {
+            this.autoRowHeights.forEach((_, row) => rowMaxFont.set(Number(row), defaultFontSize));
+        }
+
+        this.cellData.forEach((data, key) => {
+            const { row } = this.getCoordPos(key);
+            if (targetRows && !targetRows.has(row)) return;
+            const existing = rowMaxFont.get(row);
+            const currentMax = Number.isFinite(existing) ? existing : defaultFontSize;
+            const cellFont = Number(data?.fontSize);
+            const effective = Number.isFinite(cellFont) && cellFont > 0 ? cellFont : defaultFontSize;
+            rowMaxFont.set(row, Math.max(currentMax, effective));
+        });
+
+        const rowsToProcess = targetRows
+            ? new Set([...targetRows, ...Array.from(this.autoRowHeights.keys(), k => Number(k))])
+            : new Set([...rowMaxFont.keys(), ...Array.from(this.autoRowHeights.keys(), k => Number(k))]);
+
+        let changed = this.defaultAutoRowHeight !== prevDefaultHeight;
+        rowsToProcess.forEach(row => {
+            if (this.rowHeights.has(row)) {
+                if (this.autoRowHeights.delete(row)) changed = true;
+                return;
+            }
+
+            const maxFont = rowMaxFont.has(row) ? rowMaxFont.get(row) : defaultFontSize;
+            const desiredHeight = this.computeRowHeightForFontSize(maxFont);
+            const existing = this.autoRowHeights.get(row);
+
+            if (desiredHeight > this.defaultAutoRowHeight) {
+                if (existing !== desiredHeight) {
+                    this.autoRowHeights.set(row, desiredHeight);
+                    changed = true;
+                }
+            } else if (this.autoRowHeights.has(row)) {
+                this.autoRowHeights.delete(row);
+                changed = true;
+            }
+        });
+
+        if (changed) {
+            this.refreshLayoutAfterRowHeightChange();
+        }
+    }
+
+    refreshLayoutAfterRowHeightChange() {
+        this.updateGridSize();
+        this.repositionCells();
+        this.updateHeaderPositions();
+        this.renderSelectionOverlays();
+        this.renderBorderOverlays();
+    }
+
     describeSizeDifferences(beforeSize, afterSize) {
         const changes = [];
         if (!beforeSize || !afterSize) return changes;
@@ -2156,10 +2292,24 @@ class SpreadsheetApp {
     }
 
     getChangedRows() {
+        const initialCombined = new Map(this.initialRowHeights || []);
+        if (this.initialAutoRowHeights instanceof Map) {
+            this.initialAutoRowHeights.forEach((value, key) => {
+                if (!initialCombined.has(key)) initialCombined.set(key, value);
+            });
+        }
+
+        const currentCombined = new Map(this.rowHeights || []);
+        if (this.autoRowHeights instanceof Map) {
+            this.autoRowHeights.forEach((value, key) => {
+                if (!currentCombined.has(key)) currentCombined.set(key, value);
+            });
+        }
+
         return this.getChangedIndices({
-            initial: this.initialRowHeights,
-            current: this.rowHeights,
-            getSnapshotSize: index => this.getSnapshotRowHeight(this.initialRowHeights, index),
+            initial: initialCombined,
+            current: currentCombined,
+            getSnapshotSize: index => this.getSnapshotRowHeight(this.initialRowHeights, index, this.initialAutoRowHeights, this.initialDefaultRowHeight),
             getSize: index => this.getRowHeight(index)
         });
     }
@@ -2168,10 +2318,10 @@ class SpreadsheetApp {
         const isColumn = kind === 'column';
         const beforeSize = isColumn ? {
             width: this.getSnapshotColumnWidth(this.initialColumnWidths, index),
-            height: this.getSnapshotRowHeight(this.initialRowHeights, 0)
+            height: this.getSnapshotRowHeight(this.initialRowHeights, 0, this.initialAutoRowHeights, this.initialDefaultRowHeight)
         } : {
             width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
-            height: this.getSnapshotRowHeight(this.initialRowHeights, index)
+            height: this.getSnapshotRowHeight(this.initialRowHeights, index, this.initialAutoRowHeights, this.initialDefaultRowHeight)
         };
         const afterSize = isColumn ? {
             width: this.getColumnWidth(index),
@@ -3069,6 +3219,7 @@ class SpreadsheetApp {
 
         this.columnWidths = new Map();
         this.rowHeights = new Map();
+        this.autoRowHeights = new Map();
 
         const headerCells = fallbackTable.querySelectorAll('thead th[data-col]');
         headerCells.forEach(th => {
@@ -3185,6 +3336,7 @@ class SpreadsheetApp {
         const previous = this.undoStack.pop();
         this.cellData = this.cloneCellData(previous?.cellData);
         this.applyMergedCellsSnapshot(previous?.mergedCells);
+        this.recalculateAutoRowHeights();
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         
@@ -3203,6 +3355,7 @@ class SpreadsheetApp {
         const next = this.redoStack.pop();
         this.cellData = this.cloneCellData(next?.cellData);
         this.applyMergedCellsSnapshot(next?.mergedCells);
+        this.recalculateAutoRowHeights();
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         
@@ -3464,7 +3617,13 @@ class SpreadsheetApp {
         return cell;
     }
     
-    getRowHeight(row) { return this.getValueFromMapLike(this.rowHeights, row, this.config.cellHeight); }
+    getRowHeight(row) {
+        const explicit = this.getValueFromMapLike(this.rowHeights, row, null);
+        if (Number.isFinite(explicit) && explicit > 0) return explicit;
+        const auto = this.getValueFromMapLike(this.autoRowHeights, row, null);
+        if (Number.isFinite(auto) && auto > 0) return auto;
+        return this.defaultAutoRowHeight || this.config.cellHeight;
+    }
     getColumnWidth(col) { return this.getValueFromMapLike(this.columnWidths, col, this.config.cellWidth); }
 
     _sum(count, getFn) {
@@ -3720,6 +3879,8 @@ class SpreadsheetApp {
         // Update cell display
         this.updateCellDisplay(cell, cellData || {});
         
+        const { row } = this.getCellPos(cell);
+        this.recalculateAutoRowHeights(new Set([row]));
         this.log(`Applied format to cell ${cell.dataset.address}`);
     }
 
@@ -3800,9 +3961,13 @@ class SpreadsheetApp {
             });
         });
         
+        const affectedRows = new Set(selectionCoords.map(({ row }) => row));
+
         // Refresh painted cells and their neighbors so border overlays update immediately
         this._updateCellsAndAdjacent(this.selectedCells);
         
+        this.recalculateAutoRowHeights(affectedRows);
+
         // Refresh color palettes
         this.refreshPalettes();
         
@@ -4316,6 +4481,9 @@ class SpreadsheetApp {
             const newSize = Math.max(minSize, this.resizeStartSize + delta);
             
             sizeMap.set(this.resizeIndex, newSize);
+            if (this.resizeType === 'row' && this.autoRowHeights instanceof Map) {
+                this.autoRowHeights.delete(this.resizeIndex);
+            }
             this.updateLayout(this.resizeIndex, this.resizeType);
             this.updateResizeIndicator(newSize, event);
             this.updateResizeGuide();
@@ -4376,11 +4544,38 @@ class SpreadsheetApp {
         const cells = this.gridContent.querySelectorAll('.cell');
         cells.forEach(cell => {
             const { row, col } = this.getCellPos(cell);
+            const coordKey = `${row},${col}`;
+            const mergeInfo = this.mergedCells.get(coordKey);
+            const parentCoord = this.cellToMergeParent.get(coordKey);
             
             cell.style.left = this.getColumnLeft(col) + 'px';
             cell.style.top = this.getRowTop(row) + 'px';
-            cell.style.width = this.getColumnWidth(col) + 'px';
-            cell.style.height = this.getRowHeight(row) + 'px';
+            if (mergeInfo) {
+                let totalWidth = 0;
+                let totalHeight = 0;
+                for (let c = 0; c < mergeInfo.cols; c++) {
+                    totalWidth += this.getColumnWidth(col + c);
+                }
+                for (let r = 0; r < mergeInfo.rows; r++) {
+                    totalHeight += this.getRowHeight(row + r);
+                }
+                cell.style.display = '';
+                cell.classList.remove('merged-child');
+                cell.style.width = totalWidth + 'px';
+                cell.style.height = totalHeight + 'px';
+                cell.classList.add('merged-cell');
+            } else {
+                cell.classList.remove('merged-cell');
+                cell.style.width = this.getColumnWidth(col) + 'px';
+                cell.style.height = this.getRowHeight(row) + 'px';
+                if (parentCoord) {
+                    cell.style.display = 'none';
+                    cell.classList.add('merged-child');
+                } else {
+                    cell.style.display = '';
+                    cell.classList.remove('merged-child');
+                }
+            }
         });
     }
     
@@ -4398,6 +4593,7 @@ class SpreadsheetApp {
     applyFontSize(fontSize) {
         if (!this.hasSelection()) return;
         const applyToAll = this.isFullGridSelection();
+        const affectedRows = applyToAll ? null : new Set(this.getSelectionPositions().map(pos => pos.row));
         this.saveState(`Apply font size ${fontSize}px`);
 
         if (applyToAll) {
@@ -4430,6 +4626,7 @@ class SpreadsheetApp {
         });
 
         this.updateFontSizeInput();
+        this.recalculateAutoRowHeights(affectedRows);
     }
 
     updateFontSizeInput() {
@@ -5107,6 +5304,7 @@ class SpreadsheetApp {
 
         if (isRow) {
             this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, effectiveCount, limit);
+            this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, effectiveCount, limit);
         } else {
             this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, effectiveCount, limit);
         }
@@ -5151,6 +5349,7 @@ class SpreadsheetApp {
 
         if (isRow) {
             this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, -effectiveCount, limit, effectiveCount);
+            this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, -effectiveCount, limit, effectiveCount);
         } else {
             this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, -effectiveCount, limit, effectiveCount);
         }
@@ -6259,6 +6458,7 @@ class SpreadsheetApp {
 
         const { row: targetRow, col: targetCol } = this.getCellPos(this.primaryCell);
         const origin = this.clipboard.origin;
+        const affectedRows = new Set();
 
         // Save state before pasting
         this.saveState(`Paste ${this.clipboard.data.size} cells`);
@@ -6290,6 +6490,7 @@ class SpreadsheetApp {
                     this.updateCellDisplay(cell, {});
                     cutCellsToUpdate.add(cell);
                 }
+                affectedRows.add(row);
             });
 
             // Clear source cells but keep clipboard data for repeated pasting
@@ -6338,6 +6539,8 @@ class SpreadsheetApp {
                 if (cell) {
                     this.updateCellDisplay(cell, newCellData);
                 }
+
+                affectedRows.add(newRow);
             }
         });
 
@@ -6373,6 +6576,10 @@ class SpreadsheetApp {
             this._updateCellsAndAdjacent(newSelection);
         } else {
             this.updateFormulaBar();
+        }
+
+        if (affectedRows.size) {
+            this.recalculateAutoRowHeights(affectedRows);
         }
     }
 
@@ -6894,6 +7101,9 @@ class SpreadsheetApp {
         });
 
         this._updateCellsAndAdjacent(this.selectedCells);
+
+        const affectedRows = new Set(Array.from(this.selectedCellCoords, coord => this.getCoordPos(coord).row));
+        this.recalculateAutoRowHeights(affectedRows);
 
         this.updateUI();
         
