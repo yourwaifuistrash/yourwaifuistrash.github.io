@@ -1507,6 +1507,14 @@ class SpreadsheetApp {
 
         const appendDimensionChanges = kind => {
             this.forEachDimensionSizeChange(kind, ({ index, beforeSize, afterSize, sizeChanges, isColumn }) => {
+                if (kind === 'row') {
+                    const duplicate = Array.from(entryMap.values()).some(entry => {
+                        if (!entry || entry.row !== index) return false;
+                        return Array.isArray(entry.changes) && sizeChanges.some(change => entry.changes.includes(change));
+                    });
+                    if (duplicate) return;
+                }
+
                 const coordKey = `${kind}:${index}`;
                 const hasCoordinate = entryMap.has(coordKey);
                 const existing = hasCoordinate ? entryMap.get(coordKey) : null;
