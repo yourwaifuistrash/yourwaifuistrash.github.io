@@ -3816,10 +3816,10 @@ class SpreadsheetApp {
             ['#fontColorBtn', 'click', () => this.showFontColorPalette()],
             ['#borderBtn', 'click', () => this.showBorderMenu()],
             ['#mergeBtn', 'click', () => this.handleMergeCells()],
-            ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e)],
-            ['#fontSizeInput', 'input', e => this.handleFontSizeChange(e)],
+            ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e, { finalize: true })],
+            ['#fontSizeInput', 'input', e => this.handleFontSizeChange(e, { finalize: false })],
             ['#fontSizeInput', 'keydown', e => {
-                if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e); e.target.blur(); }
+                if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e, { finalize: true }); e.target.blur(); }
             }],
             [this.formulaInput, 'keydown', e => this.handleFormulaKeyDown(e)],
             [this.formulaInput, 'focus', e => this.handleFormulaFocus(e)],
@@ -4733,14 +4733,15 @@ class SpreadsheetApp {
         });
     }
     
-    handleFontSizeChange(event) {
+    handleFontSizeChange(event, { finalize = false } = {}) {
         const input = document.getElementById('fontSizeInput');
-        const size = parseInt(input.value);
-        
-        if (!size || isNaN(size) || size < 1 || !this.hasSelection()) return;
-        
-        const clamped = Math.max(6, Math.min(200, size));
-        input.value = clamped;
+        const raw = input.value.trim();
+        if (!raw.length) return;
+        const size = parseInt(raw, 10);
+        if (!Number.isFinite(size) || size < 1 || !this.hasSelection()) return;
+
+        const clamped = finalize ? Math.max(6, Math.min(200, size)) : Math.min(200, size);
+        if (finalize) input.value = clamped;
         this.applyFontSize(clamped);
     }
 
