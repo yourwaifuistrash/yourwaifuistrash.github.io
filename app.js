@@ -4627,6 +4627,9 @@ class SpreadsheetApp {
 
         this.updateFontSizeInput();
         this.recalculateAutoRowHeights(affectedRows);
+        if (this.selectedCells.size) {
+            this._updateCellsAndAdjacent(this.selectedCells);
+        }
     }
 
     updateFontSizeInput() {
