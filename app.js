@@ -533,6 +533,7 @@ class SpreadsheetApp {
         this.activeFormattingInteraction = null;
         this.isToolbarFormattingInteraction = false;
         this.isPaletteInteraction = false;
+        this.isFontSizeEditing = false;
         this.pendingEditorRefocus = false;
         this.currentEditorSelection = null;
         this.editorSelectionListener = null;
@@ -3865,7 +3866,10 @@ class SpreadsheetApp {
             ['#fontSizeInput', 'change', e => this.handleFontSizeChange(e, { finalize: true })],
             ['#fontSizeInput', 'input', e => this.handleFontSizeChange(e, { finalize: false })],
             ['#fontSizeInput', 'keydown', e => {
-                if (e.key === 'Enter') { e.preventDefault(); this.handleFontSizeChange(e, { finalize: true }); e.target.blur(); }
+                if (e.key === 'Enter') { 
+                    e.preventDefault(); 
+                    this.handleFontSizeChange(e, { finalize: true }); 
+                }
             }],
             [this.formulaInput, 'keydown', e => this.handleFormulaKeyDown(e)],
             [this.formulaInput, 'focus', e => this.handleFormulaFocus(e)],
@@ -3899,6 +3903,28 @@ class SpreadsheetApp {
             const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
             if (el) el.addEventListener(evt, fn);
         });
+
+        const fontSizeInput = document.getElementById('fontSizeInput');
+        if (fontSizeInput && !fontSizeInput.dataset.guardAttached) {
+            fontSizeInput.addEventListener('pointerdown', () => {
+                if (this.currentEditingCell) {
+                    this.isFontSizeEditing = true;
+                    this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
+                }
+            }, { capture: true });
+            fontSizeInput.addEventListener('focus', () => {
+                if (this.currentEditingCell) {
+                    this.isFontSizeEditing = true;
+                }
+            });
+            fontSizeInput.addEventListener('blur', () => {
+                if (this.currentEditingCell) {
+                    this.isFontSizeEditing = false;
+                    this.resumeEditingAfterToolbar();
+                }
+            });
+            fontSizeInput.dataset.guardAttached = 'true';
+        }
         
         // Border menu setup
         this.setupBorderMenu();
@@ -4359,9 +4385,9 @@ class SpreadsheetApp {
         (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
     }
 
-    markEditorForToolbarRefocus(event = null) {
+    markEditorForToolbarRefocus(event = null, preventDefault = true) {
         if (!this.currentEditingCell) return false;
-        if (event && typeof event.preventDefault === 'function') {
+        if (preventDefault && event && typeof event.preventDefault === 'function') {
             event.preventDefault();
         }
         const editor = this.currentEditingCell.querySelector('.cell-editor');
@@ -4950,6 +4976,10 @@ class SpreadsheetApp {
     }
     
     handleFontSizeChange(event, { finalize = false } = {}) {
+        if (this.currentEditingCell && finalize) {
+            this.pendingEditorRefocus = true;
+            this.isToolbarFormattingInteraction = true;
+        }
         const input = document.getElementById('fontSizeInput');
         const raw = input.value.trim();
         if (!raw.length) return;
@@ -4959,6 +4989,10 @@ class SpreadsheetApp {
         const clamped = finalize ? Math.max(6, Math.min(200, size)) : Math.min(200, size);
         if (finalize) input.value = clamped;
         this.applyFontSize(clamped);
+        if (finalize && this.currentEditingCell) {
+            this.isFontSizeEditing = false;
+            setTimeout(() => this.resumeEditingAfterToolbar(), 0);
+        }
     }
 
     applyFontSize(fontSize) {
@@ -5000,6 +5034,19 @@ class SpreadsheetApp {
         this.recalculateAutoRowHeights(affectedRows);
         if (this.selectedCells.size) {
             this._updateCellsAndAdjacent(this.selectedCells);
+        }
+
+        // Keep live editor styling; refocus only when not actively editing size input
+        if (this.currentEditingCell) {
+            const editingCoord = this.getCoord(this.currentEditingCell);
+            const appliesHere = applyToAll || this.selectedCellCoords.has(editingCoord);
+            if (appliesHere) {
+                const data = this.cellData.get(editingCoord) || {};
+                this.refreshEditingCellFormatting(this.currentEditingCell, data);
+                if (!this.isFontSizeEditing) {
+                    this.resumeEditingAfterToolbar();
+                }
+            }
         }
     }
 
@@ -6192,6 +6239,10 @@ class SpreadsheetApp {
         const captureSelection = () => this.saveEditorSelection(input);
 
         input.addEventListener('blur', () => {
+            if (this.isFontSizeEditing) {
+                // Let the font size input keep focus; do nothing here.
+                return;
+            }
             if (this.isToolbarFormattingInteraction || this.pendingEditorRefocus || this.isFormattingUIOpen()) {
                 // Keep editing active when the user clicks toolbar formatting
                 setTimeout(() => {
@@ -7878,6 +7929,7 @@ class SpreadsheetApp {
             !event.target.closest('#fontColorPalette') &&
             !event.target.closest('#borderMenu') &&
             !event.target.closest('#customColorPicker') &&
+            !event.target.closest('#fontSizeInput') &&
             !event.target.closest('#linkEditor')) {
             if (this.currentEditingCell) {
                 this.stopEditingCell();
