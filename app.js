@@ -532,6 +532,8 @@ class SpreadsheetApp {
         this.pendingFormattingInteraction = null;
         this.activeFormattingInteraction = null;
         this.isToolbarFormattingInteraction = false;
+        this.isPaletteInteraction = false;
+        this.pendingEditorRefocus = false;
         this.currentEditorSelection = null;
         this.editorSelectionListener = null;
         this.editorBlurTimeout = null;
@@ -4357,26 +4359,46 @@ class SpreadsheetApp {
         (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
     }
 
+    markEditorForToolbarRefocus(event = null) {
+        if (!this.currentEditingCell) return false;
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        this.saveEditorSelection(editor);
+        this.isToolbarFormattingInteraction = true;
+        this.pendingEditorRefocus = true;
+        return true;
+    }
+
     setupToolbarFocusGuards() {
         const keepEditingButtons = [
             'boldBtn', 'italicBtn', 'underlineBtn', 'strikethroughBtn',
-            'fontColorBtn', 'bgColorBtn',
+            'fontColorBtn', 'colorBtn', 'bgColorBtn',
             'alignLeftBtn', 'alignCenterBtn', 'alignRightBtn',
-            'alignTopBtn', 'alignMiddleBtn', 'alignBottomBtn'
+            'alignTopBtn', 'alignMiddleBtn', 'alignBottomBtn',
+            'borderBtn'
         ];
         keepEditingButtons.forEach(id => {
             const btn = document.getElementById(id);
             if (!btn) return;
             btn.addEventListener('mousedown', (e) => {
-                if (!this.currentEditingCell) return;
-                // Prevent focus from leaving the editor
-                e.preventDefault();
-                const editor = this.currentEditingCell.querySelector('.cell-editor');
-                this.saveEditorSelection(editor);
-                this.isToolbarFormattingInteraction = true;
+                this.markEditorForToolbarRefocus(e);
             });
-            btn.addEventListener('mouseup', () => {
-                this.isToolbarFormattingInteraction = false;
+        });
+
+        const paletteGuards = [
+            this.colorPalette,
+            this.fontColorPalette,
+            this.borderMenu,
+            this.customColorPicker
+        ];
+        paletteGuards.forEach(el => {
+            if (!el) return;
+            el.addEventListener('mousedown', (e) => {
+                if (this.markEditorForToolbarRefocus(e)) {
+                    this.isPaletteInteraction = true;
+                }
             });
         });
     }
@@ -4409,6 +4431,37 @@ class SpreadsheetApp {
             this.restoreEditorSelection(editor);
             this.updateEditorOverflow(cell, editor);
         }
+    }
+
+    resumeEditingAfterToolbar() {
+        if (!this.currentEditingCell) {
+            this.isToolbarFormattingInteraction = false;
+            this.isPaletteInteraction = false;
+            this.pendingEditorRefocus = false;
+            return;
+        }
+        this.pendingEditorRefocus = true;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (editor) {
+            editor.focus({ preventScroll: true });
+            this.restoreEditorSelection(editor);
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+        }
+        setTimeout(() => {
+            this.isToolbarFormattingInteraction = false;
+            this.isPaletteInteraction = false;
+            this.pendingEditorRefocus = false;
+        }, 150);
+    }
+
+    isFormattingUIOpen() {
+        const paletteOpen = (el) => el && !el.classList.contains('hidden');
+        return (
+            paletteOpen(this.colorPalette) ||
+            paletteOpen(this.fontColorPalette) ||
+            paletteOpen(this.borderMenu) ||
+            this.customColorPickerActive
+        );
     }
     
     handleFormatButtonClick(format) {
@@ -4481,6 +4534,7 @@ class SpreadsheetApp {
             if (activeSelection && activeSelection.rangeCount) {
                 this.currentEditorSelection = { type: 'range', range: activeSelection.getRangeAt(0).cloneRange() };
             }
+            this.resumeEditingAfterToolbar();
             return true;
         } catch (err) {
             console.warn('Unable to apply inline font color', err);
@@ -6138,7 +6192,7 @@ class SpreadsheetApp {
         const captureSelection = () => this.saveEditorSelection(input);
 
         input.addEventListener('blur', () => {
-            if (this.isToolbarFormattingInteraction) {
+            if (this.isToolbarFormattingInteraction || this.pendingEditorRefocus || this.isFormattingUIOpen()) {
                 // Keep editing active when the user clicks toolbar formatting
                 setTimeout(() => {
                     if (this.currentEditingCell === cell) {
@@ -6253,6 +6307,10 @@ class SpreadsheetApp {
     }
 
     stopEditingCell(cancel = false) {
+        if (this.pendingEditorRefocus || this.isFormattingUIOpen()) {
+            this.resumeEditingAfterToolbar();
+            return;
+        }
         const cell = this.currentEditingCell;
         if (!cell) return;
 
@@ -7818,6 +7876,8 @@ class SpreadsheetApp {
             !event.target.closest('#contextMenu') && 
             !event.target.closest('#colorPalette') &&
             !event.target.closest('#fontColorPalette') &&
+            !event.target.closest('#borderMenu') &&
+            !event.target.closest('#customColorPicker') &&
             !event.target.closest('#linkEditor')) {
             if (this.currentEditingCell) {
                 this.stopEditingCell();
@@ -7974,6 +8034,14 @@ class SpreadsheetApp {
         const container = document.getElementById(containerId);
         container.style.display = 'block';
         container.innerHTML = '';
+        if (!container.dataset.guardAttached) {
+            container.addEventListener('pointerdown', (e) => {
+                if (this.markEditorForToolbarRefocus(e)) {
+                    this.isPaletteInteraction = true;
+                }
+            }, { capture: true });
+            container.dataset.guardAttached = 'true';
+        }
         
         const isBackground = type === 'background';
         
@@ -7991,9 +8059,17 @@ class SpreadsheetApp {
         firstBtn.innerHTML = isBackground 
             ? '<span class="color-swatch clear" style="margin-right: var(--space-8);"></span> No fill'
             : '<span class="color-swatch color-swatch-auto" style="margin-right: var(--space-8);">A</span> Automatic';
-        firstBtn.addEventListener('click', () => {
+        firstBtn.addEventListener('pointerdown', (e) => {
+            this.markEditorForToolbarRefocus(e);
+        }, { capture: true });
+        firstBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.markEditorForToolbarRefocus();
             applyColorFn('');
             hidePaletteFn();
+            if (this.currentEditingCell) {
+                setTimeout(() => this.resumeEditingAfterToolbar(), 0);
+            }
         });
         firstRow.appendChild(firstBtn);
         container.appendChild(firstRow);
@@ -8656,9 +8732,17 @@ class SpreadsheetApp {
         swatch.className = 'color-swatch';
         swatch.style.backgroundColor = color;
         swatch.title = color;
-        swatch.addEventListener('click', () => {
+        swatch.addEventListener('pointerdown', (e) => {
+            this.markEditorForToolbarRefocus(e);
+        }, { capture: true });
+        swatch.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.markEditorForToolbarRefocus();
             applyColorFn(color);
             hidePaletteFn();
+            if (this.currentEditingCell) {
+                setTimeout(() => this.resumeEditingAfterToolbar(), 0);
+            }
         });
         swatch.addEventListener('auxclick', (e) => {
             if (e.button === 1) {
@@ -8675,11 +8759,19 @@ class SpreadsheetApp {
         swatch.className = 'color-swatch';
         swatch.style.backgroundColor = color;
         swatch.title = color;
+        swatch.addEventListener('pointerdown', (e) => {
+            this.markEditorForToolbarRefocus(e);
+        }, { capture: true });
         
         // Left click to apply color
-        swatch.addEventListener('click', () => {
+        swatch.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.markEditorForToolbarRefocus();
             applyColorFn(color);
             hidePaletteFn();
+            if (this.currentEditingCell) {
+                setTimeout(() => this.resumeEditingAfterToolbar(), 0);
+            }
         });
         
         // Middle click to copy hex
@@ -8870,6 +8962,10 @@ class SpreadsheetApp {
         if (color) {
             this._recordColorUsage(prop, color);
         }
+        if (this.currentEditingCell) {
+            this.pendingEditorRefocus = true;
+            this.isToolbarFormattingInteraction = true;
+        }
         const applyToAll = this.isFullGridSelection();
         this.saveState(`Apply ${prop}${applyToAll ? ' (all cells)' : ''}`);
 
@@ -8885,6 +8981,7 @@ class SpreadsheetApp {
             keysToDelete.forEach(coord => this.cellData.delete(coord));
             this.refreshAllVisibleCells();
             updateFn.call(this);
+            this.resumeEditingAfterToolbar();
             return;
         }
 
@@ -8900,6 +8997,17 @@ class SpreadsheetApp {
         
         this.selectedCells.forEach(el => el.style[styleProp] = color || '');
         updateFn.call(this);
+
+        // Keep editing experience continuous if we're editing one of the selected cells
+        if (this.currentEditingCell) {
+            const editingCoord = this.getCoord(this.currentEditingCell);
+            const appliesHere = applyToAll || this.selectedCellCoords.has(editingCoord);
+            if (appliesHere) {
+                const data = this.cellData.get(editingCoord) || {};
+                this.refreshEditingCellFormatting(this.currentEditingCell, data);
+                this.resumeEditingAfterToolbar();
+            }
+        }
     }
 
     applyBackgroundColor(c) { 
@@ -8907,6 +9015,12 @@ class SpreadsheetApp {
         this.setupColorPalette();
     }
     applyFontColor(c) { 
+        // If we're editing, try inline color first to keep the caret position
+        if (this.currentEditingCell) {
+            this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
+            const didInline = this.applyInlineFontColor(c);
+            if (didInline) return;
+        }
         this._applyColor('fontColor', 'color', c, this.updateFontColorButton); 
         this.setupFontColorPalette();
     }
@@ -8986,6 +9100,18 @@ class SpreadsheetApp {
     }
 
     setupBorderMenu() {
+        if (!this.borderMenu) {
+            this.borderMenu = document.getElementById('borderMenu');
+        }
+        if (!this.borderMenu) return;
+        if (!this.borderMenu.dataset.guardAttached) {
+            this.borderMenu.addEventListener('pointerdown', (e) => {
+                if (this.markEditorForToolbarRefocus(e)) {
+                    this.isPaletteInteraction = true;
+                }
+            }, { capture: true });
+            this.borderMenu.dataset.guardAttached = 'true';
+        }
         const borderOptions = this.borderMenu.querySelectorAll('.border-option');
         const borderStyleSelect = document.getElementById('borderStyleSelect');
         const borderWidthSelect = document.getElementById('borderWidthSelect');
@@ -9519,6 +9645,10 @@ class SpreadsheetApp {
         if (action !== 'clear' && color) {
             this._recordColorUsage('border', color);
         }
+        if (this.currentEditingCell) {
+            this.pendingEditorRefocus = true;
+            this.isToolbarFormattingInteraction = true;
+        }
         this.saveState(`Apply ${action} border`);
         
         const borderVal = action === 'clear' ? '' : `${width} ${style} ${color}`;
@@ -9639,6 +9769,7 @@ class SpreadsheetApp {
         });
         
         this._updateCellsAndAdjacent(this.selectedCells);
+        this.resumeEditingAfterToolbar();
     }
     
     findContiguousRegions(coordSet = this.selectedCellCoords) {
