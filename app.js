@@ -4314,13 +4314,11 @@ class SpreadsheetApp {
         this.selectedCells.forEach(cell => {
             cell.classList.remove(...classes);
             !remove && cell.classList.add(prefix ? `${prefix}${value}` : type);
-            
-            // ALWAYS refresh the cell display to recalculate overflow for alignment changes
-            if (type === 'textAlign' || type === 'verticalAlign') {
-                const cellKey = this.getCoord(cell);
-                const cellData = this.cellData.get(cellKey) || {};
-                this.updateCellDisplay(cell, cellData);
-            }
+
+            // Refresh display for all formatting changes so overflow text reflects new styling
+            const cellKey = this.getCoord(cell);
+            const cellData = this.cellData.get(cellKey) || {};
+            this.updateCellDisplay(cell, cellData);
         });
         
         // If we changed alignment, also refresh adjacent cells that might be affected by overflow changes
@@ -7358,6 +7356,8 @@ class SpreadsheetApp {
     handleCellOverflow(cell, displayText, cellData) {
         const { row, col } = this.getCellPos(cell);
         const normalizedText = (displayText === undefined || displayText === null) ? '' : String(displayText);
+        const effective = { ...this.defaultCellStyle, ...cellData };
+        const isLink = !!(cellData.linkUrl || this.isHyperlink(normalizedText));
         
         // Remove any existing overflow styling and wrapper
         cell.style.overflow = '';
@@ -7399,8 +7399,8 @@ class SpreadsheetApp {
         }
         
         // Text doesn't fit - calculate available overflow space based on alignment
-        const textAlign = cellData.textAlign ?? this.defaultCellStyle.textAlign ?? 'left';
-        const verticalAlign = cellData.verticalAlign ?? this.defaultCellStyle.verticalAlign ?? 'bottom';
+        const textAlign = effective.textAlign ?? 'left';
+        const verticalAlign = effective.verticalAlign ?? 'bottom';
         
         // Helper function to check if a cell has content
         const cellHasContent = (r, c) => {
@@ -7514,6 +7514,15 @@ class SpreadsheetApp {
         textSpan.style.whiteSpace = 'nowrap';
         textSpan.style.maxWidth = (wrapperWidth - padding) + 'px';
         textSpan.textContent = normalizedText;
+        const decorationParts = [];
+        if (effective.underline || isLink) decorationParts.push('underline');
+        if (effective.strikethrough) decorationParts.push('line-through');
+        if (decorationParts.length) {
+            textSpan.style.textDecorationLine = decorationParts.join(' ');
+            textSpan.style.textDecorationColor = effective.fontColor || 'currentColor';
+        } else {
+            textSpan.style.textDecoration = 'none';
+        }
         
         textWrapper.appendChild(textSpan);
         cell.textContent = '';
