@@ -531,6 +531,7 @@ class SpreadsheetApp {
         this.editorSelectionListener = null;
         this.pendingFormattingInteraction = null;
         this.activeFormattingInteraction = null;
+        this.isToolbarFormattingInteraction = false;
         this.currentEditorSelection = null;
         this.editorSelectionListener = null;
         this.editorBlurTimeout = null;
@@ -3899,10 +3900,12 @@ class SpreadsheetApp {
         
         // Border menu setup
         this.setupBorderMenu();
+
+        this.setupToolbarFocusGuards();
         
         // Pattern-based toolbar buttons
         ['bold', 'italic', 'underline', 'strikethrough'].forEach(f => 
-            document.getElementById(`${f}Btn`)?.addEventListener('click', () => this.toggleFormat(f))
+            document.getElementById(`${f}Btn`)?.addEventListener('click', () => this.handleFormatButtonClick(f))
         );
         
         [['left','Left'], ['center','Center'], ['right','Right']].forEach(([a, n]) => 
@@ -4315,10 +4318,16 @@ class SpreadsheetApp {
             cell.classList.remove(...classes);
             !remove && cell.classList.add(prefix ? `${prefix}${value}` : type);
 
-            // Refresh display for all formatting changes so overflow text reflects new styling
             const cellKey = this.getCoord(cell);
             const cellData = this.cellData.get(cellKey) || {};
-            this.updateCellDisplay(cell, cellData);
+
+            // Avoid destroying the live editor; just refresh its styling in-place
+            if (cell === this.currentEditingCell) {
+                this.refreshEditingCellFormatting(cell, cellData);
+            } else {
+                // Refresh display for all formatting changes so overflow text reflects new styling
+                this.updateCellDisplay(cell, cellData);
+            }
         });
         
         // If we changed alignment, also refresh adjacent cells that might be affected by overflow changes
@@ -4347,9 +4356,75 @@ class SpreadsheetApp {
         
         (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
     }
+
+    setupToolbarFocusGuards() {
+        const keepEditingButtons = [
+            'boldBtn', 'italicBtn', 'underlineBtn', 'strikethroughBtn',
+            'fontColorBtn', 'bgColorBtn',
+            'alignLeftBtn', 'alignCenterBtn', 'alignRightBtn',
+            'alignTopBtn', 'alignMiddleBtn', 'alignBottomBtn'
+        ];
+        keepEditingButtons.forEach(id => {
+            const btn = document.getElementById(id);
+            if (!btn) return;
+            btn.addEventListener('mousedown', (e) => {
+                if (!this.currentEditingCell) return;
+                // Prevent focus from leaving the editor
+                e.preventDefault();
+                const editor = this.currentEditingCell.querySelector('.cell-editor');
+                this.saveEditorSelection(editor);
+                this.isToolbarFormattingInteraction = true;
+            });
+            btn.addEventListener('mouseup', () => {
+                this.isToolbarFormattingInteraction = false;
+            });
+        });
+    }
+
+    refreshEditingCellFormatting(cell, cellData = {}) {
+        if (!cell || cell !== this.currentEditingCell) return;
+        const editor = cell.querySelector('.cell-editor');
+        const wrapper = cell.querySelector('.cell-editor-wrapper');
+        const effective = { ...this.defaultCellStyle, ...cellData };
+
+        // Re-align wrapper to match new alignment
+        if (wrapper) {
+            const alignItemsMap = { 'top': 'flex-start', 'middle': 'center', 'bottom': 'flex-end' };
+            const justifyContentMap = { 'left': 'flex-start', 'center': 'center', 'right': 'flex-end' };
+            wrapper.style.alignItems = alignItemsMap[effective.verticalAlign || 'bottom'] || 'flex-end';
+            wrapper.style.justifyContent = justifyContentMap[effective.textAlign || 'left'] || 'flex-start';
+        }
+
+        if (editor) {
+            const computed = window.getComputedStyle(cell);
+            editor.style.fontSize = computed.fontSize;
+            editor.style.fontFamily = computed.fontFamily;
+            editor.style.fontWeight = computed.fontWeight;
+            editor.style.fontStyle = computed.fontStyle;
+            editor.style.lineHeight = computed.lineHeight;
+            editor.style.color = computed.color;
+            editor.style.textAlign = effective.textAlign || 'left';
+            const textDecoration = computed.textDecorationLine || computed.textDecoration;
+            editor.style.textDecoration = textDecoration && textDecoration !== 'none' ? textDecoration : 'none';
+            this.restoreEditorSelection(editor);
+            this.updateEditorOverflow(cell, editor);
+        }
+    }
     
     handleFormatButtonClick(format) {
-        if (this.currentEditingCell && this.applyInlineFormat(format)) {
+        if (this.currentEditingCell) {
+            const editor = this.currentEditingCell.querySelector('.cell-editor');
+            this.saveEditorSelection(editor);
+            const inlineApplied = this.applyInlineFormat(format);
+            if (!inlineApplied) {
+                this.toggleFormat(format);
+            }
+            if (editor) {
+                editor.focus();
+                this.restoreEditorSelection(editor);
+                this.updateEditorOverflow(this.currentEditingCell, editor);
+            }
+            this.isToolbarFormattingInteraction = false;
             return;
         }
         this.toggleFormat(format);
@@ -4373,6 +4448,7 @@ class SpreadsheetApp {
             document.execCommand(command, false, null);
             this.updateEditorOverflow(this.currentEditingCell, editor);
             this.syncEditorToFormulaBar(editor);
+            this.saveEditorSelection(editor);
             return true;
         } catch (err) {
             console.warn('Unable to apply inline format', err);
@@ -4403,12 +4479,57 @@ class SpreadsheetApp {
             this.syncEditorToFormulaBar(editor);
             const activeSelection = window.getSelection();
             if (activeSelection && activeSelection.rangeCount) {
-                this.currentEditorSelection = activeSelection.getRangeAt(0).cloneRange();
+                this.currentEditorSelection = { type: 'range', range: activeSelection.getRangeAt(0).cloneRange() };
             }
             return true;
         } catch (err) {
             console.warn('Unable to apply inline font color', err);
             return false;
+        }
+    }
+
+    saveEditorSelection(editor) {
+        if (!editor) return;
+        if (typeof editor.selectionStart === 'number') {
+            const start = editor.selectionStart;
+            const end = typeof editor.selectionEnd === 'number' ? editor.selectionEnd : start;
+            this.currentEditorSelection = { type: 'input', start, end };
+            return;
+        }
+
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return;
+        this.currentEditorSelection = { type: 'range', range: range.cloneRange() };
+    }
+
+    restoreEditorSelection(editor) {
+        if (!editor) return;
+        const sel = this.currentEditorSelection;
+
+        if (sel && sel.type === 'input' && typeof editor.setSelectionRange === 'function') {
+            const max = (editor.value || '').length;
+            const start = Math.min(sel.start ?? max, max);
+            const end = Math.min(sel.end ?? start, max);
+            try {
+                editor.setSelectionRange(start, end);
+                return;
+            } catch (err) {
+                // Fallback to default behavior below
+            }
+        }
+
+        if (sel && sel.type === 'range' && sel.range && typeof window.getSelection === 'function') {
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(sel.range);
+            return;
+        }
+
+        if (typeof editor.setSelectionRange === 'function') {
+            const len = (editor.value || '').length;
+            editor.setSelectionRange(len, len);
         }
     }
 
@@ -6010,14 +6131,31 @@ class SpreadsheetApp {
         } else {
             input.setSelectionRange(currentText.length, currentText.length);
         }
+        this.saveEditorSelection(input);
 
         this.formulaInput.value = currentText;
 
-        input.addEventListener('blur', () => this.stopEditingCell());
+        const captureSelection = () => this.saveEditorSelection(input);
+
+        input.addEventListener('blur', () => {
+            if (this.isToolbarFormattingInteraction) {
+                // Keep editing active when the user clicks toolbar formatting
+                setTimeout(() => {
+                    if (this.currentEditingCell === cell) {
+                        input.focus();
+                        this.restoreEditorSelection(input);
+                    }
+                }, 0);
+                return;
+            }
+            this.stopEditingCell();
+        });
         input.addEventListener('input', () => {
             // Update overflow as user types
             this.updateEditorOverflow(cell, input);
+            captureSelection();
         });
+        ['select', 'keyup', 'mouseup'].forEach(evt => input.addEventListener(evt, captureSelection));
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -6118,6 +6256,7 @@ class SpreadsheetApp {
         const cell = this.currentEditingCell;
         if (!cell) return;
 
+        this.isToolbarFormattingInteraction = false;
         const input = cell.querySelector('.cell-editor');
         const oldValue = cell.dataset.originalValue || '';
         const newValue = cancel ? oldValue : (input ? input.value : oldValue);
@@ -7208,6 +7347,9 @@ class SpreadsheetApp {
     }
 
     updateCellDisplay(cell, d = {}) {
+        if (cell.classList.contains('editing')) {
+            return;
+        }
         const coord = this.getCoord(cell);
         const { row, col } = this.getCellPos(cell);
         const hadCutPreview = cell.classList.contains('cut-preview');
