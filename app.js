@@ -174,6 +174,10 @@ const CONTEXT_MENU_HTML = `
             <span class="context-menu-icon">↕️</span>
             <span>Set Row Height…</span>
         </div>
+        <div class="context-menu-item context-menu-item--col-width" id="colWidthMenuItem" data-action="setColWidth" style="display: none;">
+            <span class="context-menu-icon">↔️</span>
+            <span>Set Column Width…</span>
+        </div>
         <div class="context-menu-separator" id="linkSeparator2"></div>
         <div class="context-menu-item" data-action="insertRow">
             <span class="context-menu-icon">➕</span>
@@ -6458,6 +6462,22 @@ class SpreadsheetApp {
             return;
         }
 
+        const colHeader = event.target.closest('.column-header');
+        if (colHeader && !event.target.closest('.column-resize-handle')) {
+            event.preventDefault();
+            const colIndex = parseInt(colHeader.dataset.col, 10);
+            if (!Number.isNaN(colIndex)) {
+                const colAlreadySelected = this.isRangeFullySelected('column', colIndex);
+                if (!colAlreadySelected) {
+                    this.clearAllSelections();
+                    this.selectRange('column', colIndex, false);
+                }
+                this.showContextMenu(event.clientX, event.clientY, { type: 'columnHeader', col: colIndex, clientX: event.clientX, clientY: event.clientY });
+                this.log(`Context menu opened for column ${this.getColumnName(colIndex)}`);
+            }
+            return;
+        }
+
         const cell = this.resolveCellFromEvent(event);
 
         if (cell && !event.target.classList.contains('cell-editor')) {
@@ -6482,15 +6502,17 @@ class SpreadsheetApp {
         // Check if primary cell has a link
         const hasLink = this.primaryCell && this.cellHasLink();
         const isRowContext = context && context.type === 'rowHeader';
+        const isColContext = context && context.type === 'columnHeader';
         
         // Show/hide appropriate link menu items
         const openLinkItem = document.getElementById('openLinkItem');
         const editLinkItem = document.getElementById('editLinkItem');
         const insertLinkItem = document.getElementById('insertLinkItem');
         const rowHeightItem = document.getElementById('rowHeightMenuItem');
+        const colWidthItem = document.getElementById('colWidthMenuItem');
         
         if (openLinkItem && editLinkItem && insertLinkItem) {
-            if (isRowContext) {
+            if (isRowContext || isColContext) {
                 openLinkItem.style.display = 'none';
                 editLinkItem.style.display = 'none';
                 insertLinkItem.style.display = 'none';
@@ -6507,6 +6529,9 @@ class SpreadsheetApp {
 
         if (rowHeightItem) {
             rowHeightItem.style.display = isRowContext ? 'flex' : 'none';
+        }
+        if (colWidthItem) {
+            colWidthItem.style.display = isColContext ? 'flex' : 'none';
         }
 
         setTimeout(() => {
@@ -6598,6 +6623,9 @@ class SpreadsheetApp {
                 break;
             case 'setRowHeight':
                 this.promptSetRowHeight(context);
+                break;
+            case 'setColWidth':
+                this.promptSetColumnWidth(context);
                 break;
         }
     }
@@ -6752,6 +6780,46 @@ class SpreadsheetApp {
         });
         this.recalculateAutoRowHeights(new Set(rows));
         this.refreshLayoutAfterRowHeightChange();
+        this.scheduleDirtyStateUpdate();
+    }
+
+    getSelectedCols() {
+        const cols = new Set();
+        this.selectedCellCoords.forEach(coord => {
+            const { col } = this.getCoordPos(coord);
+            cols.add(col);
+        });
+        return Array.from(cols).sort((a, b) => a - b);
+    }
+
+    promptSetColumnWidth(context = { type: 'cell' }) {
+        const contextCol = Number.isInteger(context?.col) ? context.col : null;
+        const cols = this.getSelectedCols();
+        if (!cols.length && contextCol !== null) {
+            cols.push(contextCol);
+        }
+        if (!cols.length) return;
+
+        const current = cols.length === 1
+            ? Math.round(this.getColumnWidth(cols[0]))
+            : Math.round(this.config.cellWidth || 100);
+        const input = window.prompt(`Enter width (px) for ${cols.length} column(s):`, String(current));
+        if (input === null) return;
+        const parsed = parseFloat(input);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            window.alert('Please enter a valid positive number.');
+            return;
+        }
+        const minWidth = 10;
+        const width = Math.max(minWidth, Math.round(parsed));
+        cols.forEach(col => {
+            this.columnWidths.set(col, width);
+        });
+        this.updateGridSize();
+        this.updateHeaderPositions();
+        this.repositionCells();
+        this.renderSelectionOverlays();
+        this.renderBorderOverlays();
         this.scheduleDirtyStateUpdate();
     }
 
