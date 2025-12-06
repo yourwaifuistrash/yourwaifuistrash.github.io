@@ -2383,7 +2383,7 @@ class SpreadsheetApp {
                 ...Array.from(this.rowDefaultHeightOverrides.keys(), k => Number(k))
             ]);
 
-        let changed = this.defaultAutoRowHeight !== prevDefaultHeight;
+        let changed = this.defaultAutoRowHeight !== prevDefaultHeight || (targetRows && targetRows.size > 0);
         rowsToProcess.forEach(row => {
             if (this.rowHeights.has(row) || this.rowHeightModes.get(row) === 'explicit') {
                 if (this.autoRowHeights.delete(row)) changed = true;
