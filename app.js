@@ -170,6 +170,10 @@ const CONTEXT_MENU_HTML = `
             <span class="context-menu-icon">🔗</span>
             <span>Insert Link</span>
         </div>
+        <div class="context-menu-item context-menu-item--row-height" id="rowHeightMenuItem" data-action="setRowHeight" style="display: none;">
+            <span class="context-menu-icon">↕️</span>
+            <span>Set Row Height…</span>
+        </div>
         <div class="context-menu-separator" id="linkSeparator2"></div>
         <div class="context-menu-item" data-action="insertRow">
             <span class="context-menu-icon">➕</span>
@@ -531,6 +535,8 @@ class SpreadsheetApp {
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
         this.renderedCellCoords = new Set();
+        this.rowHeightChoicePopover = null;
+        this.rowHeightChoiceOutsideHandler = null;
         
         // Merged cells tracking
         this.mergedCells = new Map(); // Map of parent cell coord -> {rows, cols, childCells: Set}
@@ -593,12 +599,15 @@ class SpreadsheetApp {
         this.visibleCols = { start: 0, end: 20 };
         this.defaultCellStyle = {};
         this.defaultAutoRowHeight = this.config?.cellHeight || 32;
+        this.rowDefaultHeightOverrides = new Map();
         this.initialAutoRowHeights = new Map();
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
+        this.initialRowDefaultHeightOverrides = new Map();
         this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
         this.initialRowHeightModes = new Map();
         this.fullSheetSelection = false;
         this.blockNextNativeContextMenu = false;
+        this.lastContextMenuPosition = null;
         this.initializeRowHeightMetrics();
 
         // DOM elements
@@ -621,6 +630,7 @@ class SpreadsheetApp {
         this.cellReference = document.getElementById('cellReference');
         this.formulaInput = document.getElementById('formulaInput');
         this.contextMenu = document.getElementById('contextMenu');
+        this.contextMenuContext = { type: 'cell' };
         this.colorPalette = document.getElementById('colorPalette');
         this.fontColorPalette = document.getElementById('fontColorPalette');
         this.linkEditor = document.getElementById('linkEditor');
@@ -1462,12 +1472,12 @@ class SpreadsheetApp {
             const changeType = beforeEmpty ? 'added' : afterEmpty ? 'removed' : 'modified';
             const beforeSize = {
                 width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
-                height: this.getSnapshotRowHeight(this.initialRowHeights, row, this.initialAutoRowHeights, this.initialDefaultRowHeight)
-            };
-            const afterSize = {
-                width: this.getColumnWidth(col),
-                height: this.getRowHeight(row)
-            };
+            height: this.getSnapshotRowHeight(this.initialRowHeights, row, this.initialAutoRowHeights, this.initialDefaultRowHeight, this.initialRowDefaultHeightOverrides)
+        };
+        const afterSize = {
+            width: this.getColumnWidth(col),
+            height: this.getRowHeight(row)
+        };
             const beforeMode = this.getRowHeightMode(this.initialRowHeightModes, row, 'implicit');
             const afterMode = this.getRowHeightMode(this.rowHeightModes, row, 'implicit');
             let baseChanges = [];
@@ -1651,6 +1661,7 @@ class SpreadsheetApp {
         this.rowHeights = new Map(this.initialRowHeights || []);
         this.autoRowHeights = new Map(this.initialAutoRowHeights || []);
         this.defaultAutoRowHeight = this.initialDefaultRowHeight || this.config.cellHeight;
+        this.rowDefaultHeightOverrides = new Map(this.initialRowDefaultHeightOverrides || []);
         this.defaultCellStyle = this.cloneDefaultCellStyle(this.initialDefaultCellStyle);
         this.rowHeightModes = new Map(this.initialRowHeightModes || []);
         this.columnWidths = new Map(this.initialColumnWidths || []);
@@ -1814,6 +1825,7 @@ class SpreadsheetApp {
                 rowHeights: this.serializeMap(this.rowHeights),
                 rowHeightModes: this.serializeMap(this.rowHeightModes),
                 autoRowHeights: this.serializeMap(this.autoRowHeights),
+                rowDefaultHeightOverrides: this.serializeMap(this.rowDefaultHeightOverrides),
                 columnWidths: this.serializeMap(this.columnWidths),
                 persistedRange: { ...this.persistedRange },
                 mergedCells: this.cloneMergedCellsState(),
@@ -1892,6 +1904,11 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (payload.rowDefaultHeightOverrides) {
+                this.rowDefaultHeightOverrides = this.deserializeMap(payload.rowDefaultHeightOverrides);
+                restored = true;
+                needsRefresh = true;
+            }
             if (payload.columnWidths) {
                 this.columnWidths = this.deserializeMap(payload.columnWidths);
                 restored = true;
@@ -1951,6 +1968,7 @@ class SpreadsheetApp {
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
+        this.initialRowDefaultHeightOverrides = new Map(this.rowDefaultHeightOverrides);
         this.initialDefaultCellStyle = this.cloneDefaultCellStyle();
         this.initialRowHeightModes = new Map(this.rowHeightModes);
         this.initialColumnWidths = new Map(this.columnWidths);
@@ -2196,7 +2214,7 @@ class SpreadsheetApp {
         return this.getValueFromMapLike(mapLike, col, this.config.cellWidth);
     }
 
-    getSnapshotRowHeight(mapLike, row, autoMap = null, defaultHeight = this.initialDefaultRowHeight ?? this.config.cellHeight) {
+    getSnapshotRowHeight(mapLike, row, autoMap = null, defaultHeight = this.initialDefaultRowHeight ?? this.config.cellHeight, defaultRowOverrideMap = null) {
         const explicit = this.getValueFromMapLike(mapLike, row, null);
         if (Number.isFinite(explicit) && explicit > 0) return explicit;
 
@@ -2204,6 +2222,9 @@ class SpreadsheetApp {
             const auto = this.getValueFromMapLike(autoMap, row, null);
             if (Number.isFinite(auto) && auto > 0) return auto;
         }
+
+        const override = this.getValueFromMapLike(defaultRowOverrideMap, row, null);
+        if (Number.isFinite(override) && override > 0) return override;
 
         const fallback = Number(defaultHeight);
         return Number.isFinite(fallback) && fallback > 0 ? fallback : this.config.cellHeight;
@@ -2333,7 +2354,8 @@ class SpreadsheetApp {
 
         const prevDefaultHeight = this.defaultAutoRowHeight;
         const defaultFontSize = this.getDefaultFontSizeForAutoHeight();
-        this.defaultAutoRowHeight = this.computeRowHeightForFontSize(defaultFontSize);
+        const computedDefault = this.computeRowHeightForFontSize(defaultFontSize);
+        this.defaultAutoRowHeight = computedDefault;
 
         const rowMaxFont = new Map();
         if (targetRows) {
@@ -2355,7 +2377,11 @@ class SpreadsheetApp {
 
         const rowsToProcess = targetRows
             ? new Set(targetRows)
-            : new Set([...rowMaxFont.keys(), ...Array.from(this.autoRowHeights.keys(), k => Number(k))]);
+            : new Set([
+                ...rowMaxFont.keys(),
+                ...Array.from(this.autoRowHeights.keys(), k => Number(k)),
+                ...Array.from(this.rowDefaultHeightOverrides.keys(), k => Number(k))
+            ]);
 
         let changed = this.defaultAutoRowHeight !== prevDefaultHeight;
         rowsToProcess.forEach(row => {
@@ -2367,17 +2393,20 @@ class SpreadsheetApp {
             const maxFont = rowMaxFont.has(row) ? rowMaxFont.get(row) : defaultFontSize;
             const desiredHeight = this.computeRowHeightForFontSize(maxFont);
             const existing = this.autoRowHeights.get(row);
+            const baseHeight = this.getDefaultRowHeightForRow(row);
 
-            if (desiredHeight > this.defaultAutoRowHeight) {
+            if (desiredHeight > baseHeight) {
                 if (existing !== desiredHeight) {
                     this.autoRowHeights.set(row, desiredHeight);
                     this.rowHeightModes.set(row, 'implicit');
                     changed = true;
                 }
-            } else if (this.autoRowHeights.has(row)) {
-                this.autoRowHeights.delete(row);
-                this.rowHeightModes.delete(row);
-                changed = true;
+            } else {
+                if (this.autoRowHeights.has(row)) {
+                    this.autoRowHeights.delete(row);
+                    this.rowHeightModes.delete(row);
+                    changed = true;
+                }
             }
         });
 
@@ -2454,7 +2483,7 @@ class SpreadsheetApp {
         return this.getChangedIndices({
             initial: initialCombined,
             current: currentCombined,
-            getSnapshotSize: index => this.getSnapshotRowHeight(this.initialRowHeights, index, this.initialAutoRowHeights, this.initialDefaultRowHeight),
+            getSnapshotSize: index => this.getSnapshotRowHeight(this.initialRowHeights, index, this.initialAutoRowHeights, this.initialDefaultRowHeight, this.initialRowDefaultHeightOverrides),
             getSize: index => this.getRowHeight(index)
         });
     }
@@ -2463,10 +2492,10 @@ class SpreadsheetApp {
         const isColumn = kind === 'column';
         const beforeSize = isColumn ? {
             width: this.getSnapshotColumnWidth(this.initialColumnWidths, index),
-            height: this.getSnapshotRowHeight(this.initialRowHeights, 0, this.initialAutoRowHeights, this.initialDefaultRowHeight)
+            height: this.getSnapshotRowHeight(this.initialRowHeights, 0, this.initialAutoRowHeights, this.initialDefaultRowHeight, this.initialRowDefaultHeightOverrides)
         } : {
             width: this.getSnapshotColumnWidth(this.initialColumnWidths, 0),
-            height: this.getSnapshotRowHeight(this.initialRowHeights, index, this.initialAutoRowHeights, this.initialDefaultRowHeight)
+            height: this.getSnapshotRowHeight(this.initialRowHeights, index, this.initialAutoRowHeights, this.initialDefaultRowHeight, this.initialRowDefaultHeightOverrides)
         };
         const afterSize = isColumn ? {
             width: this.getColumnWidth(index),
@@ -2482,7 +2511,11 @@ class SpreadsheetApp {
         const indices = kind === 'column' ? this.getChangedColumns() : this.getChangedRows();
         indices.forEach(index => {
             const { beforeSize, afterSize, isColumn } = this.getDimensionSizes(kind, index);
-            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize);
+            const sizeChanges = this.describeSizeDifferences(beforeSize, afterSize, {
+                dimensionKind: kind === 'row' ? 'row' : null,
+                modeBefore: kind === 'row' ? this.getRowHeightMode(this.initialRowHeightModes, index, 'implicit') : null,
+                modeAfter: kind === 'row' ? this.getRowHeightMode(this.rowHeightModes, index, 'implicit') : null
+            });
             if (!sizeChanges.length) return;
             handler({ index, beforeSize, afterSize, sizeChanges, isColumn });
         });
@@ -3770,12 +3803,18 @@ class SpreadsheetApp {
         return cell;
     }
     
+    getDefaultRowHeightForRow(row) {
+        const override = this.getValueFromMapLike(this.rowDefaultHeightOverrides, row, null);
+        if (Number.isFinite(override) && override > 0) return override;
+        return this.defaultAutoRowHeight || this.config.cellHeight;
+    }
+
     getRowHeight(row) {
         const explicit = this.getValueFromMapLike(this.rowHeights, row, null);
         if (Number.isFinite(explicit) && explicit > 0) return explicit;
         const auto = this.getValueFromMapLike(this.autoRowHeights, row, null);
         if (Number.isFinite(auto) && auto > 0) return auto;
-        return this.defaultAutoRowHeight || this.config.cellHeight;
+        return this.getDefaultRowHeightForRow(row);
     }
     getColumnWidth(col) { return this.getValueFromMapLike(this.columnWidths, col, this.config.cellWidth); }
 
@@ -5460,13 +5499,14 @@ class SpreadsheetApp {
 
         this.shiftCellDataForInsertion(axis, startIndex, effectiveCount);
 
-        if (isRow) {
-            this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, effectiveCount, limit);
-            this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, effectiveCount, limit);
-            this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, effectiveCount, limit);
-        } else {
-            this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, effectiveCount, limit);
-        }
+            if (isRow) {
+                this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, effectiveCount, limit);
+                this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, effectiveCount, limit);
+                this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, effectiveCount, limit);
+                this.rowDefaultHeightOverrides = this.shiftIndexedMap(this.rowDefaultHeightOverrides, startIndex, effectiveCount, limit);
+            } else {
+                this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, effectiveCount, limit);
+            }
 
         if (this.clipboard?.sourceCells instanceof Set) {
             this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'insert');
@@ -5506,13 +5546,14 @@ class SpreadsheetApp {
 
         this.shiftCellDataForDeletion(axis, startIndex, effectiveCount);
 
-        if (isRow) {
-            this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, -effectiveCount, limit, effectiveCount);
-            this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, -effectiveCount, limit, effectiveCount);
-            this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, -effectiveCount, limit, effectiveCount);
-        } else {
-            this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, -effectiveCount, limit, effectiveCount);
-        }
+            if (isRow) {
+                this.rowHeights = this.shiftIndexedMap(this.rowHeights, startIndex, -effectiveCount, limit, effectiveCount);
+                this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, -effectiveCount, limit, effectiveCount);
+                this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, -effectiveCount, limit, effectiveCount);
+                this.rowDefaultHeightOverrides = this.shiftIndexedMap(this.rowDefaultHeightOverrides, startIndex, -effectiveCount, limit, effectiveCount);
+            } else {
+                this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, -effectiveCount, limit, effectiveCount);
+            }
 
         if (this.clipboard?.sourceCells instanceof Set) {
             this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'delete');
@@ -6401,6 +6442,22 @@ class SpreadsheetApp {
             return;
         }
 
+        const rowHeader = event.target.closest('.row-header');
+        if (rowHeader && !event.target.closest('.row-resize-handle')) {
+            event.preventDefault();
+            const rowIndex = parseInt(rowHeader.dataset.row, 10);
+            if (!Number.isNaN(rowIndex)) {
+                const rowAlreadySelected = this.isRangeFullySelected('row', rowIndex);
+                if (!rowAlreadySelected) {
+                    this.clearAllSelections();
+                    this.selectRange('row', rowIndex, false);
+                }
+                this.showContextMenu(event.clientX, event.clientY, { type: 'rowHeader', row: rowIndex });
+                this.log(`Context menu opened for row ${rowIndex + 1}`);
+            }
+            return;
+        }
+
         const cell = this.resolveCellFromEvent(event);
 
         if (cell && !event.target.classList.contains('cell-editor')) {
@@ -6411,26 +6468,33 @@ class SpreadsheetApp {
                 this.selectCells([cell], true);
             }
             
-            this.showContextMenu(event.clientX, event.clientY);
+            this.showContextMenu(event.clientX, event.clientY, { type: 'cell' });
             this.log(`Context menu opened for ${this.selectedCells.size} selected cells`);
         }
     }
 
-    showContextMenu(x, y) {
+    showContextMenu(x, y, context = { type: 'cell' }) {
+        this.contextMenuContext = context || { type: 'cell' };
         this.contextMenu.classList.remove('hidden');
         this.contextMenu.style.left = x + 'px';
         this.contextMenu.style.top = y + 'px';
         
         // Check if primary cell has a link
         const hasLink = this.primaryCell && this.cellHasLink();
+        const isRowContext = context && context.type === 'rowHeader';
         
         // Show/hide appropriate link menu items
         const openLinkItem = document.getElementById('openLinkItem');
         const editLinkItem = document.getElementById('editLinkItem');
         const insertLinkItem = document.getElementById('insertLinkItem');
+        const rowHeightItem = document.getElementById('rowHeightMenuItem');
         
         if (openLinkItem && editLinkItem && insertLinkItem) {
-            if (hasLink) {
+            if (isRowContext) {
+                openLinkItem.style.display = 'none';
+                editLinkItem.style.display = 'none';
+                insertLinkItem.style.display = 'none';
+            } else if (hasLink) {
                 openLinkItem.style.display = 'flex';
                 editLinkItem.style.display = 'flex';
                 insertLinkItem.style.display = 'none';
@@ -6439,6 +6503,10 @@ class SpreadsheetApp {
                 editLinkItem.style.display = 'none';
                 insertLinkItem.style.display = 'flex';
             }
+        }
+
+        if (rowHeightItem) {
+            rowHeightItem.style.display = isRowContext ? 'flex' : 'none';
         }
 
         setTimeout(() => {
@@ -6481,12 +6549,12 @@ class SpreadsheetApp {
                 this.showLinkEditor(action === 'editLink');
             }, 10);
         } else {
-            this.executeContextAction(action);
+            this.executeContextAction(action, this.contextMenuContext);
             this.hideContextMenu();
         }
     }
 
-    executeContextAction(action) {
+    executeContextAction(action, context = { type: 'cell' }) {
         switch (action) {
             case 'cut':
                 this.cutCells();
@@ -6528,7 +6596,198 @@ class SpreadsheetApp {
             case 'deleteCol':
                 this.deleteColumnsAtSelection();
                 break;
+            case 'setRowHeight':
+                this.promptSetRowHeight(context);
+                break;
         }
+    }
+
+    getSelectedRows() {
+        const rows = new Set();
+        this.selectedCellCoords.forEach(coord => {
+            const { row } = this.getCoordPos(coord);
+            rows.add(row);
+        });
+        return Array.from(rows).sort((a, b) => a - b);
+    }
+
+    promptSetRowHeight(context = { type: 'cell' }) {
+        const contextRow = Number.isInteger(context?.row) ? context.row : null;
+        const selectedRows = this.getSelectedRows();
+        if (!selectedRows.length && contextRow !== null) {
+            selectedRows.push(contextRow);
+        }
+        if (!selectedRows.length) return;
+
+        const anchor = this.getContextMenuAnchor(context);
+        this.showRowHeightChoiceUI({
+            rows: selectedRows,
+            anchor
+        });
+    }
+
+    getContextMenuAnchor(context = {}) {
+        if (Number.isFinite(context?.clientX) && Number.isFinite(context?.clientY)) {
+            return { x: context.clientX, y: context.clientY };
+        }
+        const rect = this.contextMenu?.getBoundingClientRect();
+        if (rect) {
+            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        }
+        return null;
+    }
+
+    showRowHeightChoiceUI({ rows, anchor }) {
+        this.destroyRowHeightChoiceUI();
+        const container = document.createElement('div');
+        container.className = 'row-height-choice-popover';
+        container.style.position = 'fixed';
+        container.style.zIndex = '10000';
+        container.style.background = 'var(--color-surface, #1e1e1e)';
+        container.style.color = 'var(--color-text, #eee)';
+        container.style.border = '1px solid var(--color-border, #444)';
+        container.style.borderRadius = '6px';
+        container.style.padding = '8px';
+        container.style.boxShadow = '0 4px 14px rgba(0,0,0,0.3)';
+        container.style.minWidth = '240px';
+
+        const title = document.createElement('div');
+        title.textContent = 'Set row height';
+        title.style.fontWeight = '600';
+        title.style.marginBottom = '6px';
+        container.appendChild(title);
+
+        const makeButton = (label, handler) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = label;
+            btn.style.display = 'block';
+            btn.style.width = '100%';
+            btn.style.margin = '4px 0';
+            btn.style.padding = '6px 8px';
+            btn.style.borderRadius = '4px';
+            btn.style.border = '1px solid var(--color-border, #444)';
+            btn.style.background = 'var(--color-surface-strong, #2b2b2b)';
+            btn.style.color = 'inherit';
+            btn.style.cursor = 'pointer';
+            btn.addEventListener('click', () => {
+                handler();
+                this.destroyRowHeightChoiceUI();
+            });
+            return btn;
+        };
+
+        container.appendChild(makeButton('Set new default height', () => {
+            this.promptSetDefaultRowHeight(rows);
+        }));
+        container.appendChild(makeButton('Set explicit height for selection', () => {
+            this.promptSetExplicitRowHeight(rows);
+        }));
+        container.appendChild(makeButton('Auto-fit selection (implicit)', () => {
+            this.applyImplicitRowHeight(rows);
+        }));
+
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.style.display = 'block';
+        cancel.style.width = '100%';
+        cancel.style.marginTop = '8px';
+        cancel.style.padding = '6px 8px';
+        cancel.style.borderRadius = '4px';
+        cancel.style.border = '1px solid var(--color-border, #444)';
+        cancel.style.background = 'transparent';
+        cancel.style.color = 'inherit';
+        cancel.style.cursor = 'pointer';
+        cancel.addEventListener('click', () => this.destroyRowHeightChoiceUI());
+        container.appendChild(cancel);
+
+        const pos = anchor || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        const offset = 6;
+        container.style.left = `${Math.min(Math.max(8, pos.x + offset), window.innerWidth - 260)}px`;
+        container.style.top = `${Math.min(Math.max(8, pos.y + offset), window.innerHeight - 160)}px`;
+
+        document.body.appendChild(container);
+        this.rowHeightChoicePopover = container;
+
+        this.rowHeightChoiceOutsideHandler = (e) => {
+            if (this.rowHeightChoicePopover && !this.rowHeightChoicePopover.contains(e.target)) {
+                this.destroyRowHeightChoiceUI();
+            }
+        };
+        setTimeout(() => document.addEventListener('mousedown', this.rowHeightChoiceOutsideHandler, true), 0);
+    }
+
+    destroyRowHeightChoiceUI() {
+        if (this.rowHeightChoiceOutsideHandler) {
+            document.removeEventListener('mousedown', this.rowHeightChoiceOutsideHandler, true);
+            this.rowHeightChoiceOutsideHandler = null;
+        }
+        if (this.rowHeightChoicePopover) {
+            this.rowHeightChoicePopover.remove();
+            this.rowHeightChoicePopover = null;
+        }
+    }
+
+    promptSetDefaultRowHeight(rows = []) {
+        if (!Array.isArray(rows) || !rows.length) {
+            rows = this.getSelectedRows();
+        }
+        if (!rows.length) return;
+        const current = Math.round(this.defaultAutoRowHeight || this.config.cellHeight || 32);
+        const input = window.prompt('Enter new default row height (px) for selection:', String(current));
+        if (input === null) return;
+        const parsed = parseFloat(input);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            window.alert('Please enter a valid positive number.');
+            return;
+        }
+        const minHeight = Math.max(1, this.config?.cellHeight || 1);
+        const height = Math.max(minHeight, Math.round(parsed));
+        rows.forEach(row => {
+            this.rowDefaultHeightOverrides.set(row, height);
+            this.rowHeights.delete(row);
+            this.autoRowHeights.delete(row);
+            this.rowHeightModes.set(row, 'implicit');
+        });
+        this.recalculateAutoRowHeights(new Set(rows));
+        this.refreshLayoutAfterRowHeightChange();
+        this.scheduleDirtyStateUpdate();
+    }
+
+    promptSetExplicitRowHeight(rows) {
+        if (!Array.isArray(rows) || !rows.length) return;
+        const current = rows.length === 1
+            ? Math.round(this.getRowHeight(rows[0]))
+            : Math.round(this.defaultAutoRowHeight || this.config.cellHeight || 32);
+        const input = window.prompt(`Enter explicit height (px) for ${rows.length} row(s):`, String(current));
+        if (input === null) return;
+        const parsed = parseFloat(input);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            window.alert('Please enter a valid positive number.');
+            return;
+        }
+        const minHeight = Math.max(1, this.config?.cellHeight || 1);
+        const height = Math.max(minHeight, Math.round(parsed));
+        rows.forEach(row => {
+            this.rowHeights.set(row, height);
+            this.autoRowHeights.delete(row);
+            this.rowHeightModes.set(row, 'explicit');
+            this.rowDefaultHeightOverrides.delete(row);
+        });
+        this.refreshLayoutAfterRowHeightChange();
+        this.scheduleDirtyStateUpdate();
+    }
+
+    applyImplicitRowHeight(rows) {
+        if (!Array.isArray(rows) || !rows.length) return;
+        rows.forEach(row => {
+            this.rowHeights.delete(row);
+            this.rowHeightModes.delete(row);
+            this.rowDefaultHeightOverrides.delete(row);
+        });
+        this.recalculateAutoRowHeights(new Set(rows));
+        this.scheduleDirtyStateUpdate();
     }
     
     _getRelativeCoords() {
