@@ -534,6 +534,7 @@ class SpreadsheetApp {
         this.isToolbarFormattingInteraction = false;
         this.isPaletteInteraction = false;
         this.isFontSizeEditing = false;
+        this.isPaletteFieldEditing = false;
         this.pendingEditorRefocus = false;
         this.currentEditorSelection = null;
         this.editorSelectionListener = null;
@@ -4385,7 +4386,7 @@ class SpreadsheetApp {
         (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
     }
 
-    markEditorForToolbarRefocus(event = null, preventDefault = true) {
+    markEditorForToolbarRefocus(event = null, preventDefault = true, { refocus = true } = {}) {
         if (!this.currentEditingCell) return false;
         if (preventDefault && event && typeof event.preventDefault === 'function') {
             event.preventDefault();
@@ -4393,7 +4394,9 @@ class SpreadsheetApp {
         const editor = this.currentEditingCell.querySelector('.cell-editor');
         this.saveEditorSelection(editor);
         this.isToolbarFormattingInteraction = true;
-        this.pendingEditorRefocus = true;
+        if (refocus) {
+            this.pendingEditorRefocus = true;
+        }
         return true;
     }
 
@@ -4422,10 +4425,68 @@ class SpreadsheetApp {
         paletteGuards.forEach(el => {
             if (!el) return;
             el.addEventListener('mousedown', (e) => {
-                if (this.markEditorForToolbarRefocus(e)) {
+                const isField = e.target.closest('input, select, textarea, .color-picker-input');
+                if (isField) {
+                    this.isPaletteFieldEditing = true;
+                    // Do NOT schedule a refocus; just keep the editor selection saved
+                    this.isToolbarFormattingInteraction = false;
+                    this.pendingEditorRefocus = false;
+                    this.saveEditorSelection(this.currentEditingCell?.querySelector('.cell-editor'));
+                    setTimeout(() => {
+                        if (e.target && typeof e.target.focus === 'function') {
+                            e.target.focus();
+                        }
+                    }, 0);
+                    return;
+                }
+                if (this.markEditorForToolbarRefocus(e, false)) {
                     this.isPaletteInteraction = true;
                 }
             });
+        });
+    }
+
+    attachFormattingFieldGuards(elements = []) {
+        elements.forEach(el => {
+            if (!el || el.dataset.formatGuardAttached) return;
+            const stopImmediate = (e) => e.stopPropagation();
+            el.addEventListener('pointerdown', (e) => {
+                if (this.currentEditingCell) {
+                    this.isPaletteFieldEditing = true;
+                    this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
+                }
+                // Allow interaction for all fields, but block bubbling to avoid global handlers stealing focus
+                stopImmediate(e);
+                // Do not schedule refocus while interacting with dropdowns/inputs
+                this.isToolbarFormattingInteraction = false;
+                this.pendingEditorRefocus = false;
+                setTimeout(() => {
+                    if (document.activeElement !== el && typeof el.focus === 'function') {
+                        el.focus();
+                    }
+                }, 0);
+            }, { capture: true });
+            el.addEventListener('focus', (e) => {
+                if (this.currentEditingCell) {
+                    this.isPaletteFieldEditing = true;
+                }
+                stopImmediate(e);
+            });
+            el.addEventListener('blur', (e) => {
+                if (this.currentEditingCell) {
+                    this.isPaletteFieldEditing = false;
+                    this.resumeEditingAfterToolbar();
+                }
+                stopImmediate(e);
+            });
+            el.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && this.currentEditingCell) {
+                    e.stopPropagation();
+                    this.isPaletteFieldEditing = false;
+                    this.resumeEditingAfterToolbar();
+                }
+            });
+            el.dataset.formatGuardAttached = 'true';
         });
     }
 
@@ -4460,6 +4521,9 @@ class SpreadsheetApp {
     }
 
     resumeEditingAfterToolbar() {
+        if (this.isPaletteFieldEditing) {
+            return;
+        }
         if (!this.currentEditingCell) {
             this.isToolbarFormattingInteraction = false;
             this.isPaletteInteraction = false;
@@ -5043,7 +5107,7 @@ class SpreadsheetApp {
             if (appliesHere) {
                 const data = this.cellData.get(editingCoord) || {};
                 this.refreshEditingCellFormatting(this.currentEditingCell, data);
-                if (!this.isFontSizeEditing) {
+                if (!this.isFontSizeEditing && !this.isPaletteFieldEditing) {
                     this.resumeEditingAfterToolbar();
                 }
             }
@@ -6239,7 +6303,7 @@ class SpreadsheetApp {
         const captureSelection = () => this.saveEditorSelection(input);
 
         input.addEventListener('blur', () => {
-            if (this.isFontSizeEditing) {
+            if (this.isFontSizeEditing || this.isPaletteFieldEditing) {
                 // Let the font size input keep focus; do nothing here.
                 return;
             }
@@ -7930,6 +7994,10 @@ class SpreadsheetApp {
             !event.target.closest('#borderMenu') &&
             !event.target.closest('#customColorPicker') &&
             !event.target.closest('#fontSizeInput') &&
+            !event.target.closest('.color-picker') &&
+            !event.target.closest('#borderStyleSelect') &&
+            !event.target.closest('#borderWidthSelect') &&
+            !event.target.closest('#borderColorPicker') &&
             !event.target.closest('#linkEditor')) {
             if (this.currentEditingCell) {
                 this.stopEditingCell();
@@ -8184,6 +8252,7 @@ class SpreadsheetApp {
         colorInput.addEventListener('input', (e) => {
             hexInput.value = e.target.value.substring(1);
         });
+        this.attachFormattingFieldGuards([colorInput]);
 
         hexInput.addEventListener('input', (e) => {
             let value = e.target.value.trim().toUpperCase();
@@ -8195,6 +8264,7 @@ class SpreadsheetApp {
                 colorInput.value = '#' + value;
             }
         });
+        this.attachFormattingFieldGuards([hexInput]);
 
         hexInput.addEventListener('paste', (e) => {
             e.preventDefault();
@@ -8266,6 +8336,7 @@ class SpreadsheetApp {
         customSection.appendChild(colorInput);
         customSection.appendChild(hexInputWrapper);
         customSection.appendChild(addBtn);
+        this.attachFormattingFieldGuards([colorInput, hexInput]);
         container.appendChild(customSection);
         
         // Standard colors title
@@ -8633,6 +8704,7 @@ class SpreadsheetApp {
                 updateColor();
             });
         });
+        this.attachFormattingFieldGuards([rInput, gInput, bInput]);
 
         // Store references
         this.customColorPickerState = {
@@ -9158,6 +9230,16 @@ class SpreadsheetApp {
         if (!this.borderMenu) return;
         if (!this.borderMenu.dataset.guardAttached) {
             this.borderMenu.addEventListener('pointerdown', (e) => {
+                const isFormControl = e.target.closest('input, select, textarea, .color-picker-input');
+                if (isFormControl) {
+                    if (this.currentEditingCell) {
+                        this.isPaletteFieldEditing = true;
+                        this.pendingEditorRefocus = false;
+                        this.isToolbarFormattingInteraction = false;
+                        this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
+                    }
+                    return;
+                }
                 if (this.markEditorForToolbarRefocus(e)) {
                     this.isPaletteInteraction = true;
                 }
@@ -9172,6 +9254,7 @@ class SpreadsheetApp {
         const borderColorSections = document.getElementById('borderColorSections');
         const borderPreview = document.getElementById('borderPreview');
         let currentPreviewAction = 'clear';
+        this.attachFormattingFieldGuards([borderStyleSelect, borderWidthSelect, borderColorPicker, borderColorHex]);
 
         const previewColumns = 3;
         const previewRows = 3;
@@ -9687,6 +9770,7 @@ class SpreadsheetApp {
 
         // Initialize with current color
         this.setCustomPickerColor(currentColor);
+        this.attachFormattingFieldGuards([colorInput, hexInput]);
         
         // Keep the border menu visible
         this.customColorPickerActive = true;
