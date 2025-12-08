@@ -3337,6 +3337,7 @@ class SpreadsheetApp {
         if (data.verticalAlign && data.verticalAlign !== 'bottom') return false;
         if (data.linkUrl) return false;
         if (data.borders && Object.values(data.borders).some(Boolean)) return false;
+        if (data.richText) return false;
 
         return true;
     }
@@ -4588,10 +4589,20 @@ class SpreadsheetApp {
         this.restoreEditorSelection(editor);
         editor.focus();
         try {
+            const selection = window.getSelection();
+            const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+            const beforeState = this.getInlineFormattingState(editor) || {};
             document.execCommand(command, false, null);
+            if (range && range.collapsed) {
+                const afterState = this.getInlineFormattingState(editor) || beforeState;
+                const desired = afterState[format] ?? beforeState[format] ?? false;
+                // Ensure typing after the caret inherits the new format state (on or off)
+                this.ensureCollapsedTypingFormat(editor, format, !!desired);
+            }
             this.updateEditorOverflow(this.currentEditingCell, editor);
             this.syncEditorToFormulaBar(editor);
             this.saveEditorSelection(editor);
+            this.updateFormattingButtons();
             return true;
         } catch (err) {
             console.warn('Unable to apply inline format', err);
@@ -4618,6 +4629,46 @@ class SpreadsheetApp {
             } else {
                 this.removeInlineStyleFromSelection(editor, 'color');
             }
+            if (range.collapsed) {
+                this.ensureCollapsedTypingColor(editor, color);
+            }
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+            this.syncEditorToFormulaBar(editor);
+            const activeSelection = window.getSelection();
+            if (activeSelection && activeSelection.rangeCount) {
+                this.currentEditorSelection = { type: 'range', range: activeSelection.getRangeAt(0).cloneRange() };
+            }
+            this.resumeEditingAfterToolbar();
+            this.updateFormattingButtons();
+            return true;
+        } catch (err) {
+            console.warn('Unable to apply inline font color', err);
+            return false;
+        }
+    }
+
+    applyInlineBackgroundColor(color) {
+        if (!this.currentEditingCell) return false;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (!editor || editor.dataset.isFormula === 'true') return false;
+
+        this.restoreEditorSelection(editor);
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return false;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return false;
+
+        editor.focus();
+
+        try {
+            if (color) {
+                const ok = this.execCommandWithCSS('hiliteColor', color);
+                if (!ok) {
+                    this.execCommandWithCSS('backColor', color);
+                }
+            } else {
+                this.removeInlineStyleFromSelection(editor, 'backgroundColor');
+            }
             this.updateEditorOverflow(this.currentEditingCell, editor);
             this.syncEditorToFormulaBar(editor);
             const activeSelection = window.getSelection();
@@ -4627,7 +4678,7 @@ class SpreadsheetApp {
             this.resumeEditingAfterToolbar();
             return true;
         } catch (err) {
-            console.warn('Unable to apply inline font color', err);
+            console.warn('Unable to apply inline background color', err);
             return false;
         }
     }
@@ -4666,15 +4717,24 @@ class SpreadsheetApp {
 
         if (sel && sel.type === 'range' && sel.range && typeof window.getSelection === 'function') {
             const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(sel.range);
-            return;
+            try {
+                selection.removeAllRanges();
+                selection.addRange(sel.range);
+                return;
+            } catch (err) {
+                // Range may be stale if DOM changed; fall through to default
+            }
         }
 
         if (typeof editor.setSelectionRange === 'function') {
             const len = (editor.value || '').length;
             editor.setSelectionRange(len, len);
         }
+    }
+
+    syncEditorToFormulaBar(editor) {
+        if (!editor || !this.formulaInput) return;
+        this.formulaInput.value = editor.textContent || '';
     }
 
     execCommandWithCSS(command, value) {
@@ -4757,6 +4817,101 @@ class SpreadsheetApp {
             parent.insertBefore(element.firstChild, element);
         }
         parent.removeChild(element);
+    }
+
+    sanitizeRichTextHTML(rawHtml = '') {
+        const allowed = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SPAN', 'FONT']);
+        const container = document.createElement('div');
+        container.innerHTML = rawHtml || '';
+
+        const sanitizeNode = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                return document.createTextNode(node.nodeValue);
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return null;
+            }
+            const tagName = node.tagName.toUpperCase();
+            const isAllowed = allowed.has(tagName);
+            const target = document.createElement(tagName === 'FONT' ? 'span' : node.tagName.toLowerCase());
+            const styleMap = new Map();
+            const addStyle = (prop, value) => {
+                if (value) styleMap.set(prop, value);
+            };
+
+            if (tagName === 'B' || tagName === 'STRONG') addStyle('font-weight', 'bold');
+            if (tagName === 'I' || tagName === 'EM') addStyle('font-style', 'italic');
+            if (tagName === 'U') addStyle('text-decoration', 'underline');
+            if (tagName === 'S' || tagName === 'STRIKE') addStyle('text-decoration', 'line-through');
+
+            const style = node.style || {};
+            const decorations = new Set();
+            const collectDecoration = (val) => {
+                if (!val || val === 'none') return;
+                val.split(/\s+/).forEach(part => part && decorations.add(part));
+            };
+            collectDecoration(style.textDecoration);
+            collectDecoration(style.textDecorationLine);
+            if (decorations.size) {
+                addStyle('text-decoration', Array.from(decorations).join(' '));
+            }
+            addStyle('font-weight', style.fontWeight && style.fontWeight !== 'normal' ? style.fontWeight : '');
+            addStyle('font-style', style.fontStyle && style.fontStyle !== 'normal' ? style.fontStyle : '');
+            addStyle('color', style.color);
+            addStyle('background-color', style.backgroundColor);
+            addStyle('font-size', style.fontSize);
+
+            const fontColorAttr = node.getAttribute && node.getAttribute('color');
+            const bgColorAttr = node.getAttribute && node.getAttribute('bgcolor');
+            if (fontColorAttr) addStyle('color', fontColorAttr);
+            if (bgColorAttr) addStyle('background-color', bgColorAttr);
+
+            node.childNodes.forEach(child => {
+                const cleaned = sanitizeNode(child);
+                if (cleaned) target.appendChild(cleaned);
+            });
+
+            if ((tagName === 'SPAN' || tagName === 'FONT') && !styleMap.size) {
+                const frag = document.createDocumentFragment();
+                while (target.firstChild) {
+                    frag.appendChild(target.firstChild);
+                }
+                return frag;
+            }
+
+            if (styleMap.size) {
+                target.setAttribute('style', Array.from(styleMap.entries()).map(([k, v]) => `${k}:${v}`).join(';'));
+            }
+
+            if (!isAllowed) {
+                const frag = document.createDocumentFragment();
+                while (target.firstChild) {
+                    frag.appendChild(target.firstChild);
+                }
+                return frag;
+            }
+            if (!target.hasChildNodes()) {
+                return document.createTextNode('');
+            }
+            return target;
+        };
+
+        const resultFrag = document.createDocumentFragment();
+        Array.from(container.childNodes).forEach(child => {
+            const cleaned = sanitizeNode(child);
+            if (cleaned) resultFrag.appendChild(cleaned);
+        });
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(resultFrag);
+        return wrapper.innerHTML;
+    }
+
+    serializeEditorContent(editor) {
+        const plainText = (editor?.textContent || '').replace(/\u00a0/g, ' ');
+        const sanitizedHtml = this.sanitizeRichTextHTML(editor ? editor.innerHTML : '');
+        const escapedPlain = escapeHTML(plainText);
+        const hasRich = !!sanitizedHtml && sanitizedHtml !== escapedPlain;
+        return { plainText, html: sanitizedHtml, hasRich };
     }
 
     rangeIntersectsNode(range, node) {
@@ -5328,6 +5483,13 @@ class SpreadsheetApp {
     }
 
     handleMouseDown(event) {
+        if (this.currentEditingCell) {
+            const editor = this.currentEditingCell.querySelector('.cell-editor');
+            if (editor && editor.contains(event.target)) {
+                // Clicking inside the active editor should not trigger grid selection
+                return;
+            }
+        }
         if (event.target.classList.contains('cell-editor')) return;
         const cell = this.resolveCellFromEvent(event);
         if (!cell) return;
@@ -6272,10 +6434,15 @@ class SpreadsheetApp {
         editorWrapper.style.alignItems = alignItemsMap[verticalAlign] || 'flex-end';
         editorWrapper.style.justifyContent = justifyContentMap[textAlign] || 'flex-start';
         
-        const input = document.createElement('input');
-        input.type = 'text';
+        const input = document.createElement('div');
+        input.contentEditable = 'true';
         input.className = 'cell-editor';
-        input.value = currentText;
+        input.dataset.isFormula = currentText.startsWith('=') ? 'true' : 'false';
+        if (cellData && cellData.richText) {
+            input.innerHTML = cellData.richText;
+        } else {
+            input.textContent = currentText;
+        }
         input.style.textAlign = textAlign;
 
         // Copy computed formatting so the editor sits exactly where the text was
@@ -6298,9 +6465,9 @@ class SpreadsheetApp {
         
         input.focus();
         if (event) {
-            this.setEditorCaretFromClick(event, input, textAlign);
+            this.setEditorCaretFromClick(event, input);
         } else {
-            input.setSelectionRange(currentText.length, currentText.length);
+            this.placeCaretAtEnd(input);
         }
         this.saveEditorSelection(input);
 
@@ -6328,9 +6495,14 @@ class SpreadsheetApp {
         input.addEventListener('input', () => {
             // Update overflow as user types
             this.updateEditorOverflow(cell, input);
+            this.syncEditorToFormulaBar(input);
             captureSelection();
+            this.updateFormattingButtons();
         });
-        ['select', 'keyup', 'mouseup'].forEach(evt => input.addEventListener(evt, captureSelection));
+        ['select', 'keyup', 'mouseup'].forEach(evt => input.addEventListener(evt, () => {
+            captureSelection();
+            this.updateFormattingButtons();
+        }));
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -6354,7 +6526,7 @@ class SpreadsheetApp {
         const cellWidth = this.getEffectiveCellWidth(cell, col);
         const padding = 16; // matches the wrapper padding for left/right
         const availableWidth = Math.max(cellWidth - padding, 0);
-        const textWidth = this.measureTextWidth(input.value, input);
+        const textWidth = this.measureEditorContentWidth(input);
         const wrapper = cell.querySelector('.cell-editor-wrapper');
         
         // Always set cell to allow overflow during editing
@@ -6391,40 +6563,42 @@ class SpreadsheetApp {
         }
     }
 
-    setEditorCaretFromClick(event, input, textAlign) {
+    setEditorCaretFromClick(event, input) {
         if (!event || !input) return;
-        const value = input.value || '';
-        if (!value.length) return;
-
-        const rect = input.getBoundingClientRect();
-        const style = window.getComputedStyle(input);
-        const paddingLeft = parseFloat(style.paddingLeft) || 0;
-        const paddingRight = parseFloat(style.paddingRight) || 0;
-        const contentWidth = rect.width - paddingLeft - paddingRight;
-        const textWidth = this.measureTextWidth(value, input);
-
-        let startX = paddingLeft;
-        if (textAlign === 'center') {
-            startX = paddingLeft + Math.max(0, (contentWidth - textWidth) / 2);
-        } else if (textAlign === 'right') {
-            startX = paddingLeft + Math.max(0, contentWidth - textWidth);
-        }
-
-        const clickX = event.clientX - rect.left;
-        const relativeX = Math.min(Math.max(clickX - startX, 0), textWidth);
-
-        let caretIndex = value.length;
-        let runningWidth = 0;
-        for (let i = 0; i < value.length; i++) {
-            const charWidth = this.measureTextWidth(value[i], input);
-            if (relativeX <= runningWidth + charWidth / 2) {
-                caretIndex = i;
-                break;
+        const selection = window.getSelection();
+        const rangeFromPoint = () => {
+            if (document.caretRangeFromPoint) {
+                return document.caretRangeFromPoint(event.clientX, event.clientY);
             }
-            runningWidth += charWidth;
+            if (document.caretPositionFromPoint) {
+                const pos = document.caretPositionFromPoint(event.clientX, event.clientY);
+                if (pos) {
+                    const r = document.createRange();
+                    r.setStart(pos.offsetNode, pos.offset);
+                    r.collapse(true);
+                    return r;
+                }
+            }
+            return null;
+        };
+        const range = rangeFromPoint();
+        if (range && selection && input.contains(range.commonAncestorContainer)) {
+            selection.removeAllRanges();
+            selection.addRange(range);
+            return;
         }
+        this.placeCaretAtEnd(input);
+    }
 
-        input.setSelectionRange(caretIndex, caretIndex);
+    placeCaretAtEnd(editor) {
+        if (!editor) return;
+        const selection = window.getSelection();
+        if (!selection) return;
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
     }
 
     stopEditingCell(cancel = false) {
@@ -6438,7 +6612,11 @@ class SpreadsheetApp {
         this.isToolbarFormattingInteraction = false;
         const input = cell.querySelector('.cell-editor');
         const oldValue = cell.dataset.originalValue || '';
-        const newValue = cancel ? oldValue : (input ? input.value : oldValue);
+
+        const { plainText, html: richHtml, hasRich } = cancel || !input
+            ? { plainText: oldValue, html: '', hasRich: false }
+            : this.serializeEditorContent(input);
+        const newValue = cancel ? oldValue : plainText;
 
         // Clear reference early to avoid re-entrancy leaving us with a null handle mid-cleanup
         this.currentEditingCell = null;
@@ -6453,6 +6631,10 @@ class SpreadsheetApp {
 
         const cellKey = this.getCoord(cell);
         const { row, col } = this.getCellPos(cell);
+        const existingData = this.cellData.get(cellKey) || {};
+        const previousRichText = existingData.richText || '';
+        const targetRichText = (!cancel && hasRich && !newValue.startsWith('=')) ? richHtml : '';
+        const richChanged = previousRichText !== targetRichText;
         
         // Display based on value type
         if (newValue.startsWith("'")) {
@@ -6462,6 +6644,8 @@ class SpreadsheetApp {
             // Formula - display result
             const result = this.parseFormula(newValue, row, col);
             cell.textContent = result;
+        } else if (!cancel && hasRich && richHtml) {
+            cell.innerHTML = richHtml;
         } else {
             // Regular text
             cell.textContent = newValue;
@@ -6470,7 +6654,7 @@ class SpreadsheetApp {
         cell.classList.remove('editing');
         delete cell.dataset.originalValue;
         
-        if (!cancel && oldValue !== newValue) {
+        if (!cancel && (oldValue !== newValue || richChanged)) {
             // Save state before making changes
             this.saveState(`Edit cell ${cell.dataset.address}`);
         }
@@ -6480,6 +6664,11 @@ class SpreadsheetApp {
                 data.value = newValue;
             } else {
                 delete data.value;
+            }
+            if (targetRichText) {
+                data.richText = targetRichText;
+            } else {
+                delete data.richText;
             }
         });
 
@@ -7535,6 +7724,7 @@ class SpreadsheetApp {
         const hadCutGhost = cell.classList.contains('cut-ghost');
         const hasData = d && Object.keys(d).length > 0;
         const ghostText = !hasData && cell.dataset.cutGhost ? cell.dataset.cutGhost : null;
+        const richText = d.richText;
         
         // Handle display text based on value type
         let displayText = '';
@@ -7558,11 +7748,16 @@ class SpreadsheetApp {
         }
         
         isLink = !!(d.linkUrl || this.isHyperlink(displayText));
-        
-        cell.textContent = displayText;
+        const canUseRichText = richText && !(d.value && String(d.value).startsWith('='));
+
+        if (canUseRichText && displayText.trim() !== '') {
+            cell.innerHTML = richText;
+        } else {
+            cell.textContent = displayText;
+        }
         
         // Handle text overflow into adjacent cells
-        this.handleCellOverflow(cell, displayText, d);
+        this.handleCellOverflow(cell, displayText, d, canUseRichText ? richText : null);
         
         const effective = { ...this.defaultCellStyle, ...d };
 
@@ -7673,8 +7868,102 @@ class SpreadsheetApp {
         }
         return cell.offsetWidth || parseFloat(cell.style.width) || this.getColumnWidth(col);
     }
+
+    getInlineFormattingState(editor) {
+        if (!editor) return null;
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return null;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return null;
+        const qState = (cmd) => {
+            if (typeof document.queryCommandState === 'function') {
+                try { return document.queryCommandState(cmd); } catch (e) { return null; }
+            }
+            return null;
+        };
+        let bold = qState('bold');
+        let italic = qState('italic');
+        let underline = qState('underline');
+        let strikethrough = qState('strikeThrough');
+
+        if ([bold, italic, underline, strikethrough].some(v => v === null)) {
+            let node = range.startContainer;
+            if (node.nodeType === Node.TEXT_NODE) {
+                node = node.parentElement;
+            }
+            if (node) {
+                const style = window.getComputedStyle(node);
+                const weight = style.fontWeight;
+                bold = bold ?? (weight === 'bold' || parseInt(weight, 10) >= 600);
+                italic = italic ?? (style.fontStyle === 'italic' || style.fontStyle === 'oblique');
+                const deco = (style.textDecorationLine || style.textDecoration || '').toLowerCase();
+                underline = underline ?? deco.includes('underline');
+                strikethrough = strikethrough ?? deco.includes('line-through');
+            }
+        }
+
+        return {
+            bold: !!bold,
+            italic: !!italic,
+            underline: !!underline,
+            strikethrough: !!strikethrough
+        };
+    }
+
+    ensureCollapsedTypingFormat(editor, format, enable = true) {
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!range.collapsed || !editor.contains(range.commonAncestorContainer)) return;
+
+        const span = document.createElement('span');
+        const textNode = document.createTextNode('\u200b');
+        switch (format) {
+            case 'bold':
+                span.style.fontWeight = enable ? 'bold' : 'normal';
+                break;
+            case 'italic':
+                span.style.fontStyle = enable ? 'italic' : 'normal';
+                break;
+            case 'underline':
+                span.style.textDecoration = enable ? 'underline' : 'none';
+                break;
+            case 'strikethrough':
+                span.style.textDecoration = enable ? 'line-through' : 'none';
+                break;
+            default:
+                return;
+        }
+        span.appendChild(textNode);
+        range.insertNode(span);
+        range.setStart(textNode, textNode.length);
+        range.setEnd(textNode, textNode.length);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+
+    ensureCollapsedTypingColor(editor, color) {
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!range.collapsed || !editor.contains(range.commonAncestorContainer)) return;
+
+        const span = document.createElement('span');
+        const textNode = document.createTextNode('\u200b');
+        if (color) {
+            span.style.color = color;
+        } else {
+            span.style.color = 'inherit';
+        }
+        span.appendChild(textNode);
+        range.insertNode(span);
+        range.setStart(textNode, textNode.length);
+        range.setEnd(textNode, textNode.length);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
     
-    handleCellOverflow(cell, displayText, cellData) {
+    handleCellOverflow(cell, displayText, cellData, richText) {
         const { row, col } = this.getCellPos(cell);
         const normalizedText = (displayText === undefined || displayText === null) ? '' : String(displayText);
         const effective = { ...this.defaultCellStyle, ...cellData };
@@ -7690,7 +7979,11 @@ class SpreadsheetApp {
         // Remove any existing text wrapper
         const existingWrapper = cell.querySelector('.cell-text-wrapper');
         if (existingWrapper) {
-            cell.textContent = existingWrapper.textContent;
+            if (richText) {
+                cell.innerHTML = richText;
+            } else {
+                cell.textContent = existingWrapper.textContent;
+            }
         }
         
         // If cell has no content, use default overflow behavior
@@ -7698,6 +7991,9 @@ class SpreadsheetApp {
             cell.style.overflow = 'hidden';
             cell.style.textOverflow = 'ellipsis';
             cell.style.whiteSpace = 'nowrap';
+            if (richText) {
+                cell.innerHTML = richText;
+            }
             return;
         }
         
@@ -7708,7 +8004,7 @@ class SpreadsheetApp {
         
         // Check if text fits within the cell
         const cellWidth = this.getEffectiveCellWidth(cell, col);
-        const textWidth = this.measureTextWidth(normalizedText, cell);
+        const textWidth = richText ? this.measureRichTextHTMLWidth(richText, cell) : this.measureTextWidth(normalizedText, cell);
         const padding = 16;
         
         if (textWidth <= cellWidth - padding) {
@@ -7716,6 +8012,11 @@ class SpreadsheetApp {
             cell.style.overflow = 'hidden';
             cell.style.textOverflow = 'ellipsis';
             cell.style.whiteSpace = 'nowrap';
+            if (richText) {
+                cell.innerHTML = richText;
+            } else {
+                cell.textContent = normalizedText;
+            }
             return;
         }
         
@@ -7834,7 +8135,11 @@ class SpreadsheetApp {
         textSpan.style.overflow = 'hidden';
         textSpan.style.whiteSpace = 'nowrap';
         textSpan.style.maxWidth = (wrapperWidth - padding) + 'px';
-        textSpan.textContent = normalizedText;
+        if (richText) {
+            textSpan.innerHTML = richText;
+        } else {
+            textSpan.textContent = normalizedText;
+        }
         const decorationParts = [];
         if (effective.underline || isLink) decorationParts.push('underline');
         if (effective.strikethrough) decorationParts.push('line-through');
@@ -7877,6 +8182,54 @@ class SpreadsheetApp {
         
         return width;
     }
+
+    measureRichTextHTMLWidth(html, cell) {
+        if (!html) return 0;
+        const span = document.createElement('div');
+        span.style.visibility = 'hidden';
+        span.style.position = 'absolute';
+        span.style.whiteSpace = 'nowrap';
+        span.style.pointerEvents = 'none';
+
+        const computedStyle = window.getComputedStyle(cell);
+        span.style.font = computedStyle.font;
+        span.style.fontSize = computedStyle.fontSize;
+        span.style.fontWeight = computedStyle.fontWeight;
+        span.style.fontFamily = computedStyle.fontFamily;
+        span.style.fontStyle = computedStyle.fontStyle;
+        span.style.lineHeight = computedStyle.lineHeight;
+        span.innerHTML = html;
+
+        document.body.appendChild(span);
+        const width = span.offsetWidth;
+        document.body.removeChild(span);
+        return width;
+    }
+
+    measureEditorContentWidth(editor) {
+        if (!editor) return 0;
+        const clone = editor.cloneNode(false);
+        clone.className = editor.className;
+        if (editor.getAttribute('style')) {
+            clone.setAttribute('style', editor.getAttribute('style'));
+        }
+        clone.style.position = 'absolute';
+        clone.style.visibility = 'hidden';
+        clone.style.height = 'auto';
+        clone.style.width = 'auto';
+        clone.style.maxWidth = 'none';
+        clone.style.minWidth = '0';
+        clone.style.whiteSpace = 'nowrap';
+        clone.style.outline = 'none';
+        clone.style.pointerEvents = 'none';
+        clone.style.display = 'inline-block';
+        const sanitized = this.sanitizeRichTextHTML(editor.innerHTML);
+        clone.innerHTML = sanitized;
+        document.body.appendChild(clone);
+        const width = clone.scrollWidth;
+        document.body.removeChild(clone);
+        return width;
+    }
     
     isHyperlink(text) {
         if (!text) return false;
@@ -7901,6 +8254,7 @@ class SpreadsheetApp {
                 delete data.textAlign;
                 delete data.verticalAlign;
                 delete data.borders;
+                delete data.richText;
             });
         });
 
@@ -8035,11 +8389,16 @@ class SpreadsheetApp {
     }
 
     updateFormattingButtons() {
-        ['bold', 'italic', 'underline', 'strikethrough'].forEach(fmt => 
-            document.getElementById(`${fmt}Btn`).classList.toggle('active', 
-                this.selectedCellCoords.size && this.checkIfAllCellsHaveFormat(fmt)
-            )
-        );
+        let inlineState = null;
+        if (this.currentEditingCell) {
+            inlineState = this.getInlineFormattingState(this.currentEditingCell.querySelector('.cell-editor'));
+        }
+        ['bold', 'italic', 'underline', 'strikethrough'].forEach(fmt => {
+            const active = inlineState
+                ? !!inlineState[fmt]
+                : (this.selectedCellCoords.size && this.checkIfAllCellsHaveFormat(fmt));
+            document.getElementById(`${fmt}Btn`).classList.toggle('active', active);
+        });
         
         this.updateAlignmentButtons();
         this.updateFontColorButton();
@@ -9149,7 +9508,10 @@ class SpreadsheetApp {
         if (this.currentEditingCell) {
             this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
             const didInline = this.applyInlineFontColor(c);
-            if (didInline) return;
+            if (didInline) {
+                if (c) this._recordColorUsage('fontColor', c);
+                return;
+            }
         }
         this._applyColor('fontColor', 'color', c, this.updateFontColorButton); 
         this.setupFontColorPalette();
