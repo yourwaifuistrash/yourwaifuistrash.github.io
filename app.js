@@ -5368,6 +5368,12 @@ class SpreadsheetApp {
         event.preventDefault();
 
         if (this.currentEditingCell && this.currentEditingCell !== cell) {
+            // User is moving to another cell; cancel any pending refocus from toolbar interactions
+            this.pendingEditorRefocus = false;
+            this.isToolbarFormattingInteraction = false;
+            this.isPaletteInteraction = false;
+            this.isPaletteFieldEditing = false;
+            this.isFontSizeEditing = false;
             this.stopEditingCell();
         }
 
