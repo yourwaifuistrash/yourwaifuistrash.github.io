@@ -37,6 +37,8 @@
   --color-bg-2: rgba(245, 158, 11, 0.08);
   --selection-pass-fill: rgba(33, 128, 141, 0.06);
   --selection-pass-stripe: rgba(33, 128, 141, 0.18);
+  --text-selection-bg: rgba(59, 130, 246, 0.28);
+  --editor-outline: #3b82f6;
 
   /* Typography */
   --font-family-base: "FKGroteskNeue", "Geist", "Inter", -apple-system, sans-serif;
@@ -74,6 +76,9 @@
   --color-bg-2: rgba(245, 158, 11, 0.22);
   --selection-pass-fill: rgba(255, 82, 82, 0.12);
   --selection-pass-stripe: rgba(255, 82, 82, 0.3);
+  --text-selection-bg: rgba(255, 153, 0, 0.42);
+  --editor-outline: #ff9900;
+  --text-selection-bg: rgba(255, 153, 0, 0.42);
 }
 
 :root:not([data-theme]), :root[data-theme='light'] {
@@ -89,6 +94,8 @@
   --color-bg-2: rgba(245, 158, 11, 0.08);
   --selection-pass-fill: rgba(33, 128, 141, 0.06);
   --selection-pass-stripe: rgba(33, 128, 141, 0.18);
+  --text-selection-bg: rgba(59, 130, 246, 0.28);
+  --editor-outline: #3b82f6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -105,6 +112,8 @@
     --color-bg-2: rgba(245, 158, 11, 0.22);
     --selection-pass-fill: rgba(255, 82, 82, 0.12);
     --selection-pass-stripe: rgba(255, 82, 82, 0.3);
+    --text-selection-bg: rgba(255, 153, 0, 0.42);
+    --editor-outline: #ff9900;
   }
 }
 
@@ -973,7 +982,7 @@ body { margin: 0; padding: 0; }
 .cell-editor {
     width: 100%;
     border: none;
-    outline: 2px solid var(--color-primary);
+    outline: 2px solid var(--editor-outline, var(--color-primary));
     padding: 0;
     font: inherit;
     font-size: inherit;
@@ -993,6 +1002,14 @@ body { margin: 0; padding: 0; }
     flex: 0 0 auto;
     min-width: 0;
     max-width: none;
+}
+
+.cell-editor::selection,
+.cell-editor *::selection,
+.cell-text-wrapper::selection,
+.cell-text-wrapper *::selection {
+    background: var(--text-selection-bg);
+    color: inherit;
 }
 
 .cell.merged-cell {
