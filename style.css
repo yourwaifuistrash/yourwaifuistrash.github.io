@@ -1337,9 +1337,15 @@ body { margin: 0; padding: 0; }
 .cell.bold .cell-text-inline span[data-bold="false"] {
   font-weight: normal;
 }
+.cell.bold .cell-text-wrapper span[data-bold="false"] {
+  font-weight: normal;
+}
 
 /* Override italic only when explicitly set to normal */
 .cell.italic .cell-text-inline span[data-italic="false"] {
+  font-style: normal;
+}
+.cell.italic .cell-text-wrapper span[data-italic="false"] {
   font-style: normal;
 }
 
@@ -1347,9 +1353,15 @@ body { margin: 0; padding: 0; }
 .cell.underline .cell-text-inline span[data-underline="false"] {
   text-decoration: none;
 }
+.cell.underline .cell-text-wrapper span[data-underline="false"] {
+  text-decoration: none;
+}
 
 /* Override strikethrough only when explicitly removed */
 .cell.strikethrough .cell-text-inline span[data-strikethrough="false"] {
+  text-decoration: none;
+}
+.cell.strikethrough .cell-text-wrapper span[data-strikethrough="false"] {
   text-decoration: none;
 }
 

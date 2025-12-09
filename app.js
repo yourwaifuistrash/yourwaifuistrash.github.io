@@ -4565,7 +4565,9 @@ class SpreadsheetApp {
             }
             if (editor) {
                 editor.focus();
-                this.restoreEditorSelection(editor);
+                if (!inlineApplied) {
+                    this.restoreEditorSelection(editor);
+                }
                 this.updateEditorOverflow(this.currentEditingCell, editor);
             }
             this.isToolbarFormattingInteraction = false;
@@ -4592,12 +4594,30 @@ class SpreadsheetApp {
             const selection = window.getSelection();
             const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
             const beforeState = this.getInlineFormattingState(editor) || {};
-            document.execCommand(command, false, null);
-            if (range && range.collapsed) {
-                const afterState = this.getInlineFormattingState(editor) || beforeState;
-                const desired = afterState[format] ?? beforeState[format] ?? false;
-                // Ensure typing after the caret inherits the new format state (on or off)
-                this.ensureCollapsedTypingFormat(editor, format, !!desired);
+            const desired = !beforeState[format];
+            if (range && !range.collapsed) {
+                const logicalOffsets = this.getSelectionOffsets(editor, range);
+                const appliedResult = this.applyInlineFormatToRange(range, format, desired, editor, beforeState);
+                if (!desired && (format === 'underline' || format === 'strikethrough') && appliedResult && appliedResult.wrappers && appliedResult.wrappers.length) {
+                    appliedResult.wrappers.forEach(w => this.liftFormatFromAncestor(w, format, editor));
+                }
+                this.restoreSelectionFromOffsets(editor, logicalOffsets);
+            } else {
+                document.execCommand(command, false, null);
+                if (range && range.collapsed) {
+                    // Ensure typing after the caret inherits the new format state (on or off)
+                    const marker = this.ensureCollapsedTypingFormat(editor, format, !!desired);
+                    if (!desired && marker && (format === 'underline' || format === 'strikethrough')) {
+                        this.liftFormatFromAncestor(marker, format, editor);
+                        const sel = window.getSelection();
+                        if (sel) {
+                            const newRange = document.createRange();
+                            newRange.selectNodeContents(marker);
+                            sel.removeAllRanges();
+                            sel.addRange(newRange);
+                        }
+                    }
+                }
             }
             this.updateEditorOverflow(this.currentEditingCell, editor);
             this.syncEditorToFormulaBar(editor);
@@ -4624,7 +4644,9 @@ class SpreadsheetApp {
         editor.focus();
 
         try {
-            if (color) {
+            if (!range.collapsed) {
+                this.applyInlineColorToRange(range, color, editor);
+            } else if (color) {
                 this.execCommandWithCSS('foreColor', color);
             } else {
                 this.removeInlineStyleFromSelection(editor, 'color');
@@ -4852,11 +4874,11 @@ class SpreadsheetApp {
             };
             collectDecoration(style.textDecoration);
             collectDecoration(style.textDecorationLine);
-            if (decorations.size) {
-                addStyle('text-decoration', Array.from(decorations).join(' '));
+            if (decorations.size || style.textDecoration || style.textDecorationLine) {
+                addStyle('text-decoration', Array.from(decorations).join(' ') || style.textDecoration || style.textDecorationLine);
             }
-            addStyle('font-weight', style.fontWeight && style.fontWeight !== 'normal' ? style.fontWeight : '');
-            addStyle('font-style', style.fontStyle && style.fontStyle !== 'normal' ? style.fontStyle : '');
+            if (style.fontWeight) addStyle('font-weight', style.fontWeight);
+            if (style.fontStyle) addStyle('font-style', style.fontStyle);
             addStyle('color', style.color);
             addStyle('background-color', style.backgroundColor);
             addStyle('font-size', style.fontSize);
@@ -4871,6 +4893,14 @@ class SpreadsheetApp {
                 if (cleaned) target.appendChild(cleaned);
             });
 
+            // Preserve inline formatting flags
+            ['bold', 'italic', 'underline', 'strikethrough'].forEach(key => {
+                const val = node.getAttribute && node.getAttribute(`data-${key}`);
+                if (val) {
+                    target.setAttribute(`data-${key}`, val);
+                }
+            });
+                
             if ((tagName === 'SPAN' || tagName === 'FONT') && !styleMap.size) {
                 const frag = document.createDocumentFragment();
                 while (target.firstChild) {
@@ -4912,6 +4942,102 @@ class SpreadsheetApp {
         const escapedPlain = escapeHTML(plainText);
         const hasRich = !!sanitizedHtml && sanitizedHtml !== escapedPlain;
         return { plainText, html: sanitizedHtml, hasRich };
+    }
+    
+    applyBaselineFormatting(html, formatting = {}) {
+        if (!html) return html;
+        const activeFormats = ['bold', 'italic', 'underline', 'strikethrough'].filter(f => formatting[f]);
+        if (!activeFormats.length) return html;
+
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        const hasExplicitFormatting = (node, format) => {
+            let el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+            while (el && el !== container) {
+                if (el.dataset && (el.dataset[format] === 'true' || el.dataset[format] === 'false')) {
+                    return true;
+                }
+                const style = el.style;
+                if (style) {
+                    if (format === 'bold' && style.fontWeight) return true;
+                    if (format === 'italic' && style.fontStyle) return true;
+                    if (format === 'underline' || format === 'strikethrough') {
+                        const deco = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
+                        if (deco.includes('underline') && format === 'underline') return true;
+                        if (deco.includes('line-through') && format === 'strikethrough') return true;
+                        if (deco === 'none') return true;
+                    }
+                }
+                el = el.parentElement;
+            }
+            return false;
+        };
+
+        const wrapTextNode = (textNode) => {
+            const span = document.createElement('span');
+            span.textContent = textNode.nodeValue;
+            const decorations = [];
+            if (formatting.bold && !hasExplicitFormatting(textNode, 'bold')) {
+                span.dataset.bold = 'true';
+                span.style.fontWeight = 'bold';
+            }
+            if (formatting.italic && !hasExplicitFormatting(textNode, 'italic')) {
+                span.dataset.italic = 'true';
+                span.style.fontStyle = 'italic';
+            }
+            if (formatting.underline && !hasExplicitFormatting(textNode, 'underline')) {
+                span.dataset.underline = 'true';
+                decorations.push('underline');
+            }
+            if (formatting.strikethrough && !hasExplicitFormatting(textNode, 'strikethrough')) {
+                span.dataset.strikethrough = 'true';
+                decorations.push('line-through');
+            }
+            if (decorations.length) {
+                span.style.textDecoration = decorations.join(' ');
+            }
+            textNode.parentNode.replaceChild(span, textNode);
+        };
+
+        const walk = (node) => {
+            Array.from(node.childNodes).forEach(child => {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    if (child.nodeValue && child.nodeValue.length) {
+                        const needsWrap = activeFormats.some(fmt => !hasExplicitFormatting(child, fmt));
+                        if (needsWrap) {
+                            wrapTextNode(child);
+                        }
+                    }
+                } else if (child.nodeType === Node.ELEMENT_NODE) {
+                    walk(child);
+                }
+            });
+        };
+
+        walk(container);
+        return container.innerHTML;
+    }
+    
+    buildInlineHTMLFromPlain(text, formatting = {}) {
+        const escaped = escapeHTML(text || '');
+        if (!formatting.bold && !formatting.italic && !formatting.underline && !formatting.strikethrough) {
+            return escaped;
+        }
+        return this.applyBaselineFormatting(escaped, formatting);
+    }
+    
+    wrapRichTextWithFormatting(html, formatting = {}) {
+        if (!html) return html;
+        const styles = [];
+        if (formatting.bold) styles.push('font-weight:bold');
+        if (formatting.italic) styles.push('font-style:italic');
+        const decorations = [];
+        if (formatting.underline) decorations.push('underline');
+        if (formatting.strikethrough) decorations.push('line-through');
+        if (decorations.length) styles.push(`text-decoration:${decorations.join(' ')}`);
+        if (!styles.length) return html;
+        return `<span style="${styles.join(';')}">${html}</span>`;
     }
 
     rangeIntersectsNode(range, node) {
@@ -5215,6 +5341,22 @@ class SpreadsheetApp {
     }
 
     applyFontSize(fontSize) {
+        // Inline edit path: apply size to selection inside the active editor
+        if (this.currentEditingCell) {
+            const editor = this.currentEditingCell.querySelector('.cell-editor');
+            if (editor) {
+                this.restoreEditorSelection(editor);
+                const inlineApplied = this.applyInlineFontSize(editor, fontSize);
+                if (inlineApplied) {
+                    this.updateEditorOverflow(this.currentEditingCell, editor);
+                    this.syncEditorToFormulaBar(editor);
+                    this.saveEditorSelection(editor);
+                    this.updateFormattingButtons();
+                    return;
+                }
+            }
+        }
+        
         if (!this.hasSelection()) return;
         const applyToAll = this.isFullGridSelection();
         const affectedRows = applyToAll ? null : new Set(this.getSelectionPositions().map(pos => pos.row));
@@ -6421,6 +6563,10 @@ class SpreadsheetApp {
         const textAlign = effectiveStyle.textAlign || 'left';
         const verticalAlign = effectiveStyle.verticalAlign || 'bottom';
         
+        // Strip cell-level formatting classes while editing; we'll apply inline equivalents instead
+        const formattingClasses = ['bold', 'italic', 'underline', 'strikethrough'];
+        formattingClasses.forEach(cls => cell.classList.remove(cls));
+        
         cell.dataset.originalValue = currentText;
         cell.classList.add('editing');
         
@@ -6438,8 +6584,11 @@ class SpreadsheetApp {
         input.contentEditable = 'true';
         input.className = 'cell-editor';
         input.dataset.isFormula = currentText.startsWith('=') ? 'true' : 'false';
+        const hasInlineFormatting = cellData && (cellData.richText || cellData.bold || cellData.italic || cellData.underline || cellData.strikethrough);
         if (cellData && cellData.richText) {
             input.innerHTML = cellData.richText;
+        } else if (hasInlineFormatting) {
+            input.innerHTML = this.buildInlineHTMLFromPlain(currentText, cellData);
         } else {
             input.textContent = currentText;
         }
@@ -6455,7 +6604,12 @@ class SpreadsheetApp {
         input.style.color = computed.color;
         const textDecoration = computed.textDecorationLine || computed.textDecoration;
         input.style.textDecoration = textDecoration && textDecoration !== 'none' ? textDecoration : 'none';
-
+        if (hasInlineFormatting) {
+            input.style.fontWeight = 'normal';
+            input.style.fontStyle = 'normal';
+            input.style.textDecoration = 'none';
+        }
+        
         editorWrapper.appendChild(input);
         cell.innerHTML = '';
         cell.appendChild(editorWrapper);
@@ -6633,7 +6787,16 @@ class SpreadsheetApp {
         const { row, col } = this.getCellPos(cell);
         const existingData = this.cellData.get(cellKey) || {};
         const previousRichText = existingData.richText || '';
-        const targetRichText = (!cancel && hasRich && !newValue.startsWith('=')) ? richHtml : '';
+        const baseFormatting = {
+            bold: !!existingData.bold,
+            italic: !!existingData.italic,
+            underline: !!existingData.underline,
+            strikethrough: !!existingData.strikethrough
+        };
+        let targetRichText = (!cancel && hasRich && !newValue.startsWith('=')) ? richHtml : '';
+        if (targetRichText && (baseFormatting.bold || baseFormatting.italic || baseFormatting.underline || baseFormatting.strikethrough)) {
+            targetRichText = this.applyBaselineFormatting(targetRichText, baseFormatting);
+        }
         const richChanged = previousRichText !== targetRichText;
         
         // Display based on value type
@@ -6645,7 +6808,7 @@ class SpreadsheetApp {
             const result = this.parseFormula(newValue, row, col);
             cell.textContent = result;
         } else if (!cancel && hasRich && richHtml) {
-            cell.innerHTML = richHtml;
+            cell.innerHTML = targetRichText || richHtml;
         } else {
             // Regular text
             cell.textContent = newValue;
@@ -6669,6 +6832,12 @@ class SpreadsheetApp {
                 data.richText = targetRichText;
             } else {
                 delete data.richText;
+            }
+            if (targetRichText) {
+                delete data.bold;
+                delete data.italic;
+                delete data.underline;
+                delete data.strikethrough;
             }
         });
 
@@ -7881,6 +8050,47 @@ class SpreadsheetApp {
             }
             return null;
         };
+        
+        // If selection spans multiple segments, detect mixed state using rendered styles
+        const sampled = {
+            bold: { hasTrue: false, hasFalse: false },
+            italic: { hasTrue: false, hasFalse: false },
+            underline: { hasTrue: false, hasFalse: false },
+            strikethrough: { hasTrue: false, hasFalse: false }
+        };
+        const recordSample = (bucket, value) => {
+            if (value) bucket.hasTrue = true;
+            else bucket.hasFalse = true;
+        };
+        if (!range.collapsed) {
+            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+            let node = walker.nextNode();
+            while (node) {
+                if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
+                    const targetEl = node.parentElement || editor;
+                    const style = window.getComputedStyle(targetEl);
+                    const weight = style.fontWeight;
+                    const isBold = (weight === 'bold') || (!isNaN(parseInt(weight, 10)) && parseInt(weight, 10) >= 600);
+                    const isItalic = style.fontStyle === 'italic' || style.fontStyle === 'oblique';
+                    const deco = (style.textDecorationLine || style.textDecoration || '').toLowerCase();
+                    const isUnderline = deco.includes('underline');
+                    const isStrike = deco.includes('line-through');
+                    recordSample(sampled.bold, isBold);
+                    recordSample(sampled.italic, isItalic);
+                    recordSample(sampled.underline, isUnderline);
+                    recordSample(sampled.strikethrough, isStrike);
+                }
+                node = walker.nextNode();
+            }
+        }
+
+        const resolveMixed = (bucket, fallback) => {
+            if (bucket.hasTrue && bucket.hasFalse) return false; // mixed -> treat as off
+            if (bucket.hasTrue) return true;
+            if (bucket.hasFalse) return false;
+            return fallback;
+        };
+        
         let bold = qState('bold');
         let italic = qState('italic');
         let underline = qState('underline');
@@ -7903,11 +8113,61 @@ class SpreadsheetApp {
         }
 
         return {
-            bold: !!bold,
-            italic: !!italic,
-            underline: !!underline,
-            strikethrough: !!strikethrough
+            bold: resolveMixed(sampled.bold, !!bold),
+            italic: resolveMixed(sampled.italic, !!italic),
+            underline: resolveMixed(sampled.underline, !!underline),
+            strikethrough: resolveMixed(sampled.strikethrough, !!strikethrough)
         };
+    }
+
+    getSelectionOffsets(editor, range) {
+        if (!editor || !range) return null;
+        const startMeasure = document.createRange();
+        startMeasure.selectNodeContents(editor);
+        startMeasure.setEnd(range.startContainer, range.startOffset);
+        const endMeasure = document.createRange();
+        endMeasure.selectNodeContents(editor);
+        endMeasure.setEnd(range.endContainer, range.endOffset);
+        return { start: startMeasure.toString().length, end: endMeasure.toString().length };
+    }
+
+    restoreSelectionFromOffsets(editor, offsets) {
+        if (!editor || !offsets || offsets.start == null || offsets.end == null) return;
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        let consumed = 0;
+        let startNode = null, endNode = null, startOffset = 0, endOffset = 0, lastNode = null;
+
+        while (node) {
+            const len = node.nodeValue?.length || 0;
+            const next = consumed + len;
+            if (!startNode && offsets.start <= next) {
+                startNode = node;
+                startOffset = Math.max(0, offsets.start - consumed);
+            }
+            if (!endNode && offsets.end <= next) {
+                endNode = node;
+                endOffset = Math.max(0, offsets.end - consumed);
+            }
+            consumed = next;
+            lastNode = node;
+            node = walker.nextNode();
+        }
+
+        if (!endNode && lastNode) {
+            endNode = lastNode;
+            endOffset = lastNode.nodeValue ? lastNode.nodeValue.length : 0;
+        }
+
+        if (startNode && endNode) {
+            const sel = window.getSelection();
+            if (!sel) return;
+            const newRange = document.createRange();
+            newRange.setStart(startNode, startOffset);
+            newRange.setEnd(endNode, endOffset);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+        }
     }
 
     ensureCollapsedTypingFormat(editor, format, enable = true) {
@@ -7921,15 +8181,19 @@ class SpreadsheetApp {
         switch (format) {
             case 'bold':
                 span.style.fontWeight = enable ? 'bold' : 'normal';
+                span.dataset.bold = enable ? 'true' : 'false';
                 break;
             case 'italic':
                 span.style.fontStyle = enable ? 'italic' : 'normal';
+                span.dataset.italic = enable ? 'true' : 'false';
                 break;
             case 'underline':
                 span.style.textDecoration = enable ? 'underline' : 'none';
+                span.dataset.underline = enable ? 'true' : 'false';
                 break;
             case 'strikethrough':
                 span.style.textDecoration = enable ? 'line-through' : 'none';
+                span.dataset.strikethrough = enable ? 'true' : 'false';
                 break;
             default:
                 return;
@@ -7940,6 +8204,7 @@ class SpreadsheetApp {
         range.setEnd(textNode, textNode.length);
         selection.removeAllRanges();
         selection.addRange(range);
+        return span;
     }
 
     ensureCollapsedTypingColor(editor, color) {
@@ -7961,6 +8226,349 @@ class SpreadsheetApp {
         range.setEnd(textNode, textNode.length);
         selection.removeAllRanges();
         selection.addRange(range);
+    }
+    
+    computeFormattingForNode(node) {
+        const el = node && node.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        if (!el) {
+            return {
+                bold: false,
+                italic: false,
+                underline: false,
+                strikethrough: false,
+                color: '',
+                backgroundColor: '',
+                fontSize: ''
+            };
+        }
+        const style = window.getComputedStyle(el);
+        const weight = style.fontWeight;
+        const bold = (weight === 'bold') || (!isNaN(parseInt(weight, 10)) && parseInt(weight, 10) >= 600);
+        const italic = style.fontStyle === 'italic' || style.fontStyle === 'oblique';
+        const deco = (style.textDecorationLine || style.textDecoration || '').toLowerCase();
+        const underline = deco.includes('underline');
+        const strikethrough = deco.includes('line-through');
+        return {
+            bold,
+            italic,
+            underline,
+            strikethrough,
+            color: style.color,
+            backgroundColor: style.backgroundColor,
+            fontSize: style.fontSize
+        };
+    }
+    
+    ensureCollapsedTypingFontSize(editor, fontSize) {
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return;
+        const range = selection.getRangeAt(0);
+        if (!range.collapsed || !editor.contains(range.commonAncestorContainer)) return;
+
+        const span = document.createElement('span');
+        const textNode = document.createTextNode('\u200b');
+        span.style.fontSize = `${fontSize}px`;
+        span.appendChild(textNode);
+        range.insertNode(span);
+        range.setStart(textNode, textNode.length);
+        range.setEnd(textNode, textNode.length);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
+
+    applyInlineFontSize(editor, fontSize) {
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return false;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return false;
+
+        if (range.collapsed) {
+            this.ensureCollapsedTypingFontSize(editor, fontSize);
+            return true;
+        }
+
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        const affected = [];
+        let node = walker.nextNode();
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
+                let start = 0;
+                let end = node.length;
+                if (node === range.startContainer) start = range.startOffset;
+                if (node === range.endContainer) end = Math.min(end, range.endOffset);
+                if (start >= end) {
+                    node = walker.nextNode();
+                    continue;
+                }
+                if (start > 0) node = node.splitText(start);
+                if (end < node.length) node.splitText(end - start);
+                affected.push(node);
+            }
+            node = walker.nextNode();
+        }
+
+        if (!affected.length) return false;
+
+        affected.forEach(textNode => {
+            const fmt = this.computeFormattingForNode(textNode);
+            const wrapper = document.createElement('span');
+            wrapper.style.fontSize = `${fontSize}px`;
+
+            if (fmt.color) wrapper.style.color = fmt.color;
+            if (fmt.backgroundColor && fmt.backgroundColor !== 'transparent' && fmt.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+                wrapper.style.backgroundColor = fmt.backgroundColor;
+            }
+
+            wrapper.dataset.bold = fmt.bold ? 'true' : 'false';
+            wrapper.style.fontWeight = fmt.bold ? 'bold' : 'normal';
+            wrapper.dataset.italic = fmt.italic ? 'true' : 'false';
+            wrapper.style.fontStyle = fmt.italic ? 'italic' : 'normal';
+            wrapper.dataset.underline = fmt.underline ? 'true' : 'false';
+            wrapper.dataset.strikethrough = fmt.strikethrough ? 'true' : 'false';
+            const decos = [];
+            if (fmt.underline) decos.push('underline');
+            if (fmt.strikethrough) decos.push('line-through');
+            if (decos.length) {
+                wrapper.style.textDecoration = decos.join(' ');
+            } else {
+                wrapper.style.textDecoration = 'none';
+            }
+
+            textNode.parentNode.insertBefore(wrapper, textNode);
+            wrapper.appendChild(textNode);
+        });
+
+        const newRange = document.createRange();
+        newRange.setStart(affected[0], 0);
+        newRange.setEnd(affected[affected.length - 1], affected[affected.length - 1].length);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+        return true;
+    }
+
+    applyInlineColorToRange(range, color, editor) {
+        const selection = window.getSelection();
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        const affected = [];
+        let node = walker.nextNode();
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
+                let start = 0;
+                let end = node.length;
+                if (node === range.startContainer) start = range.startOffset;
+                if (node === range.endContainer) end = Math.min(end, range.endOffset);
+                if (start >= end) {
+                    node = walker.nextNode();
+                    continue;
+                }
+                if (start > 0) {
+                    node = node.splitText(start);
+                }
+                if (end < node.length) {
+                    node.splitText(end - start);
+                }
+                affected.push(node);
+            }
+            node = walker.nextNode();
+        }
+        if (!affected.length) return;
+
+        affected.forEach(textNode => {
+            const wrapper = document.createElement('span');
+            if (color) {
+                wrapper.style.color = color;
+            } else {
+                wrapper.style.color = 'inherit';
+            }
+
+            // Preserve existing formatting for this segment
+            const fmt = this.computeFormattingForNode(textNode);
+            if (fmt.bold) {
+                wrapper.dataset.bold = 'true';
+                wrapper.style.fontWeight = 'bold';
+            }
+            if (fmt.italic) {
+                wrapper.dataset.italic = 'true';
+                wrapper.style.fontStyle = 'italic';
+            }
+            const decorations = [];
+            if (fmt.underline) {
+                wrapper.dataset.underline = 'true';
+                decorations.push('underline');
+            }
+            if (fmt.strikethrough) {
+                wrapper.dataset.strikethrough = 'true';
+                decorations.push('line-through');
+            }
+            if (decorations.length) {
+                wrapper.style.textDecoration = decorations.join(' ');
+            }
+
+            textNode.parentNode.insertBefore(wrapper, textNode);
+            wrapper.appendChild(textNode);
+        });
+
+        if (selection) {
+            const newRange = document.createRange();
+            newRange.setStart(affected[0], 0);
+            newRange.setEnd(affected[affected.length - 1], affected[affected.length - 1].length);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+        }
+    }
+    
+    elementCarriesFormat(el, format) {
+        if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+        const ds = el.dataset || {};
+        if (ds[format] === 'true') return true;
+        const style = el.style || {};
+        if (format === 'bold' && style.fontWeight && style.fontWeight !== 'normal' && style.fontWeight !== '400') return true;
+        if (format === 'italic' && style.fontStyle && style.fontStyle !== 'normal') return true;
+        if (format === 'underline' || format === 'strikethrough') {
+            const deco = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
+            if (format === 'underline' && deco.includes('underline')) return true;
+            if (format === 'strikethrough' && deco.includes('line-through')) return true;
+        }
+        return false;
+    }
+
+    liftFormatFromAncestor(node, format, editor) {
+        if (!node || !node.parentElement) return;
+        let current = node.parentElement;
+        while (current && current !== editor) {
+            if (this.elementCarriesFormat(current, format)) {
+                const beforeNodes = [];
+                const afterNodes = [];
+                let seen = false;
+                Array.from(current.childNodes).forEach(child => {
+                    if (child === node) {
+                        seen = true;
+                        return;
+                    }
+                    (seen ? afterNodes : beforeNodes).push(child);
+                });
+
+                const frag = document.createDocumentFragment();
+                if (beforeNodes.length) {
+                    const beforeClone = current.cloneNode(false);
+                    beforeNodes.forEach(n => beforeClone.appendChild(n));
+                    frag.appendChild(beforeClone);
+                }
+                frag.appendChild(node);
+                if (afterNodes.length) {
+                    const afterClone = current.cloneNode(false);
+                    afterNodes.forEach(n => afterClone.appendChild(n));
+                    frag.appendChild(afterClone);
+                }
+                current.replaceWith(frag);
+                current = node.parentElement;
+                continue;
+            }
+            current = current.parentElement;
+        }
+    }
+
+    applyInlineFormatToRange(range, format, enable, editor, state = null) {
+        const selection = window.getSelection();
+        const segments = [];
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
+                const start = node === range.startContainer ? range.startOffset : 0;
+                const end = node === range.endContainer ? Math.min(node.length, range.endOffset) : node.length;
+                if (start < end) {
+                    segments.push({ node, start, end });
+                }
+            }
+            node = walker.nextNode();
+        }
+
+        if (!segments.length) return null;
+
+        const affected = [];
+        const wrappers = [];
+        segments.forEach(({ node: originalNode, start, end }) => {
+            let textNode = originalNode;
+            if (start > 0) {
+                textNode = textNode.splitText(start);
+            }
+            if ((end - start) < textNode.length) {
+                textNode.splitText(end - start);
+            }
+            affected.push(textNode);
+
+            const currentFmt = this.computeFormattingForNode(textNode);
+            const sourceSpan = (textNode.parentElement && textNode.parentElement.tagName === 'SPAN') ? textNode.parentElement : null;
+            const wrapper = document.createElement('span');
+
+            // Preserve existing inline styles/data attributes from the immediate span ancestor
+            if (sourceSpan) {
+                Array.from(sourceSpan.attributes).forEach(attr => {
+                    if (attr.name === 'style' || attr.name.startsWith('data-')) {
+                        wrapper.setAttribute(attr.name, attr.value);
+                    }
+                });
+            }
+
+            const resolveExisting = (key, fallback) => {
+                if (wrapper.dataset[key] === 'true') return true;
+                if (wrapper.dataset[key] === 'false') return false;
+                return fallback;
+            };
+
+            const bold = format === 'bold' ? enable : resolveExisting('bold', currentFmt.bold);
+            const italic = format === 'italic' ? enable : resolveExisting('italic', currentFmt.italic);
+            const underline = format === 'underline' ? enable : resolveExisting('underline', currentFmt.underline);
+            const strikethrough = format === 'strikethrough' ? enable : resolveExisting('strikethrough', currentFmt.strikethrough);
+
+            wrapper.dataset.bold = bold ? 'true' : 'false';
+            wrapper.style.fontWeight = bold ? 'bold' : 'normal';
+            wrapper.dataset.italic = italic ? 'true' : 'false';
+            wrapper.style.fontStyle = italic ? 'italic' : 'normal';
+            wrapper.dataset.underline = underline ? 'true' : 'false';
+            wrapper.dataset.strikethrough = strikethrough ? 'true' : 'false';
+
+            const decos = [];
+            if (underline) decos.push('underline');
+            if (strikethrough) decos.push('line-through');
+            if (decos.length) {
+                wrapper.style.textDecoration = decos.join(' ');
+            } else {
+                wrapper.style.textDecoration = 'none';
+            }
+
+            if (!wrapper.style.fontSize && currentFmt.fontSize) {
+                wrapper.style.fontSize = currentFmt.fontSize;
+            }
+
+            if (!wrapper.style.color && currentFmt.color) {
+                wrapper.style.color = currentFmt.color;
+            }
+            if (!wrapper.style.backgroundColor && currentFmt.backgroundColor && currentFmt.backgroundColor !== 'transparent' && currentFmt.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+                wrapper.style.backgroundColor = currentFmt.backgroundColor;
+            }
+
+            if (textNode.parentNode) {
+                textNode.parentNode.insertBefore(wrapper, textNode);
+                wrapper.appendChild(textNode);
+                wrappers.push(wrapper);
+            }
+        });
+
+        if (selection) {
+            const newRange = document.createRange();
+            newRange.setStart(affected[0], 0);
+            newRange.setEnd(affected[affected.length - 1], affected[affected.length - 1].length);
+            selection.removeAllRanges();
+            selection.addRange(newRange);
+        }
+        return {
+            wrappers,
+            startWrapper: wrappers[0] || null,
+            endWrapper: wrappers[wrappers.length - 1] || null,
+            endOffset: affected[affected.length - 1]?.length || 0
+        };
     }
     
     handleCellOverflow(cell, displayText, cellData, richText) {
@@ -9580,9 +10188,43 @@ class SpreadsheetApp {
             ? value 
             : 'transparent';
     }
+    
+    _getSelectionFontColor() {
+        if (!this.currentEditingCell) return null;
+        const editor = this.currentEditingCell.querySelector('.cell-editor');
+        if (!editor) return null;
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return null;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return null;
+
+        const colors = new Set();
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
+                const style = window.getComputedStyle(node.parentElement || editor);
+                colors.add(style.color);
+                if (colors.size > 1) break;
+            }
+            node = walker.nextNode();
+        }
+        if (colors.size === 1) {
+            return colors.values().next().value;
+        }
+        return null;
+    }
 
     updateFontColorButton() {
         const colorBar = document.getElementById('fontColorBtn').querySelector('span span');
+        
+        // Prefer live selection color while editing
+        const selectionColor = this._getSelectionFontColor();
+        if (selectionColor) {
+            colorBar.style.backgroundColor = selectionColor;
+            return;
+        }
+        
         const { hasValue, value, allSame } = this._getCommonCellProperty('fontColor');
         
         colorBar.style.backgroundColor = !hasValue ? 'currentColor' :
