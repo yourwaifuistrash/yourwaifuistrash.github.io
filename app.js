@@ -5008,6 +5008,86 @@ class SpreadsheetApp {
         return container.innerHTML;
     }
 
+    richTextHasFormat(html, format) {
+        if (!html || !format) return false;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        const hasStyle = (el) => {
+            if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+            const ds = el.dataset || {};
+            if (ds[format] === 'true') return true;
+            const style = el.style || {};
+            if (format === 'bold') {
+                const weight = style.fontWeight;
+                if (weight && weight !== 'normal' && weight !== '400') return true;
+            } else if (format === 'italic') {
+                if (style.fontStyle && style.fontStyle !== 'normal') return true;
+            } else if (format === 'underline' || format === 'strikethrough') {
+                const deco = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
+                if (format === 'underline' && deco.includes('underline')) return true;
+                if (format === 'strikethrough' && deco.includes('line-through')) return true;
+            }
+            return false;
+        };
+
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        while (node) {
+            let el = node.parentElement;
+            while (el && el !== container) {
+                if (hasStyle(el)) return true;
+                el = el.parentElement;
+            }
+            node = walker.nextNode();
+        }
+        return false;
+    }
+
+    richTextFullyFormatted(html, format) {
+        if (!html || !format) return false;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        const nodeHasFormat = (el) => {
+            if (!el || el.nodeType !== Node.ELEMENT_NODE) return false;
+            const ds = el.dataset || {};
+            if (ds[format] === 'false') return false;
+            if (ds[format] === 'true') return true;
+            const style = el.style || {};
+            if (format === 'bold') {
+                const weight = style.fontWeight;
+                if (weight && weight !== 'normal' && weight !== '400') return true;
+            } else if (format === 'italic') {
+                if (style.fontStyle && style.fontStyle !== 'normal') return true;
+            } else if (format === 'underline' || format === 'strikethrough') {
+                const deco = (style.textDecoration || style.textDecorationLine || '').toLowerCase();
+                if (format === 'underline' && deco.includes('underline')) return true;
+                if (format === 'strikethrough' && deco.includes('line-through')) return true;
+            }
+            return false;
+        };
+
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        let sawText = false;
+        while (node) {
+            sawText = true;
+            let el = node.parentElement;
+            let hasFmt = false;
+            while (el && el !== container) {
+                if (nodeHasFormat(el)) {
+                    hasFmt = true;
+                    break;
+                }
+                el = el.parentElement;
+            }
+            if (!hasFmt) return false;
+            node = walker.nextNode();
+        }
+        return sawText;
+    }
+
     clearRichTextFormat(html, format) {
         if (!html || !format) return html;
         const container = document.createElement('div');
@@ -6992,6 +7072,9 @@ class SpreadsheetApp {
                 }
             }
         }
+
+        // Refresh toolbar state (e.g. bold/italic buttons) based on the saved rich text
+        this.updateFormattingButtons();
     }
 
     recalculateAllFormulas() {
@@ -9110,9 +9193,14 @@ class SpreadsheetApp {
         
         for (const coordKey of this.selectedCellCoords) {
             const cellData = this.cellData.get(coordKey);
-            const value = (cellData && Object.prototype.hasOwnProperty.call(cellData, format))
+            let value = (cellData && Object.prototype.hasOwnProperty.call(cellData, format))
                 ? cellData[format]
                 : this.defaultCellStyle[format];
+
+            // If no explicit cell-level flag, only treat as formatted when the entire rich text carries it
+            if (!value && cellData && cellData.richText && ['bold', 'italic', 'underline', 'strikethrough'].includes(format)) {
+                value = this.richTextFullyFormatted(cellData.richText, format);
+            }
             if (!value) {
                 allHaveFormat = false;
                 break;
