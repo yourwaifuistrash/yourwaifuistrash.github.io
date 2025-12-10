@@ -143,70 +143,6 @@ const LINK_EDITOR_HTML = `
     </div>
 `;
 
-const CONTEXT_MENU_HTML = `
-    <div id="contextMenu" class="context-menu hidden">
-        <div class="context-menu-item" data-action="cut">
-            <span class="context-menu-icon">✂️</span>
-            <span>Cut</span>
-        </div>
-        <div class="context-menu-item" data-action="copy">
-            <span class="context-menu-icon">📋</span>
-            <span>Copy</span>
-        </div>
-        <div class="context-menu-item" data-action="paste">
-            <span class="context-menu-icon">📄</span>
-            <span>Paste</span>
-        </div>
-        <div class="context-menu-separator" id="linkSeparator1"></div>
-        <div class="context-menu-item" data-action="openLink" id="openLinkItem">
-            <span class="context-menu-icon">🔗</span>
-            <span>Open Link</span>
-        </div>
-        <div class="context-menu-item" data-action="editLink" id="editLinkItem">
-            <span class="context-menu-icon">✏️</span>
-            <span>Edit Link</span>
-        </div>
-        <div class="context-menu-item" data-action="insertLink" id="insertLinkItem">
-            <span class="context-menu-icon">🔗</span>
-            <span>Insert Link</span>
-        </div>
-        <div class="context-menu-item context-menu-item--row-height" id="rowHeightMenuItem" data-action="setRowHeight" style="display: none;">
-            <span class="context-menu-icon">↕️</span>
-            <span>Set Row Height…</span>
-        </div>
-        <div class="context-menu-item context-menu-item--col-width" id="colWidthMenuItem" data-action="setColWidth" style="display: none;">
-            <span class="context-menu-icon">↔️</span>
-            <span>Set Column Width…</span>
-        </div>
-        <div class="context-menu-separator" id="linkSeparator2"></div>
-        <div class="context-menu-item" data-action="insertRow">
-            <span class="context-menu-icon">➕</span>
-            <span>Insert Row Above</span>
-        </div>
-        <div class="context-menu-item" data-action="insertCol">
-            <span class="context-menu-icon">➕</span>
-            <span>Insert Column Left</span>
-        </div>
-        <div class="context-menu-item" data-action="deleteRow">
-            <span class="context-menu-icon">➖</span>
-            <span>Delete Row</span>
-        </div>
-        <div class="context-menu-item" data-action="deleteCol">
-            <span class="context-menu-icon">➖</span>
-            <span>Delete Column</span>
-        </div>
-        <div class="context-menu-separator"></div>
-        <div class="context-menu-item" data-action="clearContent">
-            <span class="context-menu-icon">🗑️</span>
-            <span>Clear Content</span>
-        </div>
-        <div class="context-menu-item" data-action="clearFormat">
-            <span class="context-menu-icon">🧹</span>
-            <span>Clear Formatting</span>
-        </div>
-    </div>
-`;
-
 const COLOR_PALETTES_HTML = `
     <div id="fontColorPalette" class="font-color-palette hidden">
         <div class="font-color-palette-content">
@@ -371,116 +307,116 @@ const SAVE_OPTIONS_MODAL_HTML = `
     </div>
 `;
 
-const KEYBOARD_SHORTCUTS_MODAL_HTML = `
-    <div id="keyboardShortcutsModal" class="shortcuts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="shortcutsModalTitle">
-        <div class="shortcuts-modal__backdrop" data-modal-dismiss></div>
-        <div class="shortcuts-modal__dialog">
-            <div class="shortcuts-modal__header">
-                <h2 id="shortcutsModalTitle">Keyboard Shortcuts</h2>
-                <button class="shortcuts-modal__close" type="button" data-modal-dismiss aria-label="Close">×</button>
-            </div>
-            <div class="shortcuts-modal__body">
-                <div class="shortcuts-section">
-                    <h3 class="shortcuts-section__title">Navigation</h3>
-                    <div class="shortcuts-list">
-                        <div class="shortcut-item">
-                            <kbd>Arrow Keys</kbd>
-                            <span>Move selection</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Tab</kbd>
-                            <span>Move right</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Shift</kbd> + <kbd>Tab</kbd>
-                            <span>Move left</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Enter</kbd>
-                            <span>Edit cell / Move down</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="shortcuts-section">
-                    <h3 class="shortcuts-section__title">Editing</h3>
-                    <div class="shortcuts-list">
-                        <div class="shortcut-item">
-                            <kbd>Delete</kbd> / <kbd>Backspace</kbd>
-                            <span>Clear cell content</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Escape</kbd>
-                            <span>Cancel editing / Clear selection</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>Z</kbd>
-                            <span>Undo</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>Y</kbd>
-                            <span>Redo</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="shortcuts-section">
-                    <h3 class="shortcuts-section__title">Selection</h3>
-                    <div class="shortcuts-list">
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>A</kbd>
-                            <span>Select all cells</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>Drag</kbd>
-                            <span>Range selection</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>Click</kbd>
-                            <span>Add/remove from selection</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="shortcuts-section">
-                    <h3 class="shortcuts-section__title">Clipboard</h3>
-                    <div class="shortcuts-list">
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>C</kbd>
-                            <span>Copy</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>X</kbd>
-                            <span>Cut</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Ctrl/Cmd</kbd> + <kbd>V</kbd>
-                            <span>Paste</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="shortcuts-section">
-                    <h3 class="shortcuts-section__title">Other</h3>
-                    <div class="shortcuts-list">
-                        <div class="shortcut-item">
-                            <kbd>Context Menu</kbd>
-                            <span>Open context menu</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Right Click</kbd>
-                            <span>Open context menu</span>
-                        </div>
-                        <div class="shortcut-item">
-                            <kbd>Double Click</kbd>
-                            <span>Edit cell</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+const CONTEXT_MENU_ITEMS = [
+    { action: 'cut', icon: '✂️', label: 'Cut' },
+    { action: 'copy', icon: '📋', label: 'Copy' },
+    { action: 'paste', icon: '📄', label: 'Paste' },
+    { separator: true, id: 'linkSeparator1' },
+    { action: 'openLink', icon: '🔗', label: 'Open Link', id: 'openLinkItem' },
+    { action: 'editLink', icon: '✏️', label: 'Edit Link', id: 'editLinkItem' },
+    { action: 'insertLink', icon: '🔗', label: 'Insert Link', id: 'insertLinkItem' },
+    { action: 'setRowHeight', icon: '↕️', label: 'Set Row Height…', id: 'rowHeightMenuItem', className: 'context-menu-item--row-height', style: 'display: none;' },
+    { action: 'setColWidth', icon: '↔️', label: 'Set Column Width…', id: 'colWidthMenuItem', className: 'context-menu-item--col-width', style: 'display: none;' },
+    { separator: true, id: 'linkSeparator2' },
+    { action: 'insertRow', icon: '➕', label: 'Insert Row Above' },
+    { action: 'insertCol', icon: '➕', label: 'Insert Column Left' },
+    { action: 'deleteRow', icon: '➖', label: 'Delete Row' },
+    { action: 'deleteCol', icon: '➖', label: 'Delete Column' },
+    { separator: true },
+    { action: 'clearContent', icon: '🗑️', label: 'Clear Content' },
+    { action: 'clearFormat', icon: '🧹', label: 'Clear Formatting' }
+];
+
+const SHORTCUT_SECTIONS = [
+    {
+        title: 'Navigation',
+        items: [
+            { keys: 'Arrow Keys', desc: 'Move selection' },
+            { keys: 'Tab', desc: 'Move right' },
+            { keys: ['Shift', 'Tab'], desc: 'Move left' },
+            { keys: 'Enter', desc: 'Edit cell / Move down' }
+        ]
+    },
+    {
+        title: 'Editing',
+        items: [
+            { keys: ['Delete', 'Backspace'], desc: 'Clear cell content', separator: ' / ' },
+            { keys: 'Escape', desc: 'Cancel editing / Clear selection' },
+            { keys: ['Ctrl/Cmd', 'Z'], desc: 'Undo' },
+            { keys: ['Ctrl/Cmd', 'Y'], desc: 'Redo' }
+        ]
+    },
+    {
+        title: 'Selection',
+        items: [
+            { keys: ['Ctrl/Cmd', 'A'], desc: 'Select all cells' },
+            { keys: ['Ctrl/Cmd', 'Drag'], desc: 'Range selection' },
+            { keys: ['Ctrl/Cmd', 'Click'], desc: 'Add/remove from selection' }
+        ]
+    },
+    {
+        title: 'Clipboard',
+        items: [
+            { keys: ['Ctrl/Cmd', 'C'], desc: 'Copy' },
+            { keys: ['Ctrl/Cmd', 'X'], desc: 'Cut' },
+            { keys: ['Ctrl/Cmd', 'V'], desc: 'Paste' }
+        ]
+    },
+    {
+        title: 'Other',
+        items: [
+            { keys: 'Context Menu', desc: 'Open context menu' },
+            { keys: 'Right Click', desc: 'Open context menu' },
+            { keys: 'Double Click', desc: 'Edit cell' }
+        ]
+    }
+];
+
+const renderContextMenuHtml = () => `
+    <div id="contextMenu" class="context-menu hidden">
+        ${CONTEXT_MENU_ITEMS.map(item => item.separator
+            ? `<div class="context-menu-separator"${item.id ? ` id="${item.id}"` : ''}></div>`
+            : `<div class="context-menu-item${item.className ? ` ${item.className}` : ''}" data-action="${item.action}"${item.id ? ` id="${item.id}"` : ''}${item.style ? ` style="${item.style}"` : ''}>
+                    <span class="context-menu-icon">${item.icon}</span>
+                    <span>${item.label}</span>
+                </div>`
+        ).join('')}
     </div>
 `;
+
+const renderKeyboardShortcutsModal = () => {
+    const renderKeys = ({ keys, separator = ' + ' }) => {
+        const parts = Array.isArray(keys) ? keys : [keys];
+        return parts.map(key => `<kbd>${key}</kbd>`).join(separator);
+    };
+
+    const sections = SHORTCUT_SECTIONS.map(section => `
+        <div class="shortcuts-section">
+            <h3 class="shortcuts-section__title">${section.title}</h3>
+            <div class="shortcuts-list">
+                ${section.items.map(item => `
+                    <div class="shortcut-item">
+                        ${renderKeys(item)}
+                        <span>${item.desc}</span>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+
+    return `
+        <div id="keyboardShortcutsModal" class="shortcuts-modal hidden" role="dialog" aria-modal="true" aria-labelledby="shortcutsModalTitle">
+            <div class="shortcuts-modal__backdrop" data-modal-dismiss></div>
+            <div class="shortcuts-modal__dialog">
+                <div class="shortcuts-modal__header">
+                    <h2 id="shortcutsModalTitle">Keyboard Shortcuts</h2>
+                    <button class="shortcuts-modal__close" type="button" data-modal-dismiss aria-label="Close">×</button>
+                </div>
+                <div class="shortcuts-modal__body">${sections}</div>
+            </div>
+        </div>
+    `;
+};
 
 const CODEBERG_API_BASE = 'https://codeberg.org/api/v1';
 const CODEBERG_OAUTH_AUTHORIZE = 'https://codeberg.org/login/oauth/authorize';
@@ -3536,9 +3472,8 @@ class SpreadsheetApp {
         }
 
         if (!document.getElementById('contextMenu')) {
-            document.body.insertAdjacentHTML('beforeend', CONTEXT_MENU_HTML);
+            document.body.insertAdjacentHTML('beforeend', renderContextMenuHtml());
         }
-
         if (!document.getElementById('fontColorPalette')) {
             document.body.insertAdjacentHTML('beforeend', COLOR_PALETTES_HTML);
         }
@@ -3548,7 +3483,7 @@ class SpreadsheetApp {
         }
         
         if (!document.getElementById('keyboardShortcutsModal')) {
-            document.body.insertAdjacentHTML('beforeend', KEYBOARD_SHORTCUTS_MODAL_HTML);
+            document.body.insertAdjacentHTML('beforeend', renderKeyboardShortcutsModal());
         }
     }
 
