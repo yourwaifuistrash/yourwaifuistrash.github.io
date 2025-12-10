@@ -7951,6 +7951,9 @@ class SpreadsheetApp {
             if (cell.dataset.cutGhost) {
                 delete cell.dataset.cutGhost;
             }
+            if (cell.dataset.cutGhostData) {
+                delete cell.dataset.cutGhostData;
+            }
             cell.classList.remove('cut-preview', 'cut-ghost');
             const coord = this.getCoord(cell);
             const data = this.cellData.get(coord) || {};
@@ -8034,6 +8037,7 @@ class SpreadsheetApp {
 
         if (this.clipboard.mode === 'cut' && this.clipboard.sourceCells) {
             this.clipboard.sourceCells.forEach(coordKey => {
+                const previousData = this.cellData.get(coordKey);
                 // Clear the cell data
                 this.cellData.delete(coordKey);
 
@@ -8043,16 +8047,13 @@ class SpreadsheetApp {
                 if (cell) {
                     // Preserve visible text as a ghost
                     cell.dataset.cutGhost = cell.textContent || '';
+                    if (previousData && Object.keys(previousData).length) {
+                        cell.dataset.cutGhostData = JSON.stringify(previousData);
+                    } else {
+                        delete cell.dataset.cutGhostData;
+                    }
                     cell.textContent = '';
-                    cell.style.backgroundColor = '';
-                    cell.style.color = '';
-                    cell.style.fontSize = '';
-                    // Remove the dashed border after first paste
-                    cell.style.border = '';
-                    cell.classList.remove('bold', 'italic', 'underline', 'strikethrough',
-                                        'align-left', 'align-center', 'align-right',
-                                        'align-top', 'align-middle', 'align-bottom');
-                    // Re-render to show ghost content with cut styling
+                    // Re-render to show ghost content with preserved formatting
                     this.updateCellDisplay(cell, {});
                     cutCellsToUpdate.add(cell);
                 }
@@ -8298,20 +8299,30 @@ class SpreadsheetApp {
         const hadCutGhost = cell.classList.contains('cut-ghost');
         const hasData = d && Object.keys(d).length > 0;
         const ghostText = !hasData && cell.dataset.cutGhost ? cell.dataset.cutGhost : null;
-        const richText = d.richText;
+        let ghostFormatting = null;
+        if (!hasData && cell.dataset.cutGhostData) {
+            try {
+                ghostFormatting = JSON.parse(cell.dataset.cutGhostData);
+            } catch (err) {
+                ghostFormatting = null;
+            }
+        }
+        const baseData = hasData ? d : (ghostFormatting || {});
+        const baseValue = hasData ? d.value : ghostFormatting?.value;
+        const richText = hasData ? d.richText : ghostFormatting?.richText;
         
         // Handle display text based on value type
         let displayText = '';
         let isLink = false;
         if (ghostText) {
             displayText = ghostText;
-        } else if (d.value) {
-            if (d.value.startsWith("'")) {
-                displayText = d.value.substring(1);
-            } else if (d.value.startsWith('=')) {
-                displayText = this.parseFormula(d.value, row, col);
+        } else if (baseValue) {
+            if (baseValue.startsWith("'")) {
+                displayText = baseValue.substring(1);
+            } else if (baseValue.startsWith('=')) {
+                displayText = this.parseFormula(baseValue, row, col);
             } else {
-                displayText = d.value;
+                displayText = baseValue;
             }
         }
 
@@ -8321,8 +8332,8 @@ class SpreadsheetApp {
             displayText = String(displayText);
         }
         
-        isLink = !!(d.linkUrl || this.isHyperlink(displayText));
-        const canUseRichText = richText && !(d.value && String(d.value).startsWith('='));
+        isLink = !!(baseData.linkUrl || this.isHyperlink(displayText));
+        const canUseRichText = richText && !(baseValue && String(baseValue).startsWith('='));
 
         if (canUseRichText && displayText.trim() !== '') {
             cell.innerHTML = richText;
@@ -8331,13 +8342,16 @@ class SpreadsheetApp {
         }
         
         // Handle text overflow into adjacent cells
-        this.handleCellOverflow(cell, displayText, d, canUseRichText ? richText : null);
+        this.handleCellOverflow(cell, displayText, baseData, canUseRichText ? richText : null);
         
-        const effective = { ...this.defaultCellStyle, ...d };
+        const effective = { ...this.defaultCellStyle, ...(baseData || {}) };
 
         // If we now have real data, clear any stale ghost markers
         if (hasData && cell.dataset.cutGhost) {
             delete cell.dataset.cutGhost;
+        }
+        if (hasData && cell.dataset.cutGhostData) {
+            delete cell.dataset.cutGhostData;
         }
 
         const keepCutPreview = ghostText || hadCutPreview;
