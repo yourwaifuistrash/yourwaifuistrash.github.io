@@ -4338,8 +4338,14 @@ class SpreadsheetApp {
             this.updateCellDataEntry(coord, data => {
                 if (remove) {
                     delete data[type];
+                    if (data.richText && ['bold', 'italic', 'underline', 'strikethrough'].includes(type)) {
+                        data.richText = this.clearRichTextFormat(data.richText, type);
+                    }
                 } else {
                     data[type] = isToggle ? true : value;
+                    if (data.richText && ['bold', 'italic', 'underline', 'strikethrough'].includes(type)) {
+                        data.richText = this.setRichTextFormat(data.richText, type, true);
+                    }
                 }
             });
         });
@@ -4942,6 +4948,126 @@ class SpreadsheetApp {
         const escapedPlain = escapeHTML(plainText);
         const hasRich = !!sanitizedHtml && sanitizedHtml !== escapedPlain;
         return { plainText, html: sanitizedHtml, hasRich };
+    }
+
+    setRichTextFormat(html, format, enable = true) {
+        if (!html || !format) return html;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        const addDecoration = (el, part) => {
+            const decos = new Set(
+                (el.style.textDecoration || el.style.textDecorationLine || '')
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .map(s => s.toLowerCase())
+            );
+            decos.delete('none');
+            decos.add(part);
+            el.style.textDecoration = Array.from(decos).join(' ');
+        };
+
+        const walk = (node) => {
+            node.childNodes.forEach(child => {
+                if (child.nodeType === Node.ELEMENT_NODE) {
+                    const el = child;
+                    // Clear any explicit "false" overrides
+                    if (el.dataset) {
+                        delete el.dataset[format];
+                    }
+                    if (enable) {
+                        switch (format) {
+                            case 'bold':
+                                el.dataset.bold = 'true';
+                                el.style.fontWeight = 'bold';
+                                break;
+                            case 'italic':
+                                el.dataset.italic = 'true';
+                                el.style.fontStyle = 'italic';
+                                break;
+                            case 'underline':
+                                el.dataset.underline = 'true';
+                                addDecoration(el, 'underline');
+                                break;
+                            case 'strikethrough':
+                                el.dataset.strikethrough = 'true';
+                                addDecoration(el, 'line-through');
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    if (el.childNodes.length) {
+                        walk(el);
+                    }
+                }
+            });
+        };
+
+        walk(container);
+        return container.innerHTML;
+    }
+
+    clearRichTextFormat(html, format) {
+        if (!html || !format) return html;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        const removeDecoration = (el, part) => {
+            const decos = new Set(
+                (el.style.textDecoration || el.style.textDecorationLine || '')
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .map(s => s.toLowerCase())
+            );
+            decos.delete(part);
+            const value = Array.from(decos).join(' ');
+            if (value) {
+                el.style.textDecoration = value;
+            } else {
+                el.style.removeProperty('text-decoration');
+                if (!el.getAttribute('style')) el.removeAttribute('style');
+            }
+        };
+
+        const walk = (node) => {
+            node.childNodes.forEach(child => {
+                if (child.nodeType === Node.ELEMENT_NODE) {
+                    const el = child;
+                    if (el.dataset) {
+                        delete el.dataset[format];
+                    }
+                    switch (format) {
+                        case 'bold':
+                            if (el.style.fontWeight) {
+                                el.style.removeProperty('font-weight');
+                                if (!el.getAttribute('style')) el.removeAttribute('style');
+                            }
+                            break;
+                        case 'italic':
+                            if (el.style.fontStyle) {
+                                el.style.removeProperty('font-style');
+                                if (!el.getAttribute('style')) el.removeAttribute('style');
+                            }
+                            break;
+                        case 'underline':
+                            removeDecoration(el, 'underline');
+                            break;
+                        case 'strikethrough':
+                            removeDecoration(el, 'line-through');
+                            break;
+                        default:
+                            break;
+                    }
+                    if (el.childNodes.length) {
+                        walk(el);
+                    }
+                }
+            });
+        };
+
+        walk(container);
+        return container.innerHTML;
     }
     
     applyBaselineFormatting(html, formatting = {}) {
