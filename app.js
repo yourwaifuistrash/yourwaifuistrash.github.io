@@ -6888,6 +6888,8 @@ class SpreadsheetApp {
         const availableWidth = Math.max(cellWidth - padding, 0);
         const textWidth = this.measureEditorContentWidth(input);
         const wrapper = cell.querySelector('.cell-editor-wrapper');
+        const textAlign = (input?.style?.textAlign || window.getComputedStyle(input).textAlign || 'left').toLowerCase();
+        const maxOverflowCells = 10;
         
         // Always set cell to allow overflow during editing
         cell.style.overflow = 'visible';
@@ -6896,31 +6898,57 @@ class SpreadsheetApp {
             wrapper.style.overflow = 'visible';
         }
         
-        if (textWidth > availableWidth) {
-            // Text doesn't fit - calculate how much width we need
-            let totalWidth = cellWidth;
-            
-            // During editing, we IGNORE whether adjacent cells have content
-            // Just calculate how much space we need
-            for (let c = col + 1; c < this.config.maxCols; c++) {
-                totalWidth += this.getColumnWidth(c);
-                
-                // Stop if we have enough width
-                if (textWidth <= totalWidth - padding) {
-                    break;
+        const needsOverflow = textWidth > availableWidth;
+        const requiredWidth = Math.max(cellWidth, textWidth + padding);
+        let overflowWidth = cellWidth;
+        let overflowOffset = 0;
+        let targetWidth = availableWidth;
+
+        if (needsOverflow) {
+            if (textAlign === 'right') {
+                let totalWidth = cellWidth;
+                for (let c = col - 1, steps = 0; c >= 0 && steps < maxOverflowCells && totalWidth < requiredWidth; c--, steps++) {
+                    totalWidth += this.getColumnWidth(c);
                 }
-                
-                // Check if we've checked enough cells
-                if (c - col > 10) break;
+                overflowWidth = totalWidth;
+                overflowOffset = cellWidth - overflowWidth;
+            } else if (textAlign === 'center') {
+                let leftSpace = 0;
+                let rightSpace = 0;
+                for (let c = col - 1, steps = 0; c >= 0 && steps < maxOverflowCells; c--, steps++) {
+                    leftSpace += this.getColumnWidth(c);
+                }
+                for (let c = col + 1, steps = 0; c < this.config.maxCols && steps < maxOverflowCells; c++, steps++) {
+                    rightSpace += this.getColumnWidth(c);
+                }
+                const neededExtra = requiredWidth - cellWidth;
+                let extraLeft = Math.min(leftSpace, Math.ceil(neededExtra / 2));
+                let extraRight = Math.min(rightSpace, neededExtra - extraLeft);
+                const remaining = Math.max(0, neededExtra - (extraLeft + extraRight));
+                if (remaining > 0) {
+                    const leftRemaining = leftSpace - extraLeft;
+                    const rightRemaining = rightSpace - extraRight;
+                    if (leftRemaining >= rightRemaining) {
+                        extraLeft += Math.min(leftRemaining, remaining);
+                    } else {
+                        extraRight += Math.min(rightRemaining, remaining);
+                    }
+                }
+                overflowWidth = cellWidth + extraLeft + extraRight;
+                overflowOffset = -extraLeft;
+            } else {
+                let totalWidth = cellWidth;
+                for (let c = col + 1, steps = 0; c < this.config.maxCols && steps < maxOverflowCells && totalWidth < requiredWidth; c++, steps++) {
+                    totalWidth += this.getColumnWidth(c);
+                }
+                overflowWidth = totalWidth;
             }
-            
-            // Set input width to accommodate the text (always allow overflow during editing)
-            const targetWidth = Math.max(availableWidth, textWidth + padding);
-            input.style.width = targetWidth + 'px';
-        } else {
-            // Text fits - use the visible content width so the text stays in place
-            input.style.width = availableWidth + 'px';
+            targetWidth = Math.max(availableWidth, textWidth + padding);
         }
+
+        input.style.width = targetWidth + 'px';
+        cell.style.setProperty('--editor-overflow-width', `${overflowWidth}px`);
+        cell.style.setProperty('--editor-overflow-offset', `${overflowOffset}px`);
     }
 
     setEditorCaretFromClick(event, input) {
