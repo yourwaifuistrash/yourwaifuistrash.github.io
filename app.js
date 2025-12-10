@@ -244,7 +244,10 @@ const BORDER_MENU_HTML = `
         <div class="border-menu-section border-menu-section--compact">
             <div style="display: flex; gap: var(--space-8); align-items: center;">
                 <input type="color" id="borderColorPicker" value="#000000" style="width: 40px; height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer;">
-                <input type="text" id="borderColorHex" class="form-control" placeholder="#000000" maxlength="7" style="flex: 1; font-family: var(--font-family-mono); font-size: var(--font-size-sm);">
+                <div style="position: relative; flex: 1; display: flex; align-items: center;">
+                    <span style="position: absolute; left: var(--space-8); color: var(--color-text-secondary); font-size: var(--font-size-sm); font-family: var(--font-family-mono); pointer-events: none;">#</span>
+                    <input type="text" id="borderColorHex" class="form-control" placeholder="000000" maxlength="6" style="flex: 1; font-family: var(--font-family-mono); font-size: var(--font-size-sm); padding-left: calc(var(--space-8) + 12px);">
+                </div>
                 <button class="btn btn--sm" id="addBorderColorBtn" title="Add custom color" style="min-width: 32px;">+</button>
             </div>
             <div class="border-menu-divider"></div>
@@ -9803,7 +9806,9 @@ class SpreadsheetApp {
                         callbacks.colorInput.value = hex;
                     }
                     if (callbacks.hexInput) {
-                        callbacks.hexInput.value = hex.substring(1);
+                        callbacks.hexInput.value = callbacks.type === 'border'
+                            ? hex.substring(1).toUpperCase()
+                            : hex.substring(1);
                     }
                     // Call the update callback to update preview
                     if (typeof callbacks.updateCallback === 'function') {
@@ -10785,7 +10790,7 @@ class SpreadsheetApp {
         const applyColorFromSwatch = (color) => {
             if (!color) return;
             borderColorPicker.value = color;
-            borderColorHex.value = color.toUpperCase();
+            borderColorHex.value = color.substring(1).toUpperCase();
             updatePreview();
         };
 
@@ -10840,20 +10845,10 @@ class SpreadsheetApp {
         // Sync hex input with color picker
         borderColorHex.addEventListener('input', (e) => {
             let value = e.target.value.trim();
-            if (value.startsWith('#')) {
-                value = value.substring(1);
-            }
-            value = value.replace(/[^0-9A-Fa-f]/g, '').substring(0, 6);
-            
+            value = value.replace(/[^0-9A-Fa-f]/g, '').substring(0, 6).toUpperCase();
+            borderColorHex.value = value;
             if (value.length === 6) {
                 borderColorPicker.value = '#' + value;
-                borderColorHex.value = '#' + value.toUpperCase();
-                updatePreview();
-            } else if (value.length === 3) {
-                // Support short hex codes
-                const expanded = value.split('').map(c => c + c).join('');
-                borderColorPicker.value = '#' + expanded;
-                borderColorHex.value = '#' + expanded.toUpperCase();
                 updatePreview();
             }
         });
@@ -11017,7 +11012,7 @@ class SpreadsheetApp {
         
         // Update hex input with current color
         if (hexInput) {
-            hexInput.value = currentColor.substring(1);
+            hexInput.value = currentColor.substring(1).toUpperCase();
         }
 
         // Initialize with current color
