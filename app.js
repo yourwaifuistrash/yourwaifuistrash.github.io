@@ -9468,7 +9468,7 @@ class SpreadsheetApp {
 
         // Sync color picker and hex input
         colorInput.addEventListener('input', (e) => {
-            hexInput.value = e.target.value.substring(1);
+            hexInput.value = e.target.value.substring(1).toUpperCase();
         });
         this.attachFormattingFieldGuards([colorInput]);
 
@@ -9524,7 +9524,7 @@ class SpreadsheetApp {
                     const newHexInput = newPalette.querySelector('input[type="text"]');
                     if (newColorInput && newHexInput) {
                         newColorInput.value = currentColor;
-                        newHexInput.value = currentColor.substring(1);
+                        newHexInput.value = currentColor.substring(1).toUpperCase();
                     }
                 }, 0);
                 
@@ -9636,7 +9636,7 @@ class SpreadsheetApp {
         // Update hex input with current color
         const hexInput = palette.querySelector('input[type="text"]');
         if (hexInput) {
-            hexInput.value = currentColor.substring(1);
+            hexInput.value = currentColor.substring(1).toUpperCase();
         }
 
         // Initialize with current color
@@ -9808,7 +9808,7 @@ class SpreadsheetApp {
                     if (callbacks.hexInput) {
                         callbacks.hexInput.value = callbacks.type === 'border'
                             ? hex.substring(1).toUpperCase()
-                            : hex.substring(1);
+                            : hex.substring(1).toUpperCase();
                     }
                     // Call the update callback to update preview
                     if (typeof callbacks.updateCallback === 'function') {
@@ -9819,7 +9819,7 @@ class SpreadsheetApp {
                     const existing = getExistingInputs();
                     if (existing) {
                         existing.colorInput.value = hex;
-                        existing.hexInput.value = hex.substring(1);
+                        existing.hexInput.value = hex.substring(1).toUpperCase();
                     }
                 }
             }
