@@ -4550,15 +4550,25 @@ class SpreadsheetApp {
 
         if (editor) {
             const computed = window.getComputedStyle(cell);
-            editor.style.fontSize = computed.fontSize;
+            const resolvedFontSize = effective.fontSize ? `${effective.fontSize}px` : computed.fontSize;
+            const resolvedFontWeight = effective.bold ? 'bold' : computed.fontWeight;
+            const resolvedFontStyle = effective.italic ? 'italic' : computed.fontStyle;
+            const resolvedColor = effective.fontColor || computed.color;
+            const decorations = [];
+            if (effective.underline) decorations.push('underline');
+            if (effective.strikethrough) decorations.push('line-through');
+            const computedDecoration = (computed.textDecorationLine || computed.textDecoration || '').toLowerCase();
+            if (!decorations.length && computedDecoration && computedDecoration !== 'none') {
+                decorations.push(computedDecoration);
+            }
+            editor.style.fontSize = resolvedFontSize;
             editor.style.fontFamily = computed.fontFamily;
-            editor.style.fontWeight = computed.fontWeight;
-            editor.style.fontStyle = computed.fontStyle;
+            editor.style.fontWeight = resolvedFontWeight;
+            editor.style.fontStyle = resolvedFontStyle;
             editor.style.lineHeight = computed.lineHeight;
-            editor.style.color = computed.color;
+            editor.style.color = resolvedColor;
             editor.style.textAlign = effective.textAlign || 'left';
-            const textDecoration = computed.textDecorationLine || computed.textDecoration;
-            editor.style.textDecoration = textDecoration && textDecoration !== 'none' ? textDecoration : 'none';
+            editor.style.textDecoration = decorations.length ? decorations.join(' ') : 'none';
             this.restoreEditorSelection(editor);
             this.updateEditorOverflow(cell, editor);
         }
@@ -6839,19 +6849,25 @@ class SpreadsheetApp {
 
         // Copy computed formatting so the editor sits exactly where the text was
         const computed = window.getComputedStyle(cell);
-        input.style.fontSize = computed.fontSize;
-        input.style.fontFamily = computed.fontFamily;
-        input.style.fontWeight = computed.fontWeight;
-        input.style.fontStyle = computed.fontStyle;
-        input.style.lineHeight = computed.lineHeight;
-        input.style.color = computed.color;
-        const textDecoration = computed.textDecorationLine || computed.textDecoration;
-        input.style.textDecoration = textDecoration && textDecoration !== 'none' ? textDecoration : 'none';
-        if (hasInlineFormatting) {
-            input.style.fontWeight = 'normal';
-            input.style.fontStyle = 'normal';
-            input.style.textDecoration = 'none';
+        const resolvedFontSize = effectiveStyle.fontSize ? `${effectiveStyle.fontSize}px` : computed.fontSize;
+        const resolvedFontWeight = effectiveStyle.bold ? 'bold' : computed.fontWeight;
+        const resolvedFontStyle = effectiveStyle.italic ? 'italic' : computed.fontStyle;
+        const resolvedColor = effectiveStyle.fontColor || computed.color;
+        const decorations = [];
+        if (effectiveStyle.underline) decorations.push('underline');
+        if (effectiveStyle.strikethrough) decorations.push('line-through');
+        const computedDecoration = (computed.textDecorationLine || computed.textDecoration || '').toLowerCase();
+        if (!decorations.length && computedDecoration && computedDecoration !== 'none') {
+            decorations.push(computedDecoration);
         }
+        input.style.fontSize = resolvedFontSize;
+        input.style.fontFamily = computed.fontFamily;
+        input.style.fontWeight = resolvedFontWeight;
+        input.style.fontStyle = resolvedFontStyle;
+        input.style.lineHeight = computed.lineHeight;
+        input.style.color = resolvedColor;
+        const appliedDecoration = decorations.length ? decorations.join(' ') : 'none';
+        input.style.textDecoration = appliedDecoration;
         
         editorWrapper.appendChild(input);
         cell.innerHTML = '';
