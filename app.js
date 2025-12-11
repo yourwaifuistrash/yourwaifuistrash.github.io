@@ -315,6 +315,7 @@ const CONTEXT_MENU_ITEMS = [
     { action: 'openLink', icon: '🔗', label: 'Open Link', id: 'openLinkItem' },
     { action: 'editLink', icon: '✏️', label: 'Edit Link', id: 'editLinkItem' },
     { action: 'insertLink', icon: '🔗', label: 'Insert Link', id: 'insertLinkItem' },
+    { action: 'comment', icon: '💬', label: 'Add/Edit Comment' },
     { action: 'setRowHeight', icon: '↕️', label: 'Set Row Height…', id: 'rowHeightMenuItem', className: 'context-menu-item--row-height', style: 'display: none;' },
     { action: 'setColWidth', icon: '↔️', label: 'Set Column Width…', id: 'colWidthMenuItem', className: 'context-menu-item--col-width', style: 'display: none;' },
     { separator: true, id: 'linkSeparator2' },
@@ -382,6 +383,23 @@ const renderContextMenuHtml = () => `
                 </div>`
         ).join('')}
     </div>
+`;
+
+const COMMENT_POPOVER_HTML = `
+    <command id="commentPopoverCommand" label="Toggle cell comment" type="command" commandfor="cellCommentPopover"></command>
+    <section id="cellCommentPopover" class="comment-popover hidden" popover="auto" role="note" aria-live="polite" aria-label="Cell comment">
+        <header class="comment-popover__header">
+            <button type="button" class="comment-popover__close" command="commentPopoverCommand" commandfor="cellCommentPopover" popovertarget="cellCommentPopover" popovertargetaction="hide" aria-label="Close comment">×</button>
+        </header>
+        <div class="comment-popover__meta" id="cellCommentMeta">
+            <img id="cellCommentAvatar" class="comment-popover__avatar" alt="">
+            <div class="comment-popover__meta-text">
+                <div class="comment-popover__author" id="cellCommentAuthor"></div>
+                <div class="comment-popover__timestamp" id="cellCommentTime"></div>
+            </div>
+        </div>
+        <div class="comment-popover__body" id="cellCommentText"></div>
+    </section>
 `;
 
 const renderKeyboardShortcutsModal = () => {
@@ -583,6 +601,12 @@ class SpreadsheetApp {
         this.fontColorPalette = document.getElementById('fontColorPalette');
         this.linkEditor = document.getElementById('linkEditor');
         this.borderMenu = document.getElementById('borderMenu');
+        this.commentPopover = document.getElementById('cellCommentPopover');
+        this.commentPopoverText = document.getElementById('cellCommentText');
+        this.commentPopoverAuthor = document.getElementById('cellCommentAuthor');
+        this.commentPopoverTime = document.getElementById('cellCommentTime');
+        this.commentPopoverAvatar = document.getElementById('cellCommentAvatar');
+        this.commentPopoverCommand = document.getElementById('commentPopoverCommand');
         this.codebergProfileContainer = document.getElementById('codebergProfile');
         this.codebergAvatarImg = document.getElementById('codebergAvatarImg');
         this.codebergAvatarInitials = document.getElementById('codebergAvatarInitials');
@@ -743,7 +767,73 @@ class SpreadsheetApp {
         this.updateFontSizeInput();
         this.updateFontColorButton();
         this.updateBackgroundColorButton();
+        this.updateCommentPopover();
         this.renderSelectionOverlays();
+    }
+
+    updateCommentPopover() {
+        if (!this.commentPopover || !this.commentPopoverText) return;
+
+        if (!this.primaryCell) {
+            this.hideCommentPopover();
+            return;
+        }
+
+        const commentData = this.primaryCell
+            ? this.normalizeCommentData(this.cellData.get(this.getCoord(this.primaryCell))?.comment)
+            : null;
+
+        if (!commentData || !commentData.text) {
+            this.hideCommentPopover();
+            return;
+        }
+
+        const author = commentData.author || this.currentUserLogin || 'Anonymous';
+        const timestampLabel = commentData.at ? this.formatCommentTimestamp(commentData.at) : '';
+        const avatarSrc = commentData.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+
+        this.commentPopoverText.textContent = commentData.text;
+        if (this.commentPopoverAuthor) {
+            this.commentPopoverAuthor.textContent = author;
+        }
+        if (this.commentPopoverTime) {
+            this.commentPopoverTime.textContent = timestampLabel;
+        }
+        if (this.commentPopoverAvatar) {
+            this.commentPopoverAvatar.src = avatarSrc;
+            this.commentPopoverAvatar.alt = author ? `${author}'s avatar` : 'Comment author avatar';
+        }
+        const rect = this.primaryCell.getBoundingClientRect?.();
+        if (!rect || (!rect.width && !rect.height)) {
+            this.hideCommentPopover();
+            return;
+        }
+        const margin = 8;
+        const assumedWidth = this.commentPopover.offsetWidth || 260;
+        let left = rect.right + margin;
+        let top = rect.top - margin;
+
+        if (left + assumedWidth > window.innerWidth - margin) {
+            left = Math.max(margin, window.innerWidth - assumedWidth - margin);
+        }
+        if (top < margin) {
+            top = rect.bottom + margin;
+        }
+
+        this.commentPopover.style.left = `${left}px`;
+        this.commentPopover.style.top = `${top}px`;
+        this.commentPopover.classList.remove('hidden');
+        if (typeof this.commentPopover.showPopover === 'function') {
+            try { this.commentPopover.showPopover(); } catch (error) { /* noop */ }
+        }
+    }
+
+    hideCommentPopover() {
+        if (!this.commentPopover) return;
+        this.commentPopover.classList.add('hidden');
+        if (typeof this.commentPopover.hidePopover === 'function') {
+            try { this.commentPopover.hidePopover(); } catch (error) { /* noop */ }
+        }
     }
 
     renderBorderOverlays() {
@@ -3321,6 +3411,7 @@ class SpreadsheetApp {
             ['textAlign', 'text align'],
             ['verticalAlign', 'vertical align'],
             ['linkUrl', 'link'],
+            ['comment', 'comment'],
             ['borders', 'borders']
         ];
 
@@ -3339,6 +3430,18 @@ class SpreadsheetApp {
     normalizeField(value, key) {
         if (key === 'bold' || key === 'italic' || key === 'underline' || key === 'strikethrough') {
             return value ? 'on' : 'off';
+        }
+
+        if (key === 'comment') {
+            const info = this.normalizeCommentData(value);
+            if (!info?.text) return '∅';
+            const meta = [];
+            if (info.author) meta.push(info.author);
+            if (Number.isFinite(info.at)) {
+                const ts = this.formatCommentTimestamp(info.at);
+                if (ts) meta.push(ts);
+            }
+            return meta.length ? `"${info.text}" (${meta.join(', ')})` : `"${info.text}"`;
         }
 
         if (key === 'fontSize') {
@@ -3389,9 +3492,40 @@ class SpreadsheetApp {
         if (data.textAlign && data.textAlign !== 'left') fragments.push(`align=${data.textAlign}`);
         if (data.verticalAlign && data.verticalAlign !== 'bottom') fragments.push(`valign=${data.verticalAlign}`);
         if (data.linkUrl) fragments.push(`link=${data.linkUrl}`);
+        const normalizedComment = this.normalizeCommentData(data.comment);
+        if (normalizedComment?.text) fragments.push(`comment=${this.formatValue(normalizedComment.text)}`);
         if (data.borders) fragments.push(`borders=${JSON.stringify(data.borders)}`);
 
         return fragments.length ? fragments.join(', ') : 'empty';
+    }
+
+    normalizeCommentData(raw) {
+        if (!raw) return null;
+        if (typeof raw === 'string') {
+            return { text: raw, author: '', avatar: '', at: null };
+        }
+        if (typeof raw === 'object') {
+            const atCandidate = Number(raw.at ?? raw.time ?? raw.timestamp);
+            const validAt = Number.isFinite(atCandidate) ? atCandidate : null;
+            return {
+                text: raw.text ?? raw.comment ?? '',
+                author: raw.author ?? raw.user ?? '',
+                avatar: raw.avatar ?? raw.avatarUrl ?? '',
+                at: validAt
+            };
+        }
+        return null;
+    }
+
+    formatCommentTimestamp(at) {
+        if (!Number.isFinite(at)) return '';
+        const date = new Date(Number(at));
+        if (Number.isNaN(date.getTime())) return '';
+        try {
+            return date.toLocaleString(undefined, { timeZoneName: 'short' });
+        } catch (error) {
+            return `${date.toUTCString()} (UTC)`;
+        }
     }
 
     isCellEffectivelyEmpty(data) {
@@ -3408,6 +3542,8 @@ class SpreadsheetApp {
         if (data.textAlign && data.textAlign !== 'left') return false;
         if (data.verticalAlign && data.verticalAlign !== 'bottom') return false;
         if (data.linkUrl) return false;
+        const normalizedComment = this.normalizeCommentData(data.comment);
+        if (normalizedComment?.text) return false;
         if (data.borders && Object.values(data.borders).some(Boolean)) return false;
         if (data.richText) return false;
 
@@ -3485,6 +3621,10 @@ class SpreadsheetApp {
         if (!document.getElementById('keyboardShortcutsModal')) {
             document.body.insertAdjacentHTML('beforeend', renderKeyboardShortcutsModal());
         }
+
+        if (!document.getElementById('cellCommentPopover')) {
+            document.body.insertAdjacentHTML('beforeend', COMMENT_POPOVER_HTML);
+        }
     }
 
     loadInitialDataFromDOM() {
@@ -3537,7 +3677,8 @@ class SpreadsheetApp {
 
                 const ds = td.dataset;
                 const raw = ds.raw;
-                if (raw) {
+                const hasRaw = Object.prototype.hasOwnProperty.call(ds, 'raw');
+                if (hasRaw) {
                     data.value = raw;
                 } else if (value && value.length) {
                     data.value = value;
@@ -3552,6 +3693,22 @@ class SpreadsheetApp {
                 if (ds.align) data.textAlign = ds.align;
                 if (ds.valign) data.verticalAlign = ds.valign;
                 if (ds.link) data.linkUrl = ds.link;
+                if (ds.comment) {
+                    const commentRecord = {
+                        text: ds.comment
+                    };
+                    if (ds.commentAuthor) {
+                        commentRecord.author = ds.commentAuthor;
+                    }
+                    const commentAt = Number(ds.commentAt);
+                    if (Number.isFinite(commentAt)) {
+                        commentRecord.at = commentAt;
+                    }
+                    if (ds.commentAvatar) {
+                        commentRecord.avatar = ds.commentAvatar;
+                    }
+                    data.comment = commentRecord;
+                }
 
                 const borderSides = ['top', 'right', 'bottom', 'left'];
                 borderSides.forEach(side => {
@@ -3591,6 +3748,9 @@ class SpreadsheetApp {
         });
 
         fallbackTable.remove();
+
+        const commentExport = this.gridContent.querySelector('.comment-export');
+        if (commentExport) commentExport.remove();
     }
 
     // Undo/Redo Methods
@@ -5883,6 +6043,7 @@ class SpreadsheetApp {
         if (!this.mainGrid) return;
         this.updateHeaderTransforms();
         if (this.recalculateVisibleViewport()) this.updateVisibleCells();
+        this.updateCommentPopover();
     }
 
     recalculateVisibleViewport(forceUpdate = false, depth = 0) {
@@ -6692,6 +6853,7 @@ class SpreadsheetApp {
         this.primaryCell = null;
         this.primaryCellCoord = null;
         this.fullSheetSelection = false;
+        this.hideCommentPopover();
         this.updateUI();
         this.hideFormulaSuggestions();
         this.log('Cleared all selections');
@@ -7541,6 +7703,11 @@ class SpreadsheetApp {
             }
         }
 
+        const commentItem = this.contextMenu.querySelector('[data-action="comment"]');
+        if (commentItem) {
+            commentItem.style.display = (isRowContext || isColContext) ? 'none' : 'flex';
+        }
+
         if (rowHeightItem) {
             rowHeightItem.style.display = isRowContext ? 'flex' : 'none';
         }
@@ -7616,6 +7783,9 @@ class SpreadsheetApp {
                 this.showLinkEditor(false);
                 // Prevent hideContextMenu from happening immediately
                 setTimeout(() => {}, 0);
+                break;
+            case 'comment':
+                this.handleCommentEdit();
                 break;
             case 'clearContent':
                 this.clearCellContent();
@@ -8224,6 +8394,51 @@ class SpreadsheetApp {
         this.log(`Updated link in ${this.primaryCell.dataset.address}`);
     }
 
+    handleCommentEdit() {
+        if (!this.primaryCell) return;
+
+        const targets = this.hasSelection() ? Array.from(this.selectedCellCoords) : [this.getCoord(this.primaryCell)];
+        const primaryData = this.cellData.get(this.getCoord(this.primaryCell)) || {};
+        const existing = primaryData.comment || '';
+        const next = typeof window !== 'undefined' && window.prompt
+            ? window.prompt('Add a comment for the selected cell(s). Leave blank to remove.', existing)
+            : '';
+
+        if (next === null) return;
+        const comment = (next || '').trim();
+        const existingComment = this.normalizeCommentData(primaryData.comment);
+        const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
+        const author = existingComment?.author || this.currentUserLogin || authorFallback || 'Anonymous';
+        const avatar = existingComment?.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const timestamp = existingComment?.at ?? Date.now();
+
+        this.saveState('Update comment');
+
+        targets.forEach(coord => {
+            this.updateCellDataEntry(coord, data => {
+                if (comment) {
+                    data.comment = {
+                        text: comment,
+                        author,
+                        avatar,
+                        at: timestamp
+                    };
+                } else {
+                    delete data.comment;
+                }
+            });
+        });
+
+        // Refresh visible cells in selection
+        this.selectedCells.forEach(cell => {
+            const data = this.cellData.get(this.getCoord(cell)) || {};
+            this.updateCellDisplay(cell, data);
+        });
+
+        this.updateCommentPopover();
+        this.updateDirtyState();
+    }
+
     updateCellDisplay(cell, d = {}) {
         if (cell.classList.contains('editing')) {
             return;
@@ -8245,6 +8460,11 @@ class SpreadsheetApp {
         const baseData = hasData ? d : (ghostFormatting || {});
         const baseValue = hasData ? d.value : ghostFormatting?.value;
         const richText = hasData ? d.richText : ghostFormatting?.richText;
+        const commentInfo = this.normalizeCommentData(baseData.comment);
+        const hasComment = Boolean(commentInfo?.text);
+        const commentText = commentInfo?.text || '';
+        const commentAuthor = commentInfo?.author || '';
+        const commentTime = this.formatCommentTimestamp(commentInfo?.at);
         
         // Handle display text based on value type
         let displayText = '';
@@ -8303,7 +8523,8 @@ class SpreadsheetApp {
             this.primaryCellCoord === coord && 'primary-selected',
             isLink && 'cell-link',
             keepCutPreview && 'cut-preview',
-            keepCutGhost && 'cut-ghost'
+            keepCutGhost && 'cut-ghost',
+            hasComment && 'has-comment'
         ].filter(Boolean).join(' ');
         
         cell.style.backgroundColor = effective.backgroundColor || '';
@@ -8377,6 +8598,35 @@ class SpreadsheetApp {
         cell.dataset.borderRight = rightBorder || '';
         cell.dataset.borderBottom = bottomBorder || '';
         cell.dataset.borderLeft = leftBorder || '';
+
+        const existingIndicator = cell.querySelector('.cell-comment-indicator');
+        if (hasComment) {
+            cell.dataset.comment = commentText;
+            if (commentAuthor) cell.dataset.commentAuthor = commentAuthor;
+            else delete cell.dataset.commentAuthor;
+            if (commentInfo?.at) cell.dataset.commentAt = String(commentInfo.at);
+            else delete cell.dataset.commentAt;
+            if (commentTime) cell.dataset.commentTime = commentTime;
+            else delete cell.dataset.commentTime;
+            if (existingIndicator) {
+                existingIndicator.title = [commentAuthor ? `by ${commentAuthor}` : '', commentTime, commentText].filter(Boolean).join(' • ') || commentText;
+            } else {
+                const indicator = document.createElement('span');
+                indicator.className = 'cell-comment-indicator';
+                indicator.textContent = '💬';
+                indicator.title = [commentAuthor ? `by ${commentAuthor}` : '', commentTime, commentText].filter(Boolean).join(' • ') || commentText;
+                indicator.setAttribute('aria-hidden', 'true');
+                cell.appendChild(indicator);
+            }
+        } else {
+            if (existingIndicator) {
+                existingIndicator.remove();
+            }
+            delete cell.dataset.comment;
+            delete cell.dataset.commentAuthor;
+            delete cell.dataset.commentAt;
+            delete cell.dataset.commentTime;
+        }
     }
 
     getEffectiveCellWidth(cell, col) {
@@ -13226,6 +13476,7 @@ class SpreadsheetApp {
     generateStaticTableHTML(range) {
         const { minRow, maxRow, minCol, maxCol } = range;
         const rows = [];
+        const commentEntries = [];
         rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback">');
         rows.push('                        <thead>');
         rows.push('                            <tr>');
@@ -13253,12 +13504,35 @@ class SpreadsheetApp {
                 const extraAttributes = [];
 
                 const rawValue = cellData.value ?? '';
-                if (rawValue) {
+                const commentInfo = this.normalizeCommentData(cellData.comment);
+                const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
+                if (hasRawValue) {
                     datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
                 }
 
                 if (cellData.linkUrl) {
                     datasets.push(`data-link="${escapeAttribute(cellData.linkUrl)}"`);
+                }
+
+                if (commentInfo?.text) {
+                    datasets.push(`data-comment="${escapeAttribute(commentInfo.text)}"`);
+                    if (commentInfo.author) {
+                        datasets.push(`data-comment-author="${escapeAttribute(commentInfo.author)}"`);
+                    }
+                    if (Number.isFinite(commentInfo.at)) {
+                        datasets.push(`data-comment-at="${commentInfo.at}"`);
+                    }
+                    if (commentInfo.avatar) {
+                        datasets.push(`data-comment-avatar="${escapeAttribute(commentInfo.avatar)}"`);
+                    }
+                    commentEntries.push({
+                        coord: coordKey,
+                        address: this.getCellAddress(row, col),
+                        comment: commentInfo.text,
+                        author: commentInfo.author || '',
+                        avatar: commentInfo.avatar || '',
+                        at: commentInfo.at
+                    });
                 }
 
                 if (cellData.borders) {
@@ -13337,6 +13611,9 @@ class SpreadsheetApp {
                     const href = escapeAttribute(cellData.linkUrl);
                     cellContent = `<a href="${href}">${cellContent}</a>`;
                 }
+                if (commentInfo?.text) {
+                    cellContent += '<span class="comment-flag" aria-label="Comment">💬</span>';
+                }
 
                 const styleAttr = styles.filter(Boolean).length ? ` style="${styles.join(';')}"` : '';
                 const extras = extraAttributes.length ? ` ${extraAttributes.join(' ')}` : '';
@@ -13347,6 +13624,35 @@ class SpreadsheetApp {
 
         rows.push('                        </tbody>');
         rows.push('                    </table>');
+        if (commentEntries.length) {
+            const sortedComments = commentEntries.sort((a, b) => {
+                const [rowA, colA] = this.parseCoord(a.coord);
+                const [rowB, colB] = this.parseCoord(b.coord);
+                return rowA === rowB ? colA - colB : rowA - rowB;
+            });
+            rows.push('                    <section class="comment-export" aria-label="Cell comments">');
+            rows.push('                        <h2 class="comment-export__title">Comments</h2>');
+            rows.push('                        <ol class="comment-export__list">');
+            sortedComments.forEach(entry => {
+                const safeId = entry.coord.replace(/,/g, '-');
+                const author = entry.author || 'Anonymous';
+                const avatarSrc = entry.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+                const timestampLabel = entry.at ? this.formatCommentTimestamp(entry.at) : '';
+                rows.push(`                            <li class="comment-export__item" id="comment-${safeId}" data-comment-coord="${entry.coord}">`);
+                rows.push(`                                <div class="comment-export__address">${escapeHTML(entry.address)}</div>`);
+                rows.push('                                <div class="comment-export__meta">');
+                rows.push(`                                    <img class="comment-export__avatar" src="${escapeAttribute(avatarSrc)}" alt="${escapeAttribute(author ? `${author} avatar` : 'Comment author avatar')}">`);
+                rows.push('                                    <div class="comment-export__meta-text">');
+                rows.push(`                                        <div class="comment-export__author">${escapeHTML(author)}</div>`);
+                rows.push(`                                        <div class="comment-export__timestamp">${escapeHTML(timestampLabel || 'Time unknown')}</div>`);
+                rows.push('                                    </div>');
+                rows.push('                                </div>');
+                rows.push(`                                <div class="comment-export__body">${escapeHTML(entry.comment)}</div>`);
+                rows.push('                            </li>');
+            });
+            rows.push('                        </ol>');
+            rows.push('                    </section>');
+        }
         return rows.join('\n');
     }
 

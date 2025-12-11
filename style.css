@@ -826,6 +826,20 @@ body { margin: 0; padding: 0; }
   pointer-events: auto;
 }
 
+.cell.has-comment {
+  padding-right: calc(var(--space-12, 12px) + 10px);
+}
+
+.cell-comment-indicator {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 12px;
+  color: var(--color-primary, #21808d);
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
 .cell:hover { background: rgba(33, 128, 141, 0.05); }
 
 :root[data-theme='dark'] .cell:hover {
@@ -1050,6 +1064,83 @@ body { margin: 0; padding: 0; }
 }
 
 .context-menu-icon { width: 16px; text-align: center; }
+
+.comment-popover {
+  position: fixed;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-12) var(--space-16);
+  max-width: 320px;
+  z-index: 1100;
+}
+
+.comment-popover.hidden { display: none; }
+
+.comment-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  margin-bottom: var(--space-8);
+}
+
+.comment-popover__title {
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
+}
+
+.comment-popover__body {
+  white-space: pre-wrap;
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+  color: var(--color-text, #111);
+}
+
+.comment-popover__close {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: inherit;
+}
+
+.comment-popover:popover-open {
+  outline: none;
+}
+
+.comment-popover__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  margin-bottom: var(--space-8);
+}
+
+.comment-popover__avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-strong, #f3f3f3);
+}
+
+.comment-popover__meta-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.comment-popover__author {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text, #111);
+}
+
+.comment-popover__timestamp {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary, #666);
+}
 
 .color-palette, .font-color-palette {
   position: fixed;
@@ -1500,6 +1591,83 @@ body { margin: 0; padding: 0; }
     display: flex;
     flex-direction: column;
     gap: var(--space-8);
+}
+
+.comment-flag {
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--color-primary, #21808d);
+}
+
+.comment-export {
+    margin-top: var(--space-24, 24px);
+    padding: var(--space-16, 16px);
+    border: 1px solid var(--color-border, #ccc);
+    border-radius: var(--radius-base, 8px);
+    background: var(--color-surface, #fdfdfd);
+}
+
+.comment-export__title {
+    margin: 0 0 var(--space-8, 8px);
+    font-size: var(--font-size-md, 16px);
+}
+
+.comment-export__list {
+    list-style: decimal;
+    padding-left: var(--space-20, 20px);
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8, 8px);
+}
+
+.comment-export__item {
+    background: var(--color-surface-strong, rgba(0, 0, 0, 0.02));
+    border: 1px solid var(--color-border, #ccc);
+    border-radius: var(--radius-sm, 6px);
+    padding: var(--space-8, 8px);
+}
+
+.comment-export__address {
+    font-weight: var(--font-weight-semibold, 600);
+    margin-bottom: var(--space-4, 4px);
+}
+
+.comment-export__body {
+    white-space: pre-wrap;
+    color: var(--color-text, #111);
+}
+
+.comment-export__meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-12, 12px);
+    margin-bottom: var(--space-6, 6px);
+}
+
+.comment-export__avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid var(--color-border, #ccc);
+    background: var(--color-surface, #fff);
+}
+
+.comment-export__meta-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.comment-export__author {
+    font-weight: var(--font-weight-semibold, 600);
+    color: var(--color-text, #111);
+}
+
+.comment-export__timestamp {
+    font-size: var(--font-size-xs, 12px);
+    color: var(--color-text-secondary, #666);
 }
 
 .spreadsheet-fallback {
