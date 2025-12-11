@@ -3363,6 +3363,22 @@ class SpreadsheetApp {
         return true;
     }
 
+    // Determines if the cell holds textual content (value or rich text)
+    cellHasText(data) {
+        if (!data || typeof data !== 'object') return false;
+        if (typeof data.value === 'number') return true;
+        if (typeof data.value === 'string') {
+            const normalized = data.value.startsWith("'") ? data.value.slice(1) : data.value;
+            if (normalized.trim().length > 0 || normalized.startsWith('=')) {
+                return true;
+            }
+        }
+        if (typeof data.richText === 'string' && data.richText.trim().length > 0) {
+            return true;
+        }
+        return false;
+    }
+
     hasSelection() {
         return this.selectedCellCoords.size > 0;
     }
@@ -11461,6 +11477,30 @@ class SpreadsheetApp {
     mergeCells(startRow, startCol, rows, cols, { refreshLayout = false, recalcAutoHeights = true } = {}) {
         const parentCoord = `${startRow},${startCol}`;
         const childCells = new Set();
+
+        const textSources = [];
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                const row = startRow + r;
+                const col = startCol + c;
+                const coord = `${row},${col}`;
+                const data = this.cellData.get(coord);
+                if (this.cellHasText(data)) {
+                    textSources.push({ coord, data });
+                }
+            }
+        }
+
+        if (textSources.length === 1) {
+            const { coord, data } = textSources[0];
+            const clonedData = this.cloneCellRecord(data);
+            if (coord !== parentCoord) {
+                this.cellData.delete(coord);
+            }
+            if (clonedData) {
+                this.cellData.set(parentCoord, clonedData);
+            }
+        }
 
         // First, ensure all cells in the range are visible and reset
         for (let r = 0; r < rows; r++) {
