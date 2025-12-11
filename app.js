@@ -666,6 +666,9 @@ class SpreadsheetApp {
         this.oauthConfigPromise = null;
         this.oauthConfig = null;
         this.accessTokenInfo = null;
+        this.branchCommitSnapshot = null;
+        this.branchCommitLatest = null;
+        this.branchCommitLoadPromise = null;
         this.loadInitialDataFromDOM();
         this.recomputeColorUsageFromData();
         this.initializeDynamicDimensions();
@@ -782,6 +785,7 @@ class SpreadsheetApp {
         this.refreshCodebergProfileBadge().catch(error => {
             console.warn('Failed to load Codeberg profile avatar', error);
         });
+        this.primeBranchCommitCache();
     }
 
     init() {
@@ -2735,22 +2739,128 @@ class SpreadsheetApp {
         this.saveModalStatus.classList.toggle('save-modal__status--error', Boolean(message && isError));
     }
 
+    primeBranchCommitCache() {
+        this.ensureBranchCommits({ refresh: true }).catch(error => {
+            console.warn('Unable to prime branch commit info', error);
+        });
+    }
+
+    shortenSha(sha, length = 7) {
+        if (!sha || typeof sha !== 'string') return '';
+        return sha.substring(0, Math.max(1, length));
+    }
+
+    async ensureBranchCommits({ refresh = false } = {}) {
+        const fetchBranchHead = async (owner, repo, branch) => {
+            if (!branch) return null;
+            try {
+                const data = await this.callCodebergApi(
+                    `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches/${encodeURIComponent(branch)}`,
+                    null
+                );
+                const commit = data?.commit || {};
+                const sha = commit.id || commit.sha || commit.sha1 || commit?.commit?.sha || commit?.commit?.id || null;
+                const timestamp = commit?.committer?.date ||
+                    commit?.author?.date ||
+                    commit?.commit?.committer?.date ||
+                    commit?.commit?.author?.date ||
+                    null;
+                const message = commit?.message || commit?.commit?.message || null;
+                return {
+                    branch,
+                    sha,
+                    shortSha: sha ? this.shortenSha(sha) : null,
+                    date: timestamp ? new Date(timestamp).toISOString() : null,
+                    message: message || null
+                };
+            } catch (error) {
+                return {
+                    branch,
+                    sha: null,
+                    shortSha: null,
+                    error: error?.message || 'Unable to read branch head'
+                };
+            }
+        };
+
+        const run = async () => {
+            if (!this.repoConfig) {
+                this.repoConfig = await this.loadRepoConfig();
+            }
+            const repoConfig = this.repoConfig;
+            if (!repoConfig?.owner || !repoConfig?.repo) {
+                return { loaded: this.branchCommitSnapshot, latest: this.branchCommitLatest };
+            }
+
+            const owner = repoConfig.owner;
+            const repository = repoConfig.repo;
+            const pageBranch = repoConfig.page_branch || repoConfig.branch || null;
+            const codeBranch = repoConfig.code_branch || repoConfig.codeBranch || null;
+
+            const pageInfo = await fetchBranchHead(owner, repository, pageBranch);
+            const codeInfo = (codeBranch && codeBranch !== pageBranch)
+                ? await fetchBranchHead(owner, repository, codeBranch)
+                : (codeBranch ? pageInfo : null);
+
+            if (!this.branchCommitSnapshot) {
+                this.branchCommitSnapshot = { page: pageInfo, code: codeInfo };
+            }
+            this.branchCommitLatest = { page: pageInfo, code: codeInfo };
+
+            return { loaded: this.branchCommitSnapshot, latest: this.branchCommitLatest };
+        };
+
+        if (refresh) {
+            return run();
+        }
+
+        if (!this.branchCommitLoadPromise) {
+            this.branchCommitLoadPromise = run().finally(() => {
+                this.branchCommitLoadPromise = null;
+            });
+        }
+        return this.branchCommitLoadPromise;
+    }
+
+    renderBranchSummaryLine(label, branchName, snapshot, latest) {
+        if (!branchName) {
+            return `<strong>${label}</strong>: (not set)`;
+        }
+
+        if (snapshot?.error) {
+            return `<strong>${label}</strong>: ${escapeHTML(branchName)} (commit unavailable: ${escapeHTML(snapshot.error)})`;
+        }
+
+        const shortSha = snapshot?.shortSha;
+        const latestSha = latest?.shortSha;
+        const hasNewer = Boolean(snapshot?.sha && latest?.sha && snapshot.sha !== latest.sha);
+        const loadedPart = shortSha ? ` @ ${escapeHTML(shortSha)}` : ' (commit unknown)';
+        const freshness = hasNewer && latestSha ? ` (latest ${escapeHTML(latestSha)})` : '';
+        const warning = hasNewer
+            ? `<span class="save-modal__commit-warning" aria-label="Newer commit available" title="Newer commit available on ${escapeHTML(branchName)}">⚠️</span>`
+            : '';
+
+        return `<strong>${label}</strong>: ${escapeHTML(branchName)}${loadedPart}${freshness}${warning}`;
+    }
+
     async refreshOAuthInfo() {
         if (!this.saveModalOAuth) return;
+        const cachedCommits = { loaded: this.branchCommitSnapshot, latest: this.branchCommitLatest };
         if (this.oauthConfig && this.repoConfig) {
-            this.saveModalOAuth.innerHTML = this.renderOAuthSummary(this.oauthConfig, this.repoConfig);
+            this.saveModalOAuth.innerHTML = this.renderOAuthSummary(this.oauthConfig, this.repoConfig, cachedCommits);
         } else {
             this.saveModalOAuth.innerHTML = '<em>Checking OAuth configuration…</em>';
         }
 
         try {
-            const [oauthConfig, repoConfig] = await Promise.all([
+            const [oauthConfig, repoConfig, branchCommits] = await Promise.all([
                 this.loadOauthConfig(),
-                this.loadRepoConfig()
+                this.loadRepoConfig(),
+                this.ensureBranchCommits({ refresh: true })
             ]);
             
             if (oauthConfig?.clientId) {
-                this.saveModalOAuth.innerHTML = this.renderOAuthSummary(oauthConfig, repoConfig);
+                this.saveModalOAuth.innerHTML = this.renderOAuthSummary(oauthConfig, repoConfig, branchCommits);
             } else {
                 this.saveModalOAuth.innerHTML = 'No OAuth credentials found. Add <code>oauth.clientId</code> to <code>codeberg-repo.json</code> (and optional <code>clientSecret</code> for confidential clients) to enable PR creation.';
             }
@@ -2760,19 +2870,22 @@ class SpreadsheetApp {
         }
     }
 
-    renderOAuthSummary(oauthConfig, repoConfig) {
+    renderOAuthSummary(oauthConfig, repoConfig, branchCommits = null) {
         const redirect = oauthConfig.redirectUri || `${window.location.origin}${window.location.pathname}`;
         const clientType = oauthConfig.clientSecret ? 'Confidential client' : 'Public client';
         const targetBranch = repoConfig?.page_branch || repoConfig?.branch || '(repository default)';
         const codeBranch = repoConfig?.code_branch || repoConfig?.codeBranch || '(not set)';
-        
-        return [
+
+        const lines = [
             `<strong>OAuth client</strong>: ${escapeHTML(oauthConfig.clientId)}`,
             `<strong>Redirect URI</strong>: ${escapeHTML(redirect)}`,
-            `<strong>Client type</strong>: ${clientType}`,
-            `<strong>Page branch</strong>: ${escapeHTML(targetBranch)}`,
-            `<strong>Code branch</strong>: ${escapeHTML(codeBranch)}`
-        ].join('<br>');
+            `<strong>Client type</strong>: ${clientType}`
+        ];
+
+        lines.push(this.renderBranchSummaryLine('Page branch', targetBranch, branchCommits?.loaded?.page, branchCommits?.latest?.page));
+        lines.push(this.renderBranchSummaryLine('Code branch', codeBranch, branchCommits?.loaded?.code, branchCommits?.latest?.code));
+
+        return lines.join('<br>');
     }
 
     handleDownloadOption() {
@@ -3094,9 +3207,11 @@ class SpreadsheetApp {
     async callCodebergApi(path, token, options = {}) {
         const url = `${CODEBERG_API_BASE}${path}`;
         const headers = Object.assign({
-            'Accept': 'application/json',
-            'Authorization': `Bearer ${token}`
+            'Accept': 'application/json'
         }, options.headers || {});
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
 
         const response = await fetch(url, {
             ...options,
