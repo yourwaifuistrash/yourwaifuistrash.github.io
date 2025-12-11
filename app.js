@@ -1721,15 +1721,22 @@ class SpreadsheetApp {
     }
 
     applyMergedCellsSnapshot(snapshot) {
+        let mutated = false;
         const activeParents = Array.from(this.mergedCells.keys());
         activeParents.forEach(coord => {
             const [row, col] = this.parseCoord(coord);
             if (Number.isInteger(row) && Number.isInteger(col)) {
-                this.unmergeCells(row, col, true);
+                this.unmergeCells(row, col, true, { refreshLayout: false });
+                mutated = true;
             }
         });
 
-        if (!Array.isArray(snapshot)) return;
+        if (!Array.isArray(snapshot)) {
+            if (mutated) {
+                this.refreshLayoutAfterMergeChange();
+            }
+            return;
+        }
 
         snapshot.forEach(entry => {
             if (!Array.isArray(entry) || entry.length < 2) return;
@@ -1743,8 +1750,13 @@ class SpreadsheetApp {
                 rows < 1 || cols < 1) {
                 return;
             }
-            this.mergeCells(row, col, rows, cols);
+            this.mergeCells(row, col, rows, cols, { refreshLayout: false });
+            mutated = true;
         });
+
+        if (mutated) {
+            this.refreshLayoutAfterMergeChange();
+        }
     }
 
     scheduleDirtyStateUpdate() {
@@ -2377,9 +2389,15 @@ class SpreadsheetApp {
         }
 
         this.cellData.forEach((data, key) => {
-            const { row } = this.getCoordPos(key);
+            const coordKey = key;
+            const { row, col } = this.getCoordPos(coordKey);
             if (targetRows && !targetRows.has(row)) return;
             if (this.rowHeightModes.get(row) === 'explicit') return;
+            // Ignore merged children so hidden content doesn't keep rows tall
+            if (this.cellToMergeParent.has(coordKey)) return;
+            // Also ignore merged parents that span multiple rows; their height is shared across the merge
+            const mergeInfo = this.mergedCells.get(coordKey);
+            if (mergeInfo && mergeInfo.rows > 1) return;
             const existing = rowMaxFont.get(row);
             const currentMax = Number.isFinite(existing) ? existing : defaultFontSize;
             const cellFont = Number(data?.fontSize);
@@ -8956,6 +8974,8 @@ class SpreadsheetApp {
         textWrapper.style.width = wrapperWidth + 'px';
         textWrapper.style.height = '100%';
         textWrapper.style.display = 'flex';
+        textWrapper.style.overflowX = 'visible';
+        textWrapper.style.overflowY = 'hidden';
         textWrapper.style.paddingLeft = 'var(--space-8)';
         textWrapper.style.paddingRight = 'var(--space-8)';
         textWrapper.style.paddingTop = 'var(--space-6)';
@@ -9275,6 +9295,10 @@ class SpreadsheetApp {
         }
 
         const { minRow, maxRow, minCol, maxCol, coords } = bounds;
+        const affectedRows = new Set();
+        for (let r = minRow; r <= maxRow; r++) {
+            affectedRows.add(r);
+        }
         const rows = maxRow - minRow + 1;
         const cols = maxCol - minCol + 1;
         const expectedCells = rows * cols;
@@ -11261,6 +11285,18 @@ class SpreadsheetApp {
 
         return regions;
     }
+
+    refreshLayoutAfterMergeChange({ recalcAutoHeights = true } = {}) {
+        if (recalcAutoHeights) {
+            this.recalculateAutoRowHeights();
+        }
+        this.updateGridSize();
+        this.repositionCells();
+        this.updateHeaderPositions();
+        this.updateVisibleCells();
+        this.renderSelectionOverlays();
+        this.renderBorderOverlays();
+    }
     
     handleMergeCells() {
         if (!this.hasSelection()) {
@@ -11275,6 +11311,10 @@ class SpreadsheetApp {
         const rows = maxRow - minRow + 1;
         const cols = maxCol - minCol + 1;
         const expectedCells = rows * cols;
+        const affectedRows = new Set();
+        for (let r = minRow; r <= maxRow; r++) {
+            affectedRows.add(r);
+        }
 
         // Check if selection is contiguous (rectangle)
         if (coords.length !== expectedCells) {
@@ -11299,6 +11339,8 @@ class SpreadsheetApp {
             this.unmergeCells(minRow, minCol);
             this.log(`Unmerged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
             this.updateMergeButton();
+            this.recalculateAutoRowHeights(affectedRows);
+            this.refreshLayoutAfterMergeChange({ recalcAutoHeights: false });
             return;
         }
 
@@ -11331,18 +11373,28 @@ class SpreadsheetApp {
         // Unmerge all existing merges in the selection
         mergesToUnmerge.forEach(mergeParent => {
             const [parentRow, parentCol] = this.parseCoord(mergeParent);
-            this.unmergeCells(parentRow, parentCol, false); // false = don't update visuals yet
+            const info = this.mergedCells.get(mergeParent);
+            const span = info?.rows || 1;
+            for (let r = 0; r < span; r++) {
+                affectedRows.add(parentRow + r);
+            }
+            this.unmergeCells(parentRow, parentCol, false, { refreshLayout: false }); // false = don't update visuals yet
         });
 
         // Now merge the entire selection
         this.saveState(`Merge ${rows}x${cols} cells`);
-        this.mergeCells(minRow, minCol, rows, cols);
+        this.mergeCells(minRow, minCol, rows, cols, { refreshLayout: false });
+        for (let r = 0; r < rows; r++) {
+            affectedRows.add(minRow + r);
+        }
         this.log(`Merged ${rows}x${cols} cells at ${this.getCellAddress(minRow, minCol)}`);
         // Refresh merge button state immediately after applying the merge
         this.updateMergeButton();
+        this.recalculateAutoRowHeights(affectedRows);
+        this.refreshLayoutAfterMergeChange({ recalcAutoHeights: false });
     }
     
-    unmergeCells(startRow, startCol, updateVisuals = true) {
+    unmergeCells(startRow, startCol, updateVisuals = true, { refreshLayout = false, recalcAutoHeights = true } = {}) {
         const parentCoord = `${startRow},${startCol}`;
         const mergeInfo = this.mergedCells.get(parentCoord);
         
@@ -11362,6 +11414,9 @@ class SpreadsheetApp {
         // Update visuals if requested
         if (updateVisuals) {
             this.removeUnmergeVisuals(startRow, startCol, mergeInfo.rows, mergeInfo.cols);
+        }
+        if (refreshLayout) {
+            this.refreshLayoutAfterMergeChange({ recalcAutoHeights });
         }
     }
     
@@ -11403,7 +11458,7 @@ class SpreadsheetApp {
         return true;
     }
 
-    mergeCells(startRow, startCol, rows, cols) {
+    mergeCells(startRow, startCol, rows, cols, { refreshLayout = false, recalcAutoHeights = true } = {}) {
         const parentCoord = `${startRow},${startCol}`;
         const childCells = new Set();
 
@@ -11454,6 +11509,9 @@ class SpreadsheetApp {
 
         // Update visual representation
         this.applyMergeVisuals(startRow, startCol, rows, cols);
+        if (refreshLayout) {
+            this.refreshLayoutAfterMergeChange({ recalcAutoHeights });
+        }
     }
 
     applyMergeVisuals(startRow, startCol, rows, cols) {
