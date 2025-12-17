@@ -727,8 +727,6 @@ body { margin: 0; padding: 0; }
   z-index: 10;
 }
 
-.column-resize-handle:hover { background: var(--color-primary); opacity: 0.3; }
-
 .row-resize-handle {
   position: absolute;
   bottom: -3px;
@@ -739,7 +737,7 @@ body { margin: 0; padding: 0; }
   z-index: 10;
 }
 
-.row-resize-handle:hover { background: var(--color-primary); opacity: 0.3; }
+.column-resize-handle:hover, .row-resize-handle:hover { background: var(--color-primary); opacity: 0.3; }
 
 /* Resize indicator */
 .resize-indicator {
