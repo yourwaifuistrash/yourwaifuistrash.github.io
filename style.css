@@ -28,6 +28,7 @@
   /* Semantic tokens */
   --color-background: var(--color-cream-50);
   --color-surface: var(--color-cream-100);
+  --color-surface-alt: var(--color-cream-100);
   --color-text: var(--color-slate-900);
   --color-text-secondary: var(--color-slate-500);
   --color-primary: var(--color-teal-500);
@@ -78,24 +79,6 @@
   --selection-pass-stripe: rgba(255, 82, 82, 0.3);
   --text-selection-bg: rgba(255, 153, 0, 0.42);
   --editor-outline: #ff9900;
-  --text-selection-bg: rgba(255, 153, 0, 0.42);
-}
-
-:root:not([data-theme]), :root[data-theme='light'] {
-  --color-background: var(--color-cream-50);
-  --color-surface: var(--color-cream-100);
-  --color-surface-alt: var(--color-cream-100);
-  --color-text: var(--color-slate-900);
-  --color-text-secondary: var(--color-slate-500);
-  --color-primary: var(--color-teal-500);
-  --color-primary-hover: var(--color-teal-600);
-  --color-border: rgba(94, 82, 64, 0.2);
-  --color-bg-1: rgba(59, 130, 246, 0.08);
-  --color-bg-2: rgba(245, 158, 11, 0.08);
-  --selection-pass-fill: rgba(33, 128, 141, 0.06);
-  --selection-pass-stripe: rgba(33, 128, 141, 0.18);
-  --text-selection-bg: rgba(59, 130, 246, 0.28);
-  --editor-outline: #3b82f6;
 }
 
 @media (prefers-color-scheme: dark) {
