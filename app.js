@@ -158,6 +158,27 @@ const COLOR_PALETTES_HTML = `
     </div>
 `;
 
+const COMMENT_EDITOR_HTML = `
+    <div id="commentEditor" class="comment-editor hidden" role="dialog" aria-modal="true" aria-labelledby="commentEditorTitle">
+        <div class="comment-editor__content">
+            <header class="comment-editor__header">
+                <div class="comment-editor__title" id="commentEditorTitle">Edit comment</div>
+                <button type="button" class="comment-editor__close" data-comment-editor-dismiss aria-label="Close">×</button>
+            </header>
+            <label class="comment-editor__label" for="commentEditorText">Comment</label>
+            <textarea id="commentEditorText" class="form-control comment-editor__textarea" rows="4"></textarea>
+            <label class="comment-editor__checkbox">
+                <input type="checkbox" id="commentEditorAnonymous">
+                <span>Anonymous comment</span>
+            </label>
+            <div class="comment-editor__actions">
+                <button type="button" class="btn btn--sm" data-comment-editor-cancel>Cancel</button>
+                <button type="button" class="btn btn--sm toolbar-btn" data-comment-editor-save>Save</button>
+            </div>
+        </div>
+    </div>
+`;
+
 const BORDER_MENU_HTML = `
     <div id="borderMenu" class="border-menu hidden">
         <div class="border-menu-title">Borders</div>
@@ -389,16 +410,54 @@ const COMMENT_POPOVER_HTML = `
     <command id="commentPopoverCommand" label="Toggle cell comment" type="command" commandfor="cellCommentPopover"></command>
     <section id="cellCommentPopover" class="comment-popover hidden" popover="auto" role="note" aria-live="polite" aria-label="Cell comment">
         <header class="comment-popover__header">
-            <button type="button" class="comment-popover__close" command="commentPopoverCommand" commandfor="cellCommentPopover" popovertarget="cellCommentPopover" popovertargetaction="hide" aria-label="Close comment">×</button>
+            <div class="comment-popover__title">Comment</div>
+            <button type="button" class="comment-popover__close" data-comment-close aria-label="Close comment">×</button>
         </header>
-        <div class="comment-popover__meta" id="cellCommentMeta">
-            <img id="cellCommentAvatar" class="comment-popover__avatar" alt="">
-            <div class="comment-popover__meta-text">
-                <div class="comment-popover__author" id="cellCommentAuthor"></div>
-                <div class="comment-popover__timestamp" id="cellCommentTime"></div>
+        <article class="comment-card" id="commentMainCard">
+            <div class="comment-card__meta">
+                <div class="comment-card__meta-left">
+                    <img id="commentMainAvatar" class="comment-popover__avatar" alt="">
+                    <div class="comment-popover__meta-text">
+                        <div class="comment-popover__author" id="commentMainAuthor"></div>
+                        <div class="comment-popover__timestamp" id="commentMainTime"></div>
+                    </div>
+                </div>
+                <div class="comment-card__actions">
+                    <button type="button" class="comment-menu__toggle" data-comment-target="root" aria-label="Comment actions">⋯</button>
+                    <div class="comment-menu hidden" data-comment-menu="root">
+                        <button type="button" data-comment-action="edit" data-comment-target="root">Edit</button>
+                        <button type="button" data-comment-action="delete" data-comment-target="root">Delete</button>
+                        <button type="button" data-comment-action="copy-link" data-comment-target="root">Copy link</button>
+                    </div>
+                </div>
+            </div>
+            <div class="comment-card__body">
+                <div id="commentMainDisplay" class="comment-body"></div>
+                <div id="commentMainEditor" class="comment-editor-inline hidden">
+                    <textarea id="commentMainTextarea" class="form-control" rows="4" placeholder="Add a comment"></textarea>
+                    <label class="comment-editor__checkbox">
+                        <input type="checkbox" id="commentMainAnonymous">
+                        <span>Anonymous comment</span>
+                    </label>
+                    <div class="comment-editor__actions">
+                        <button type="button" class="btn btn--sm" data-comment-action="cancel-edit" data-comment-target="root">Cancel</button>
+                        <button type="button" class="btn btn--sm toolbar-btn" data-comment-action="save-edit" data-comment-target="root">Save</button>
+                    </div>
+                </div>
+            </div>
+        <div class="comment-reactions" id="commentMainReactions"></div>
+    </article>
+    <div class="comment-popover__thread" id="cellCommentThread" aria-live="polite"></div>
+    <div class="comment-reply-composer hidden" id="commentReplyComposer">
+        <textarea id="commentReplyTextarea" class="form-control" rows="3" placeholder="Reply…"></textarea>
+        <label class="comment-editor__checkbox">
+            <input type="checkbox" id="commentReplyAnonymous">
+            <span>Anonymous comment</span>
+        </label>
+            <div class="comment-editor__actions comment-reply-composer__actions">
+                <button type="button" class="btn btn--sm toolbar-btn" data-comment-action="add-reply">Reply</button>
             </div>
         </div>
-        <div class="comment-popover__body" id="cellCommentText"></div>
     </section>
 `;
 
@@ -509,6 +568,8 @@ class SpreadsheetApp {
         this.edgeScrolling = false;
         this.edgeScrollInterval = null;
         this.edgeScrollSpeed = { x: 0, y: 0 };
+        this.activeCommentEditTarget = null; // 'root' | reply id
+        this.highlightedReplyId = null;
 
         // Resize state
         this.isResizing = false;
@@ -576,34 +637,40 @@ class SpreadsheetApp {
         if (!this.gridContainer) {
             throw new Error('Grid container not found');
         }
-
-        this.mainGrid = document.getElementById('mainGrid');
-        this.gridContent = document.getElementById('gridContent');
-        this.columnHeaders = document.getElementById('columnHeaderContent');
-        this.rowHeaders = document.getElementById('rowHeaderContent');
-        this.cornerCell = this.container.querySelector('.corner-cell');
-        this.zoomDisplay = document.getElementById('zoomDisplay');
-        if (this.zoomDisplay) {
-            this.zoomDisplay.setAttribute('role', 'button');
-            this.zoomDisplay.setAttribute('title', 'Click to set zoom');
-            this.zoomDisplay.setAttribute('tabindex', '0');
-        }
-        this.cellReference = document.getElementById('cellReference');
-        this.formulaInput = document.getElementById('formulaInput');
-        this.contextMenu = document.getElementById('contextMenu');
-        this.contextMenuContext = { type: 'cell' };
-        this.colorPalette = document.getElementById('colorPalette');
-        this.fontColorPalette = document.getElementById('fontColorPalette');
-        this.linkEditor = document.getElementById('linkEditor');
-        this.borderMenu = document.getElementById('borderMenu');
-        this.commentPopover = document.getElementById('cellCommentPopover');
         const $ = (id) => document.getElementById(id);
         Object.assign(this, {
+            mainGrid: $('mainGrid'),
+            gridContent: $('gridContent'),
+            columnHeaders: $('columnHeaderContent'),
+            rowHeaders: $('rowHeaderContent'),
+            cornerCell: this.container.querySelector('.corner-cell'),
+            zoomDisplay: $('zoomDisplay'),
+            cellReference: $('cellReference'),
+            formulaInput: $('formulaInput'),
+            contextMenu: $('contextMenu'),
+            colorPalette: $('colorPalette'),
+            fontColorPalette: $('fontColorPalette'),
+            linkEditor: $('linkEditor'),
+            borderMenu: $('borderMenu'),
+            commentPopover: $('cellCommentPopover'),
             commentPopoverText: $('cellCommentText'),
             commentPopoverAuthor: $('cellCommentAuthor'),
             commentPopoverTime: $('cellCommentTime'),
             commentPopoverAvatar: $('cellCommentAvatar'),
+            commentPopoverThread: $('cellCommentThread'),
+            commentPopoverReplyBtn: $('cellCommentReplyBtn'),
             commentPopoverCommand: $('commentPopoverCommand'),
+            commentMainAvatar: $('commentMainAvatar'),
+            commentMainAuthor: $('commentMainAuthor'),
+            commentMainTime: $('commentMainTime'),
+            commentMainDisplay: $('commentMainDisplay'),
+            commentMainEditor: $('commentMainEditor'),
+            commentMainTextarea: $('commentMainTextarea'),
+            commentMainAnonymous: $('commentMainAnonymous'),
+            commentMainReactions: $('commentMainReactions'),
+            commentReplyTextarea: $('commentReplyTextarea'),
+            commentReplyAnonymous: $('commentReplyAnonymous'),
+            commentReplyComposer: $('commentReplyComposer'),
             codebergProfileContainer: $('codebergProfile'),
             codebergAvatarImg: $('codebergAvatarImg'),
             codebergAvatarInitials: $('codebergAvatarInitials'),
@@ -615,6 +682,16 @@ class SpreadsheetApp {
             codebergProfileHint: $('codebergProfileHint'),
             codebergProfileMeta: $('codebergProfileMeta')
         });
+        this.commentEditor = null;
+        this.commentEditorTextarea = null;
+        this.commentEditorAnonymous = null;
+        this.commentEditorResolver = null;
+        if (this.zoomDisplay) {
+            this.zoomDisplay.setAttribute('role', 'button');
+            this.zoomDisplay.setAttribute('title', 'Click to set zoom');
+            this.zoomDisplay.setAttribute('tabindex', '0');
+        }
+        this.contextMenuContext = { type: 'cell' };
         if (this.codebergProfileMeta) {
             this.codebergProfileMeta.style.display = 'none';
         }
@@ -646,7 +723,8 @@ class SpreadsheetApp {
         setTimeout(() => {
             const firstCell = this.getCellAt(0, 0) || this.createCell(0, 0);
             this.selectCells([firstCell], true);
-        }, 100);
+            this.maybeOpenCommentFromUrl();
+        }, 120);
         this.ensureSaveOptionsModal();
         this.maybeHandleOAuthRedirect();
         this.saveButton = document.getElementById('saveBtn');
@@ -720,44 +798,173 @@ class SpreadsheetApp {
     }
 
     updateCommentPopover() {
-        if (!this.commentPopover || !this.commentPopoverText) return;
+        if (!this.commentPopover) return;
 
         if (!this.primaryCell) {
+            if (this.commentReplyComposer) this.commentReplyComposer.classList.add('hidden');
             this.hideCommentPopover();
             return;
         }
 
+        const coord = this.getCoord(this.primaryCell);
         const commentData = this.primaryCell
-            ? this.normalizeCommentData(this.cellData.get(this.getCoord(this.primaryCell))?.comment)
+            ? this.normalizeCommentData(this.cellData.get(coord)?.comment)
             : null;
-
-        if (!commentData || !commentData.text) {
+        this.activeCommentCoord = coord;
+        const editingRoot = this.activeCommentEditTarget === 'root';
+        if (!commentData?.text && !editingRoot) {
+            if (this.commentReplyComposer) this.commentReplyComposer.classList.add('hidden');
             this.hideCommentPopover();
             return;
         }
 
-        const author = commentData.author || this.currentUserLogin || 'Anonymous';
-        const timestampLabel = commentData.at ? this.formatCommentTimestamp(commentData.at) : '';
-        const avatarSrc = commentData.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const isLoggedIn = Boolean(this.currentUserLogin);
+        const defaultAuthor = isLoggedIn
+            ? (this.currentUserLogin || this.codebergProfileName?.textContent?.trim() || 'Anonymous')
+            : 'Anonymous';
+        const baseComment = commentData && typeof commentData === 'object'
+            ? this.cloneCommentEntry(commentData)
+            : null;
+        const hydratedComment = this.ensureCommentIds(coord, baseComment || {
+            text: '',
+            author: defaultAuthor,
+            authorId: isLoggedIn ? this.currentUserLogin : null,
+            profileUrl: isLoggedIn ? this.buildAccountProfileUrl(this.currentUserLogin) : '',
+            avatar: this.codebergAvatarImg?.src || this.getPlaceholderAvatarData(),
+            at: commentData?.at ?? null,
+            anonymous: !isLoggedIn,
+            anonymousReason: isLoggedIn ? null : 'unauthenticated',
+            localOnly: true,
+            replies: [],
+            reactions: []
+        });
+        const needsIdPersist = baseComment && (!baseComment.id || (Array.isArray(baseComment.replies) && baseComment.replies.some(reply => !reply?.id)));
+        if (needsIdPersist) {
+            this.updateCellDataEntry(coord, data => {
+                if (!data.comment) return;
+                data.comment = this.ensureCommentIds(coord, this.normalizeCommentData(data.comment) || hydratedComment);
+            });
+        }
+        const author = hydratedComment.author || defaultAuthor;
+        const timestampLabel = hydratedComment.at ? this.formatCommentTimestamp(hydratedComment.at) : '';
+        const avatarSrc = hydratedComment.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
 
-        this.commentPopoverText.textContent = commentData.text;
-        if (this.commentPopoverAuthor) {
-            this.commentPopoverAuthor.textContent = author;
+        if (this.commentMainAuthor) {
+            this.commentMainAuthor.textContent = '';
+            if (hydratedComment.profileUrl) {
+                const link = document.createElement('a');
+                link.href = hydratedComment.profileUrl;
+                link.textContent = author;
+                link.target = '_blank';
+                link.rel = 'noreferrer noopener';
+                this.commentMainAuthor.appendChild(link);
+            } else {
+                this.commentMainAuthor.textContent = author;
+            }
         }
-        if (this.commentPopoverTime) {
-            this.commentPopoverTime.textContent = timestampLabel;
+        if (this.commentMainTime) {
+            this.commentMainTime.textContent = timestampLabel;
         }
-        if (this.commentPopoverAvatar) {
-            this.commentPopoverAvatar.src = avatarSrc;
-            this.commentPopoverAvatar.alt = author ? `${author}'s avatar` : 'Comment author avatar';
+        if (this.commentMainAvatar) {
+            this.commentMainAvatar.src = avatarSrc;
+            this.commentMainAvatar.alt = author ? `${author}'s avatar` : 'Comment author avatar';
         }
+
+        const rootMenu = this.commentPopover.querySelector('[data-comment-menu="root"]');
+        const rootMenuToggle = this.commentPopover.querySelector('.comment-menu__toggle[data-comment-target="root"]');
+        const canEditRoot = this.canEditCommentEntry(hydratedComment);
+        const hasCommentBody = Boolean(hydratedComment.text && `${hydratedComment.text}`.trim().length);
+        const showRootMenu = hasCommentBody;
+        if (rootMenuToggle) {
+            rootMenuToggle.disabled = !showRootMenu;
+            rootMenuToggle.classList.toggle('hidden', !showRootMenu);
+        }
+        if (rootMenu) {
+            const editBtn = rootMenu.querySelector('[data-comment-action="edit"]');
+            const deleteBtn = rootMenu.querySelector('[data-comment-action="delete"]');
+            const copyBtn = rootMenu.querySelector('[data-comment-action="copy-link"]');
+            rootMenu.classList.toggle('hidden', true);
+            if (editBtn) editBtn.disabled = !canEditRoot;
+            if (deleteBtn) deleteBtn.disabled = !canEditRoot || !hasCommentBody;
+            if (copyBtn) copyBtn.disabled = !hasCommentBody;
+        }
+        if (this.commentPopover) {
+            this.commentPopover.querySelectorAll('.comment-menu').forEach(menu => {
+                menu.classList.add('hidden');
+            });
+        }
+
+        if (this.commentMainDisplay) {
+            this.commentMainDisplay.innerHTML = this.renderCommentRichText(hydratedComment.text);
+            this.commentMainDisplay.classList.toggle('hidden', editingRoot);
+        }
+        if (this.commentMainEditor) {
+            this.commentMainEditor.classList.toggle('hidden', !editingRoot);
+            if (editingRoot && this.commentMainTextarea) {
+                const hydrateKey = coord || '';
+                const alreadyHydrated = this.commentMainTextarea.dataset.hydratedFor === hydrateKey;
+                if (!alreadyHydrated) {
+                    this.commentMainTextarea.value = hydratedComment.text || '';
+                    this.commentMainTextarea.dataset.hydratedFor = hydrateKey;
+                }
+            } else if (this.commentMainTextarea?.dataset) {
+                delete this.commentMainTextarea.dataset.hydratedFor;
+            }
+            if (this.commentMainAnonymous) {
+                if (!editingRoot) {
+                    delete this.commentMainAnonymous.dataset.hydrated;
+                } else if (!this.commentMainAnonymous.dataset.hydrated) {
+                    const shouldHydrateAnon = hasCommentBody ? Boolean(hydratedComment.anonymous) : false;
+                    this.commentMainAnonymous.checked = shouldHydrateAnon;
+                    this.commentMainAnonymous.dataset.hydrated = 'true';
+                }
+                this.commentMainAnonymous.disabled = false;
+            }
+        }
+
+        if (this.commentMainReactions) {
+            const reactionsHtml = hydratedComment.text
+                ? this.renderReactionChips(hydratedComment, {
+                    allowAdd: Boolean(this.currentUserLogin),
+                    target: 'root'
+                })
+                : '';
+            this.commentMainReactions.innerHTML = reactionsHtml;
+            this.commentMainReactions.classList.toggle('hidden', !reactionsHtml || editingRoot);
+        }
+
+        if (this.commentPopoverThread) {
+            const replies = Array.isArray(hydratedComment.replies) ? hydratedComment.replies.filter(entry => entry?.text) : [];
+            if (!replies.length) {
+                this.commentPopoverThread.innerHTML = '';
+                this.commentPopoverThread.classList.add('hidden');
+            } else {
+                this.commentPopoverThread.classList.remove('hidden');
+                this.commentPopoverThread.innerHTML = this.renderRepliesHTML(replies, coord, {
+                    highlightId: this.highlightedReplyId,
+                    allowAddReactions: Boolean(this.currentUserLogin)
+                });
+            }
+        }
+
+        if (this.commentReplyTextarea) {
+            this.commentReplyTextarea.value = '';
+        }
+        if (this.commentReplyAnonymous) {
+            this.commentReplyAnonymous.checked = false;
+            this.commentReplyAnonymous.disabled = false;
+        }
+        if (this.commentReplyComposer) {
+            this.commentReplyComposer.classList.toggle('hidden', !(hasCommentBody && !editingRoot));
+        }
+
         const rect = this.primaryCell.getBoundingClientRect?.();
         if (!rect || (!rect.width && !rect.height)) {
             this.hideCommentPopover();
             return;
         }
         const margin = 8;
-        const assumedWidth = this.commentPopover.offsetWidth || 260;
+        const assumedWidth = this.commentPopover.offsetWidth || 320;
         let left = rect.right + margin;
         let top = rect.top - margin;
 
@@ -778,7 +985,12 @@ class SpreadsheetApp {
 
     hideCommentPopover() {
         if (!this.commentPopover) return;
+        this.activeCommentEditTarget = null;
+        this.highlightedReplyId = null;
         this.commentPopover.classList.add('hidden');
+        if (this.commentReplyComposer) {
+            this.commentReplyComposer.classList.add('hidden');
+        }
         if (typeof this.commentPopover.hidePopover === 'function') {
             try { this.commentPopover.hidePopover(); } catch (error) { /* noop */ }
         }
@@ -1964,7 +2176,39 @@ class SpreadsheetApp {
         }
     }
 
+    markCommentsCommitted() {
+        this.cellData.forEach((value, coord) => {
+            if (!value || typeof value !== 'object' || !value.comment) return;
+            const info = this.normalizeCommentData(value.comment);
+            if (!info?.text) return;
+
+            this.updateCellDataEntry(coord, data => {
+                if (!data.comment) return;
+                const current = data.comment;
+                const base = current && typeof current === 'object'
+                    ? { ...current }
+                    : {
+                        text: info.text,
+                        author: info.author,
+                        authorId: info.authorId,
+                        profileUrl: info.profileUrl || '',
+                        avatar: info.avatar || '',
+                        at: info.at,
+                        anonymous: info.anonymous,
+                        anonymousReason: info.anonymousReason,
+                        replies: Array.isArray(info.replies) ? info.replies.map(reply => this.cloneCommentEntry(reply)).filter(Boolean) : []
+                    };
+                base.localOnly = false;
+                if (Array.isArray(base.replies)) {
+                    base.replies = base.replies.map(reply => ({ ...reply, localOnly: false }));
+                }
+                data.comment = base;
+            });
+        });
+    }
+
     markChangesPersisted() {
+        this.markCommentsCommitted();
         this.initialColorUsage = this.cloneColorUsage();
         this.initialCellData = this.cloneCellData(this.cellData);
         this.initialRowHeights = new Map(this.rowHeights);
@@ -2613,7 +2857,77 @@ class SpreadsheetApp {
         return styles;
     }
 
+    applyPendingCommentAuthors() {
+        if (!this.currentUserLogin) return false;
+        const displayName = this.codebergProfileName?.textContent?.trim() || this.currentUserLogin;
+        const profileUrl = this.buildAccountProfileUrl(this.currentUserLogin);
+        const avatar = this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const updatedCoords = [];
+
+        const promoteIfNeeded = (targetEntry, sourceInfo) => {
+            if (!sourceInfo) return false;
+            if (sourceInfo.anonymousReason === 'opt-in') return false;
+            if (sourceInfo.localOnly !== true) return false;
+            const isAnonymous = (sourceInfo.author || '').toLowerCase() === 'anonymous'
+                || sourceInfo.anonymousReason === 'unauthenticated'
+                || (sourceInfo.anonymous && !sourceInfo.authorId);
+            if (!isAnonymous) return false;
+
+            targetEntry.author = displayName;
+            targetEntry.authorId = this.currentUserLogin;
+            targetEntry.profileUrl = profileUrl;
+            targetEntry.avatar = targetEntry.avatar || avatar;
+            targetEntry.at = targetEntry.at || sourceInfo.at || Date.now();
+            targetEntry.anonymous = false;
+            targetEntry.anonymousReason = null;
+            targetEntry.localOnly = true;
+            return true;
+        };
+
+        this.cellData.forEach((value, coord) => {
+            const info = this.normalizeCommentData(value.comment);
+            if (!info?.text) return;
+            const base = value.comment && typeof value.comment === 'object'
+                ? { ...value.comment }
+                : this.cloneCommentEntry(info);
+            if (!base) return;
+
+            let changed = promoteIfNeeded(base, info);
+
+            if (Array.isArray(info.replies) && info.replies.length) {
+                const replyList = Array.isArray(base.replies)
+                    ? base.replies.map(reply => ({ ...reply }))
+                    : info.replies.map(reply => this.cloneCommentEntry(reply));
+                replyList.forEach((entry, idx) => {
+                    const sourceReply = info.replies[idx] || this.normalizeCommentData(entry);
+                    if (promoteIfNeeded(entry, sourceReply)) {
+                        replyList[idx] = entry;
+                        changed = true;
+                    }
+                });
+                base.replies = replyList;
+            }
+
+            if (changed) {
+                this.updateCellDataEntry(coord, data => {
+                    data.comment = base;
+                });
+                updatedCoords.push(coord);
+            }
+        });
+
+        if (updatedCoords.length) {
+            this.refreshAllVisibleCells();
+            this.updateCommentPopover();
+            this.updateDirtyState();
+            return true;
+        }
+
+        return false;
+    }
+
     async gatherSaveArtifacts() {
+        this.applyPendingCommentAuthors();
         // Ensure repo config is loaded before generating HTML
         if (!this.repoConfig) {
             this.repoConfig = await this.loadRepoConfig();
@@ -3385,9 +3699,17 @@ class SpreadsheetApp {
             if (!info?.text) return '∅';
             const meta = [];
             if (info.author) meta.push(info.author);
+            const replyTexts = Array.isArray(info.replies)
+                ? info.replies.filter(entry => entry?.text).map(entry => entry.text)
+                : [];
             if (Number.isFinite(info.at)) {
                 const ts = this.formatCommentTimestamp(info.at);
                 if (ts) meta.push(ts);
+            }
+            if (replyTexts.length) {
+                const summary = replyTexts.join(' | ');
+                const preview = summary.length > 60 ? `${summary.slice(0, 60)}…` : summary;
+                meta.push(`replies:${preview}`);
             }
             return meta.length ? `"${info.text}" (${meta.join(', ')})` : `"${info.text}"`;
         }
@@ -3442,6 +3764,7 @@ class SpreadsheetApp {
         if (data.linkUrl) fragments.push(`link=${data.linkUrl}`);
         const normalizedComment = this.normalizeCommentData(data.comment);
         if (normalizedComment?.text) fragments.push(`comment=${this.formatValue(normalizedComment.text)}`);
+        if (normalizedComment?.replies?.length) fragments.push(`replies=${normalizedComment.replies.length}`);
         if (data.borders) fragments.push(`borders=${JSON.stringify(data.borders)}`);
 
         return fragments.length ? fragments.join(', ') : 'empty';
@@ -3450,16 +3773,53 @@ class SpreadsheetApp {
     normalizeCommentData(raw) {
         if (!raw) return null;
         if (typeof raw === 'string') {
-            return { text: raw, author: '', avatar: '', at: null };
+            const text = String(raw);
+            const isAnonymous = text.trim().toLowerCase() === 'anonymous';
+            return {
+                text,
+                author: '',
+                authorId: null,
+                profileUrl: '',
+                avatar: '',
+                at: null,
+                anonymous: isAnonymous,
+                anonymousReason: isAnonymous ? 'unknown' : null,
+                localOnly: false,
+                replies: [],
+                reactions: [],
+                id: null
+            };
         }
         if (typeof raw === 'object') {
+            const rawAuthorId = raw.authorId ?? null;
             const atCandidate = Number(raw.at ?? raw.time ?? raw.timestamp);
             const validAt = Number.isFinite(atCandidate) ? atCandidate : null;
+            const authorId = rawAuthorId != null ? String(rawAuthorId).trim() : null;
+            const author = `${raw.author ?? raw.user ?? ''}`.trim();
+            const profileUrl = raw.profileUrl || (authorId ? this.buildAccountProfileUrl(authorId) : '');
+            const anonymous = Boolean(raw.anonymous ?? (author.toLowerCase() === 'anonymous' && !authorId));
+            const replies = Array.isArray(raw.replies)
+                ? raw.replies.map(entry => this.normalizeCommentData(entry)).filter(Boolean)
+                : [];
+            const reactions = Array.isArray(raw.reactions)
+                ? raw.reactions.map(r => ({
+                    emoji: `${r?.emoji ?? ''}`,
+                    users: Array.isArray(r?.users) ? r.users.map(u => `${u}`).filter(Boolean) : []
+                })).filter(r => r.emoji)
+                : [];
             return {
-                text: raw.text ?? raw.comment ?? '',
-                author: raw.author ?? raw.user ?? '',
+                text: `${raw.text ?? raw.comment ?? ''}`,
+                author,
+                authorId,
+                profileUrl,
                 avatar: raw.avatar ?? raw.avatarUrl ?? '',
-                at: validAt
+                at: validAt,
+                anonymous,
+                anonymousReason: raw.anonymousReason ?? (anonymous ? 'unknown' : null),
+                localOnly: Boolean(raw.localOnly),
+                replies,
+                reactions,
+                id: raw.id ? `${raw.id}` : null
             };
         }
         return null;
@@ -3474,6 +3834,367 @@ class SpreadsheetApp {
         } catch (error) {
             return `${date.toUTCString()} (UTC)`;
         }
+    }
+
+    generateCommentId(coord, suffix = 'c') {
+        const rand = Math.floor(Math.random() * 1e6);
+        return `${coord || 'cell'}-${suffix}-${Date.now().toString(36)}-${rand.toString(36)}`;
+    }
+
+    ensureCommentIds(coord, commentInfo) {
+        if (!commentInfo) return commentInfo;
+        if (!commentInfo.id) commentInfo.id = this.generateCommentId(coord, 'c');
+        if (Array.isArray(commentInfo.reactions)) {
+            commentInfo.reactions = commentInfo.reactions.map(r => ({
+                emoji: r.emoji,
+                users: Array.isArray(r.users) ? r.users : []
+            }));
+        } else {
+            commentInfo.reactions = [];
+        }
+        if (Array.isArray(commentInfo.replies)) {
+            commentInfo.replies = commentInfo.replies.map((reply, idx) => {
+                const cloned = this.cloneCommentEntry(reply) || reply;
+                if (!cloned.id) cloned.id = this.generateCommentId(coord, `r${idx}`);
+                return cloned;
+            }).filter(Boolean);
+        } else {
+            commentInfo.replies = [];
+        }
+        return commentInfo;
+    }
+
+    renderCommentWithMentions(text) {
+        return this.renderCommentRichText(text);
+    }
+
+    renderCommentRichText(text) {
+        const raw = typeof text === 'string' ? text : (text == null ? '' : String(text));
+
+        const sanitizeColorValue = (value = '') => {
+            const trimmed = value.trim();
+            if (/^#[0-9a-fA-F]{3,8}$/.test(trimmed)) return trimmed;
+            if (/^(rgb|rgba|hsl|hsla)\([^)]{1,40}\)$/i.test(trimmed)) return trimmed;
+            if (/^[a-zA-Z]+$/.test(trimmed)) return trimmed;
+            return '';
+        };
+
+        const formatLatexColor = (model, rawValue) => {
+            const value = `${rawValue || ''}`.trim();
+            if (!value) return '';
+            const lowerModel = (model || '').toLowerCase();
+            if (lowerModel === 'rgb') {
+                return sanitizeColorValue(`rgb(${value})`);
+            }
+            if (lowerModel === 'rgba') {
+                return sanitizeColorValue(`rgba(${value})`);
+            }
+            return sanitizeColorValue(value);
+        };
+
+        const restoreAllowedColorTags = (escaped) => {
+            const restoreSpan = (full, attrs, inner) => {
+                const styleMatch = attrs.match(/style=\"([^\"]*)\"/i);
+                const colorMatch = attrs.match(/color=\"([^\"]*)\"/i);
+                let color = '';
+                if (styleMatch) {
+                    styleMatch[1].split(';').forEach(rule => {
+                        const [prop, val] = rule.split(':');
+                        if (prop && val && prop.trim().toLowerCase() === 'color') {
+                            const safe = sanitizeColorValue(val);
+                            if (safe) color = safe;
+                        }
+                    });
+                }
+                if (!color && colorMatch) {
+                    const safe = sanitizeColorValue(colorMatch[1]);
+                    if (safe) color = safe;
+                }
+                if (!color) return full; // leave escaped
+                return `<span style="color:${color}">${inner}</span>`;
+            };
+            const restoreFont = (full, attrs, inner) => {
+                const colorMatch = attrs.match(/color=\"([^\"]*)\"/i);
+                const safe = colorMatch ? sanitizeColorValue(colorMatch[1]) : '';
+                if (!safe) return full;
+                return `<span style="color:${safe}">${inner}</span>`;
+            };
+            return escaped
+                .replace(/&lt;span([^&]*)&gt;([\s\S]*?)&lt;\/span&gt;/gi, (m, attrs, inner) => restoreSpan(m, attrs, inner))
+                .replace(/&lt;font([^&]*)&gt;([\s\S]*?)&lt;\/font&gt;/gi, (m, attrs, inner) => restoreFont(m, attrs, inner))
+                .replace(/&lt;br\s*\/?&gt;/gi, '<br>');
+        };
+
+        const applyLatexColors = (input) => {
+            const readGroup = (str, startIdx) => {
+                if (str[startIdx] !== '{') return null;
+                let depth = 0;
+                for (let i = startIdx; i < str.length; i++) {
+                    const ch = str[i];
+                    if (ch === '{') depth++;
+                    else if (ch === '}') {
+                        depth--;
+                        if (depth === 0) {
+                            return { content: str.slice(startIdx + 1, i), end: i + 1 };
+                        }
+                    }
+                }
+                return null;
+            };
+
+            let i = 0;
+            let output = '';
+            while (i < input.length) {
+                const isTextColor = input.startsWith('\\textcolor', i);
+                const isColor = !isTextColor && input.startsWith('\\color', i);
+                if (!isTextColor && !isColor) {
+                    output += input[i];
+                    i += 1;
+                    continue;
+                }
+
+                const cmd = isTextColor ? '\\textcolor' : '\\color';
+                let cursor = i + cmd.length;
+
+                // Optional color model [rgb], [rgba], etc.
+                let model = '';
+                if (input[cursor] === '[') {
+                    const close = input.indexOf(']', cursor);
+                    if (close !== -1) {
+                        model = input.slice(cursor + 1, close);
+                        cursor = close + 1;
+                    }
+                }
+
+                // Skip whitespace
+                while (cursor < input.length && /\s/.test(input[cursor])) cursor++;
+
+                const colorGroup = readGroup(input, cursor);
+                if (!colorGroup) {
+                    output += input[i];
+                    i += 1;
+                    continue;
+                }
+                cursor = colorGroup.end;
+                const safeColor = formatLatexColor(model, colorGroup.content);
+
+                // Skip whitespace before content group / content command
+                while (cursor < input.length && /\s/.test(input[cursor])) cursor++;
+
+                let textGroup = readGroup(input, cursor);
+                let consumedLength = 0;
+
+                // Handle \color{c}\textsf{...} style
+                if (!textGroup && input.startsWith('\\text', cursor)) {
+                    const braceIdx = input.indexOf('{', cursor);
+                    if (braceIdx !== -1) {
+                        textGroup = readGroup(input, braceIdx);
+                        consumedLength = textGroup ? (textGroup.end - cursor) : 0;
+                    }
+                }
+
+                // Fallback: color a short word/sequence if no braces found
+                if (!textGroup) {
+                    const fallbackMatch = input.slice(cursor).match(/^(\\?[^\s{}]+)/);
+                    if (fallbackMatch) {
+                        const fragment = fallbackMatch[1];
+                        const painted = safeColor ? `<span style="color:${safeColor}">${fragment}</span>` : fragment;
+                        output += painted;
+                        i = cursor + fragment.length;
+                        continue;
+                    }
+                    output += input[i];
+                    i += 1;
+                    continue;
+                }
+
+                const content = textGroup.content;
+                if (safeColor) {
+                    output += `<span style="color:${safeColor}">${content}</span>`;
+                } else {
+                    output += content;
+                }
+                i = textGroup ? (cursor + (consumedLength || (textGroup.end - cursor))) : cursor;
+            }
+
+            return output;
+        };
+
+        let html = escapeHTML(raw || '');
+        html = restoreAllowedColorTags(html);
+        html = applyLatexColors(html);
+        html = html
+            .replace(/\\textbf\{([^}]*)\}/g, '<strong>$1</strong>')
+            .replace(/\\text(it|sl)\{([^}]*)\}/g, '<em>$2</em>')
+            .replace(/\\text(?:sf|tt|rm|up|normal|sc)?\{([^}]*)\}/g, '$1')
+            .replace(/\\(large|Large|LARGE|huge|Huge|tiny|scriptsize|footnotesize|small|normalsize)\b/g, '')
+            .replace(/\\kern\{[^}]*\}/g, '&nbsp;')
+            .replace(/\$\$([^$]*\\(?:textcolor|color)[^$]*)\$\$/g, '$1')
+            .replace(/\$([^$]*\\(?:textcolor|color)[^$]*)\$/g, '$1');
+
+        // Code fences first to avoid nested replacements
+        const codeBlocks = [];
+        html = html.replace(/```([\s\S]*?)```/g, (_, code) => {
+            const idx = codeBlocks.length;
+            codeBlocks.push(`<pre><code>${escapeHTML(code)}</code></pre>`);
+            return `__CODEBLOCK_${idx}__`;
+        });
+
+        // Headings (# ...), blockquotes, lists (simple)
+        html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+        html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+        html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+        html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+        html = html.replace(/^>\s?(.*)$/gm, '<blockquote>$1</blockquote>');
+
+        // Images and links
+        html = html.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1">');
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+        // Emphasis / inline formatting
+        html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+        html = html.replace(/@([a-zA-Z0-9_]+)/g, '<span class="comment-mention">@$1</span>');
+
+        // Simple unordered/ordered lists
+        html = html.replace(/(^|\n)(\s*[-+*]\s.+)(\n\s*[-+*]\s.+)+/g, match => {
+            const items = match.trim().split(/\n/).map(line => line.replace(/^\s*[-+*]\s/, '').trim());
+            return `\n<ul>${items.map(i => `<li>${i}</li>`).join('')}</ul>`;
+        });
+        html = html.replace(/(^|\n)(\s*\d+\.\s.+)(\n\s*\d+\.\s.+)+/g, match => {
+            const items = match.trim().split(/\n/).map(line => line.replace(/^\s*\d+\.\s/, '').trim());
+            return `\n<ol>${items.map(i => `<li>${i}</li>`).join('')}</ol>`;
+        });
+
+        // Restore code fences
+        html = html.replace(/__CODEBLOCK_(\d+)__/g, (_, idx) => codeBlocks[idx] || '');
+
+        return html.replace(/\n/g, '<br>');
+    }
+
+    renderReplyHTML(replyInfo, options = {}) {
+        const { readOnly = false, highlightId = this.highlightedReplyId, allowAddReactions = !readOnly } = options;
+        if (!replyInfo) return '';
+        const author = escapeHTML(replyInfo.author || 'Anonymous');
+        const timestampLabel = replyInfo.at ? escapeHTML(this.formatCommentTimestamp(replyInfo.at)) : '';
+        const authorMarkup = replyInfo.profileUrl
+            ? `<a href="${escapeAttribute(replyInfo.profileUrl)}">${author}</a>`
+            : author;
+        const avatar = escapeAttribute(replyInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData());
+        const reactionHtml = this.renderReactionChips(replyInfo, {
+            readOnly,
+            allowAdd: allowAddReactions,
+            target: replyInfo.id || 'root'
+        });
+        const isEditing = !readOnly && this.activeCommentEditTarget === replyInfo.id;
+        const bodyClass = isEditing ? 'comment-body hidden' : 'comment-body';
+        const bodyDisplay = `<div class="${bodyClass}" data-reply-body="${escapeAttribute(replyInfo.id || '')}">${this.renderCommentRichText(replyInfo.text || '')}</div>`;
+        const forceAnonymous = !this.currentUserLogin;
+        const replyAnonChecked = replyInfo.anonymous || forceAnonymous;
+        const editor = `
+            <div class="comment-editor-inline ${isEditing ? '' : 'hidden'}" data-reply-editor="${escapeAttribute(replyInfo.id || '')}">
+                <textarea class="form-control" rows="3" data-reply-textarea="${escapeAttribute(replyInfo.id || '')}">${escapeHTML(replyInfo.text || '')}</textarea>
+                <label class="comment-editor__checkbox">
+                    <input type="checkbox" data-reply-anon="${escapeAttribute(replyInfo.id || '')}" ${replyAnonChecked ? 'checked' : ''} ${forceAnonymous ? 'disabled' : ''}>
+                    <span>Anonymous comment</span>
+                </label>
+                <div class="comment-editor__actions">
+                    <button type="button" class="btn btn--sm" data-comment-action="cancel-edit" data-comment-target="${escapeAttribute(replyInfo.id || '')}">Cancel</button>
+                    <button type="button" class="btn btn--sm toolbar-btn" data-comment-action="save-edit" data-comment-target="${escapeAttribute(replyInfo.id || '')}">Save</button>
+                </div>
+            </div>
+        `;
+        const canEdit = !readOnly && this.canEditCommentEntry(replyInfo);
+        const showMenu = !readOnly && (canEdit || replyInfo?.text);
+        const actions = showMenu ? [
+            '    <div class="comment-card__actions">',
+            `      <button type="button" class="comment-menu__toggle" data-comment-target="${escapeAttribute(replyInfo.id || '')}" aria-label="Reply actions">⋯</button>`,
+            `      <div class="comment-menu hidden" data-comment-menu="${escapeAttribute(replyInfo.id || '')}">`,
+            `        <button type="button" data-comment-action="edit" data-comment-target="${escapeAttribute(replyInfo.id || '')}" ${canEdit ? '' : 'disabled'}>Edit</button>`,
+            `        <button type="button" data-comment-action="delete" data-comment-target="${escapeAttribute(replyInfo.id || '')}" ${canEdit ? '' : 'disabled'}>Delete</button>`,
+            `        <button type="button" data-comment-action="copy-link" data-comment-target="${escapeAttribute(replyInfo.id || '')}">Copy link</button>`,
+            '      </div>',
+            '    </div>'
+        ].join('\n') : '';
+        return [
+            `<article class="comment-reply${highlightId === replyInfo.id ? ' comment-reply--highlight' : ''}" data-reply-id="${escapeAttribute(replyInfo.id || '')}">`,
+            '  <div class="comment-reply__meta">',
+            '    <div class="comment-card__meta-left">',
+            `      <img class="comment-popover__avatar" src="${avatar}" alt="${escapeAttribute(replyInfo.author ? `${replyInfo.author} avatar` : 'Reply avatar')}">`,
+            '      <div class="comment-popover__meta-text">',
+            `        <div class="comment-popover__author">${authorMarkup}</div>`,
+            timestampLabel ? `        <div class="comment-popover__timestamp">${timestampLabel}</div>` : '',
+            '      </div>',
+            '    </div>',
+            actions,
+            '  </div>',
+            `  ${bodyDisplay}`,
+            readOnly ? '' : `  ${editor}`,
+            reactionHtml ? `  <div class="comment-reactions">${reactionHtml}</div>` : '',
+            '</article>'
+        ].join('');
+    }
+
+    renderRepliesHTML(replies, coord, options = {}) {
+        return replies.map(reply => {
+            const hydrated = this.ensureCommentIds(coord, this.cloneCommentEntry(reply));
+            return this.renderReplyHTML(hydrated, options);
+        }).join('');
+    }
+
+    renderReactionChips(entry, options = {}) {
+        const { readOnly = false, allowAdd = false, target = 'root' } = options;
+        const reactions = Array.isArray(entry?.reactions) ? entry.reactions : [];
+        const user = (this.currentUserLogin || '').toLowerCase();
+        const chips = reactions.map(r => {
+            const count = Array.isArray(r.users) ? r.users.length : 0;
+            const active = user && Array.isArray(r.users) && r.users.some(u => `${u}`.toLowerCase() === user);
+            const baseClass = `comment-reaction${active && !readOnly ? ' comment-reaction--active' : ''}${readOnly ? ' comment-reaction--static' : ''}`;
+            const tag = readOnly ? 'span' : 'button';
+            const attrs = readOnly ? '' : ` data-reaction-emoji="${escapeAttribute(r.emoji)}" data-comment-target="${escapeAttribute(target)}" aria-label="React with ${escapeAttribute(r.emoji)}"`;
+            const typeAttr = readOnly ? '' : ' type="button"';
+            return `<${tag}${typeAttr} class="${baseClass}"${attrs}>
+                <span>${escapeHTML(r.emoji)}</span>
+                <span class="comment-reaction__count">${count}</span>
+            </${tag}>`;
+        });
+        if (allowAdd && this.currentUserLogin) {
+            chips.push(`<button type="button" class="comment-reaction comment-reaction__add" data-add-reaction="true" data-comment-target="${escapeAttribute(target)}">+</button>`);
+        }
+        return chips.join('');
+    }
+
+    cloneCommentEntry(info) {
+        if (!info) return null;
+        const replies = Array.isArray(info.replies)
+            ? info.replies.map(reply => this.cloneCommentEntry(reply)).filter(Boolean)
+            : [];
+        const reactions = Array.isArray(info.reactions)
+            ? info.reactions.map(r => ({
+                emoji: r.emoji,
+                users: Array.isArray(r.users) ? r.users.slice() : []
+            })).filter(r => r.emoji)
+            : [];
+        return {
+            text: info.text,
+            author: info.author,
+            authorId: info.authorId,
+            profileUrl: info.profileUrl || '',
+            avatar: info.avatar || '',
+            at: info.at,
+            anonymous: info.anonymous,
+            anonymousReason: info.anonymousReason,
+            localOnly: info.localOnly,
+            replies,
+            reactions,
+            id: info.id || null
+        };
     }
 
     isCellEffectivelyEmpty(data) {
@@ -3492,6 +4213,7 @@ class SpreadsheetApp {
         if (data.linkUrl) return false;
         const normalizedComment = this.normalizeCommentData(data.comment);
         if (normalizedComment?.text) return false;
+        if (normalizedComment?.replies?.length) return false;
         if (data.borders && Object.values(data.borders).some(Boolean)) return false;
         if (data.richText) return false;
 
@@ -3643,10 +4365,17 @@ class SpreadsheetApp {
                 if (ds.link) data.linkUrl = ds.link;
                 if (ds.comment) {
                     const commentRecord = {
-                        text: ds.comment
+                        text: ds.comment,
+                        localOnly: false
                     };
                     if (ds.commentAuthor) {
                         commentRecord.author = ds.commentAuthor;
+                    }
+                    if (ds.commentAuthorId) {
+                        commentRecord.authorId = ds.commentAuthorId;
+                    }
+                    if (ds.commentProfile) {
+                        commentRecord.profileUrl = ds.commentProfile;
                     }
                     const commentAt = Number(ds.commentAt);
                     if (Number.isFinite(commentAt)) {
@@ -3654,6 +4383,39 @@ class SpreadsheetApp {
                     }
                     if (ds.commentAvatar) {
                         commentRecord.avatar = ds.commentAvatar;
+                    }
+                    if (ds.commentAnonReason) {
+                        commentRecord.anonymousReason = ds.commentAnonReason;
+                    }
+                    if (ds.commentId) {
+                        commentRecord.id = ds.commentId;
+                    }
+                    if (ds.commentReactions) {
+                        try {
+                            const parsed = JSON.parse(ds.commentReactions);
+                            if (Array.isArray(parsed)) {
+                                commentRecord.reactions = parsed.map(r => ({
+                                    emoji: `${r?.emoji ?? ''}`,
+                                    users: Array.isArray(r?.users) ? r.users.map(u => `${u}`) : []
+                                })).filter(r => r.emoji);
+                            }
+                        } catch (error) {
+                            console.warn('Unable to parse comment reactions', error);
+                        }
+                    }
+                    if (ds.commentReplies) {
+                        try {
+                            const parsedReplies = JSON.parse(ds.commentReplies);
+                            if (Array.isArray(parsedReplies)) {
+                                commentRecord.replies = parsedReplies.map(reply => {
+                                    const normalized = this.normalizeCommentData(reply);
+                                    if (!normalized) return null;
+                                    return { ...normalized, localOnly: false };
+                                }).filter(Boolean);
+                            }
+                        } catch (error) {
+                            console.warn('Unable to parse comment replies from dataset', error);
+                        }
                     }
                     data.comment = commentRecord;
                 }
@@ -3806,6 +4568,30 @@ class SpreadsheetApp {
             row: parseInt(match[2]) - 1,
             col: this.getColumnIndex(match[1])
         };
+    }
+
+    maybeOpenCommentFromUrl() {
+        if (typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const address = params.get('comment');
+        if (!address) return;
+        const parsed = this.parseCellAddress(address);
+        if (!parsed) return;
+        this.ensureCapacityForCell(parsed.row, parsed.col);
+        const cell = this.getCellAt(parsed.row, parsed.col) || this.createCell(parsed.row, parsed.col);
+        if (!cell) return;
+        this.selectCells([cell], true);
+        this.primaryCell = cell;
+        this.primaryCellCoord = this.getCoord(cell);
+        this.highlightedReplyId = params.get('reply');
+        if (typeof cell.scrollIntoView === 'function') {
+            try {
+                cell.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+            } catch (error) {
+                cell.scrollIntoView();
+            }
+        }
+        this.updateCommentPopover();
     }
 
     generateHeaders() {
@@ -4002,7 +4788,62 @@ class SpreadsheetApp {
         this.renderedCellCoords.add(coordKey);
         return cell;
     }
-    
+
+    isCommentOwnedByCurrentUser(commentInfo) {
+        if (!commentInfo || !this.currentUserLogin) return false;
+        const login = `${this.currentUserLogin}`.toLowerCase();
+        if (commentInfo.authorId && `${commentInfo.authorId}`.toLowerCase() === login) return true;
+        const authorName = `${commentInfo.author || ''}`.trim().replace(/^@/, '').toLowerCase();
+        return authorName === login && !!authorName;
+    }
+
+    canEditCommentEntry(entry) {
+        if (!entry) return false;
+        const isLoggedIn = Boolean(this.currentUserLogin);
+        const isLocal = entry.localOnly === true;
+        if (!isLoggedIn && !isLocal) return false;
+        if (isLoggedIn && !this.isCommentOwnedByCurrentUser(entry)) {
+            const isLocalAnonymous = isLocal && (!entry.author || `${entry.author}`.toLowerCase() === 'anonymous');
+            if (!isLocalAnonymous) return false;
+        }
+        return true;
+    }
+
+    getCommentEntryBlockReason(entry) {
+        if (!entry) return 'No comment to edit.';
+        const isLoggedIn = Boolean(this.currentUserLogin);
+        const isLocal = entry.localOnly === true;
+        if (!isLoggedIn && !isLocal) {
+            return 'You need to sign in to edit committed comments.';
+        }
+        if (isLoggedIn && !this.isCommentOwnedByCurrentUser(entry) && !isLocal) {
+            return 'You can only edit comments created by your account.';
+        }
+        return '';
+    }
+
+    getCommentEditBlockReason(targetCoords = []) {
+        const coords = targetCoords.length ? targetCoords : (this.primaryCell ? [this.getCoord(this.primaryCell)] : []);
+        const isLoggedIn = Boolean(this.currentUserLogin);
+
+        for (const coord of coords) {
+            const commentInfo = this.normalizeCommentData((this.cellData.get(coord) || {}).comment);
+            if (!commentInfo?.text) continue;
+            const isLocal = commentInfo.localOnly === true;
+            if (!isLoggedIn && !isLocal) {
+                return 'You need to sign in to edit committed comments.';
+            }
+            if (isLoggedIn && !this.isCommentOwnedByCurrentUser(commentInfo)) {
+                const isLocalAnonymous = isLocal && (!commentInfo.author || commentInfo.author.toLowerCase() === 'anonymous');
+                if (!isLocalAnonymous) {
+                    return 'You can only edit comments created by your account.';
+                }
+            }
+        }
+
+        return '';
+    }
+
     getDefaultRowHeightForRow(row) {
         const override = this.getValueFromMapLike(this.rowDefaultHeightOverrides, row, null);
         if (Number.isFinite(override) && override > 0) return override;
@@ -4063,6 +4904,8 @@ class SpreadsheetApp {
                     this.handleFontSizeChange(e, { finalize: true }); 
                 }
             }],
+            [this.commentPopoverReplyBtn, 'click', () => this.handleCommentReply()],
+            [this.commentPopover, 'click', e => this.handleCommentPopoverClick(e)],
             [this.formulaInput, 'keydown', e => this.handleFormulaKeyDown(e)],
             [this.formulaInput, 'focus', e => this.handleFormulaFocus(e)],
             [this.formulaInput, 'input', e => this.handleFormulaInput(e)],
@@ -6744,6 +7587,7 @@ class SpreadsheetApp {
     selectCells(cells, isPrimary = false, primaryCell = null) {
         if (!cells || !cells.length) return;
         this.fullSheetSelection = false;
+        const previousPrimary = this.primaryCellCoord;
         
         cells.forEach((cell, index) => {
             const coordKey = this.getCoord(cell);
@@ -6786,6 +7630,10 @@ class SpreadsheetApp {
                 cell.classList.add('primary-selected');
             }
         });
+        if (previousPrimary && previousPrimary !== this.primaryCellCoord) {
+            this.activeCommentEditTarget = null;
+            this.hideCommentPopover();
+        }
         this.updateUI();
     }
     
@@ -8337,49 +9185,433 @@ class SpreadsheetApp {
         this.log(`Updated link in ${this.primaryCell.dataset.address}`);
     }
 
-    handleCommentEdit() {
+    ensureCommentEditor() {
+        if (this.commentEditor) return;
+        if (typeof document === 'undefined') return;
+        document.body.insertAdjacentHTML('beforeend', COMMENT_EDITOR_HTML);
+        this.commentEditor = document.getElementById('commentEditor');
+        this.commentEditorTextarea = document.getElementById('commentEditorText');
+        this.commentEditorAnonymous = document.getElementById('commentEditorAnonymous');
+
+        if (this.commentEditor) {
+            this.commentEditor.addEventListener('click', (event) => {
+                const target = event.target;
+                if (!(target instanceof HTMLElement)) return;
+                if (target.dataset.commentEditorDismiss !== undefined || target.dataset.commentEditorCancel !== undefined || target === this.commentEditor) {
+                    this.closeCommentEditor(null);
+                    return;
+                }
+                if (target.dataset.commentEditorSave !== undefined) {
+                    this.closeCommentEditor({
+                        text: (this.commentEditorTextarea?.value || '').trim(),
+                        anonymous: Boolean(this.commentEditorAnonymous?.checked)
+                    });
+                }
+            });
+
+            this.commentEditor.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    this.closeCommentEditor(null);
+                }
+            });
+        }
+    }
+
+    openCommentEditor(options = {}) {
+        this.ensureCommentEditor();
+        if (!this.commentEditor) return Promise.resolve(null);
+
+        const { text = '', anonymous = false } = options;
+        if (this.commentEditorTextarea) {
+            this.commentEditorTextarea.value = text;
+        }
+        if (this.commentEditorAnonymous) {
+            this.commentEditorAnonymous.checked = Boolean(anonymous);
+        }
+
+        this.commentEditor.classList.remove('hidden');
+
+        setTimeout(() => {
+            if (this.commentEditorTextarea) {
+                this.commentEditorTextarea.focus();
+                const val = this.commentEditorTextarea.value.length;
+                this.commentEditorTextarea.setSelectionRange(val, val);
+            }
+        }, 0);
+
+        return new Promise(resolve => {
+            this.commentEditorResolver = resolve;
+        });
+    }
+
+    closeCommentEditor(result) {
+        if (this.commentEditor) {
+            this.commentEditor.classList.add('hidden');
+        }
+        const resolver = this.commentEditorResolver;
+        this.commentEditorResolver = null;
+        if (resolver) resolver(result);
+    }
+
+    async handleCommentEdit() {
         if (!this.primaryCell) return;
 
         const targets = this.hasSelection() ? Array.from(this.selectedCellCoords) : [this.getCoord(this.primaryCell)];
-        const primaryData = this.cellData.get(this.getCoord(this.primaryCell)) || {};
-        const existing = primaryData.comment || '';
-        const next = typeof window !== 'undefined' && window.prompt
-            ? window.prompt('Add a comment for the selected cell(s). Leave blank to remove.', existing)
-            : '';
+        const blockReason = this.getCommentEditBlockReason(targets);
+        if (blockReason) {
+            if (typeof window !== 'undefined' && window.alert) {
+                window.alert(blockReason);
+            }
+            return;
+        }
+        this.activeCommentEditTarget = 'root';
+        this.updateCommentPopover();
+    }
 
-        if (next === null) return;
-        const comment = (next || '').trim();
-        const existingComment = this.normalizeCommentData(primaryData.comment);
+    async handleCommentReply() {
+        this.addReplyFromComposer();
+    }
+
+    handleCommentPopoverClick(event) {
+        if (!event || !(event.target instanceof HTMLElement)) return;
+        const menuToggle = event.target.closest('.comment-menu__toggle');
+        if (menuToggle) {
+            const target = menuToggle.dataset.commentTarget || 'root';
+            const menu = this.commentPopover?.querySelector(`[data-comment-menu="${CSS.escape(target)}"]`);
+            if (menu) {
+                const isHidden = menu.classList.contains('hidden');
+                this.commentPopover?.querySelectorAll('.comment-menu').forEach(m => m.classList.add('hidden'));
+                if (isHidden) {
+                    menu.classList.remove('hidden');
+                }
+            }
+            return;
+        }
+
+        const reactionBtn = event.target.closest('[data-reaction-emoji]');
+        if (reactionBtn) {
+            const emoji = reactionBtn.dataset.reactionEmoji || '';
+            const target = reactionBtn.dataset.commentTarget || 'root';
+            this.toggleReaction(target, emoji);
+            return;
+        }
+
+        const addReactionBtn = event.target.closest('[data-add-reaction]');
+        if (addReactionBtn) {
+            const target = addReactionBtn.dataset.commentTarget || 'root';
+            this.promptAddReaction(target);
+            return;
+        }
+
+        if (event.target.closest('[data-comment-close]')) {
+            this.activeCommentEditTarget = null;
+            this.hideCommentPopover();
+            return;
+        }
+
+        const actionBtn = event.target.closest('[data-comment-action]');
+        if (actionBtn) {
+            const action = actionBtn.dataset.commentAction;
+            const target = actionBtn.dataset.commentTarget || 'root';
+            this.handleCommentAction(action, target);
+            return;
+        }
+    }
+
+    handleCommentAction(action, target) {
+        switch (action) {
+            case 'edit':
+                if (!this.canEditTarget(target, { notify: true })) return;
+                this.activeCommentEditTarget = target;
+                this.updateCommentPopover();
+                break;
+            case 'cancel-edit':
+                this.activeCommentEditTarget = null;
+                this.updateCommentPopover();
+                break;
+            case 'save-edit':
+                if (target === 'root') this.saveMainCommentEdit();
+                else this.saveReplyEdit(target);
+                break;
+            case 'delete':
+                if (!this.canEditTarget(target, { notify: true })) return;
+                this.deleteCommentEntry(target);
+                break;
+            case 'copy-link':
+                this.copyCommentLink(target);
+                break;
+            case 'add-reply':
+                this.addReplyFromComposer();
+                break;
+            default:
+                break;
+        }
+    }
+
+    canEditTarget(target, { notify = false } = {}) {
+        if (!this.primaryCell) return false;
+        const coord = this.getCoord(this.primaryCell);
+        const base = this.normalizeCommentData(this.cellData.get(coord)?.comment);
+        const info = target === 'root'
+            ? base
+            : (base?.replies || []).find(r => `${r?.id || ''}` === `${target}`);
+        const allowed = this.canEditCommentEntry(info);
+        if (!allowed && notify) {
+            const reason = target === 'root'
+                ? this.getCommentEditBlockReason([coord]) || this.getCommentEntryBlockReason(info)
+                : this.getCommentEntryBlockReason(info);
+            if (reason) window.alert?.(reason);
+        }
+        return allowed;
+    }
+
+    saveMainCommentEdit() {
+        if (!this.primaryCell) return;
+        const coord = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(coord) || {};
+        const baseComment = this.ensureCommentIds(coord, this.normalizeCommentData(cellData.comment) || {});
+        const blockReason = this.getCommentEditBlockReason([coord]);
+        if (blockReason) {
+            window.alert?.(blockReason);
+            return;
+        }
+        const commentText = (this.commentMainTextarea?.value || '').trim();
+        if (!commentText) {
+            this.deleteCommentEntry('root');
+            return;
+        }
+        const isLoggedIn = Boolean(this.currentUserLogin);
         const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
-        const author = existingComment?.author || this.currentUserLogin || authorFallback || 'Anonymous';
-        const avatar = existingComment?.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
-        const timestamp = existingComment?.at ?? Date.now();
+        const anonymousOptIn = Boolean(this.commentMainAnonymous?.checked);
+        const anonymousSelection = anonymousOptIn || !isLoggedIn;
+        const author = anonymousSelection ? 'Anonymous' : (this.currentUserLogin || baseComment.author || authorFallback || 'Anonymous');
+        const authorId = anonymousSelection ? null : (this.currentUserLogin || baseComment.authorId || null);
+        const profileUrl = authorId ? this.buildAccountProfileUrl(authorId) : '';
+        const avatar = (!anonymousSelection ? (this.codebergAvatarImg?.src || baseComment.avatar) : baseComment.avatar) || this.getPlaceholderAvatarData();
+        const timestamp = baseComment.at ?? Date.now();
+        const anonymousReason = anonymousSelection ? (!isLoggedIn ? 'unauthenticated' : 'opt-in') : null;
 
         this.saveState('Update comment');
-
-        targets.forEach(coord => {
-            this.updateCellDataEntry(coord, data => {
-                if (comment) {
-                    data.comment = {
-                        text: comment,
-                        author,
-                        avatar,
-                        at: timestamp
-                    };
-                } else {
-                    delete data.comment;
-                }
-            });
+        this.updateCellDataEntry(coord, data => {
+            data.comment = {
+                ...baseComment,
+                text: commentText,
+                author,
+                authorId,
+                profileUrl,
+                avatar,
+                at: timestamp,
+                anonymous: anonymousSelection,
+                anonymousReason,
+                localOnly: true
+            };
         });
-
-        // Refresh visible cells in selection
-        this.selectedCells.forEach(cell => {
-            const data = this.cellData.get(this.getCoord(cell)) || {};
-            this.updateCellDisplay(cell, data);
-        });
-
+        this.activeCommentEditTarget = null;
+        this.refreshAllVisibleCells();
         this.updateCommentPopover();
         this.updateDirtyState();
+    }
+
+    saveReplyEdit(replyId) {
+        if (!this.primaryCell || !replyId) return;
+        const coord = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(coord) || {};
+        const baseComment = this.ensureCommentIds(coord, this.normalizeCommentData(cellData.comment) || {});
+        const replyIndex = Array.isArray(baseComment.replies) ? baseComment.replies.findIndex(r => `${r?.id || ''}` === `${replyId}`) : -1;
+        if (replyIndex === -1) return;
+        const replyInfo = baseComment.replies[replyIndex];
+        if (!this.canEditCommentEntry(replyInfo)) return;
+        const textarea = this.commentPopover?.querySelector(`[data-reply-textarea="${CSS.escape(replyId)}"]`);
+        const anonToggle = this.commentPopover?.querySelector(`[data-reply-anon="${CSS.escape(replyId)}"]`);
+        const nextText = (textarea?.value || '').trim();
+        if (!nextText) {
+            this.deleteCommentEntry(replyId);
+            return;
+        }
+        const isLoggedIn = Boolean(this.currentUserLogin);
+        const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
+        const anonymousOptIn = Boolean(anonToggle?.checked);
+        const anonymousSelection = anonymousOptIn || !isLoggedIn;
+        const author = anonymousSelection ? 'Anonymous' : (replyInfo.author || this.currentUserLogin || authorFallback || 'Anonymous');
+        const authorId = anonymousSelection ? null : (replyInfo.authorId || this.currentUserLogin || null);
+        const profileUrl = anonymousSelection ? '' : this.buildAccountProfileUrl(authorId);
+        const avatar = replyInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const timestamp = replyInfo.at ?? Date.now();
+        const anonymousReason = anonymousSelection ? (!isLoggedIn ? 'unauthenticated' : 'opt-in') : null;
+
+        this.saveState('Update reply');
+        this.updateCellDataEntry(coord, data => {
+            const normalized = this.ensureCommentIds(coord, this.normalizeCommentData(data.comment) || {});
+            const idx = normalized.replies.findIndex(r => `${r?.id || ''}` === `${replyId}`);
+            if (idx === -1) return;
+            normalized.replies[idx] = {
+                ...normalized.replies[idx],
+                text: nextText,
+                author,
+                authorId,
+                profileUrl,
+                avatar,
+                at: timestamp,
+                anonymous: anonymousSelection,
+                anonymousReason,
+                localOnly: true
+            };
+            data.comment = normalized;
+        });
+        this.activeCommentEditTarget = null;
+        this.refreshAllVisibleCells();
+        this.updateCommentPopover();
+        this.updateDirtyState();
+    }
+
+    deleteCommentEntry(target) {
+        if (!this.primaryCell) return;
+        const coord = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(coord) || {};
+        const baseComment = this.ensureCommentIds(coord, this.normalizeCommentData(cellData.comment) || {});
+        if (target === 'root') {
+            if (!this.canEditCommentEntry(baseComment)) return;
+            this.saveState('Delete comment');
+            this.updateCellDataEntry(coord, data => { delete data.comment; });
+        } else {
+            const idx = Array.isArray(baseComment.replies) ? baseComment.replies.findIndex(r => `${r?.id || ''}` === `${target}`) : -1;
+            if (idx === -1 || !this.canEditCommentEntry(baseComment.replies[idx])) return;
+            this.saveState('Delete reply');
+            this.updateCellDataEntry(coord, data => {
+                const normalized = this.ensureCommentIds(coord, this.normalizeCommentData(data.comment) || {});
+                normalized.replies = normalized.replies.filter(r => `${r?.id || ''}` !== `${target}`);
+                data.comment = normalized;
+            });
+        }
+        this.activeCommentEditTarget = null;
+        this.refreshAllVisibleCells();
+        this.updateCommentPopover();
+        this.updateDirtyState();
+    }
+
+    addReplyFromComposer() {
+        if (!this.primaryCell) return;
+        const coord = this.getCoord(this.primaryCell);
+        const cellData = this.cellData.get(coord) || {};
+        const baseComment = this.ensureCommentIds(coord, this.normalizeCommentData(cellData.comment) || {});
+        if (!baseComment?.text) return;
+        const replyText = (this.commentReplyTextarea?.value || '').trim();
+        if (!replyText) return;
+
+        const isLoggedIn = Boolean(this.currentUserLogin);
+        const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
+        const anonymousOptIn = this.commentReplyAnonymous?.checked;
+        const anonymousSelection = anonymousOptIn || !isLoggedIn;
+        const author = anonymousSelection ? 'Anonymous' : (this.currentUserLogin || authorFallback || baseComment.author || 'Anonymous');
+        const authorId = anonymousSelection ? null : (this.currentUserLogin || baseComment.authorId || null);
+        const profileUrl = anonymousSelection ? '' : this.buildAccountProfileUrl(authorId);
+        const avatar = this.codebergAvatarImg?.src || baseComment.avatar || this.getPlaceholderAvatarData();
+        const timestamp = Date.now();
+        const anonymousReason = anonymousSelection ? (!isLoggedIn ? 'unauthenticated' : 'opt-in') : null;
+        const replyEntry = this.ensureCommentIds(coord, {
+            text: replyText,
+            author,
+            authorId,
+            profileUrl,
+            avatar,
+            at: timestamp,
+            anonymous: anonymousSelection,
+            anonymousReason,
+            localOnly: true,
+            reactions: [],
+            id: this.generateCommentId(coord, 'r')
+        });
+
+        this.saveState('Reply to comment');
+        this.updateCellDataEntry(coord, data => {
+            const existingRaw = data.comment;
+            const base = this.ensureCommentIds(coord, this.normalizeCommentData(existingRaw) || baseComment);
+            if (!base) return;
+            const replies = Array.isArray(base.replies) ? base.replies.slice() : [];
+            replies.push(replyEntry);
+            base.replies = replies;
+            data.comment = base;
+        });
+
+        if (this.commentReplyTextarea) this.commentReplyTextarea.value = '';
+        this.refreshAllVisibleCells();
+        this.updateCommentPopover();
+        this.updateDirtyState();
+    }
+
+    toggleReaction(target, emoji) {
+        if (!emoji) return;
+        if (!this.currentUserLogin) {
+            window.alert?.('Sign in to react to comments.');
+            return;
+        }
+        if (!this.primaryCell) return;
+        const coord = this.getCoord(this.primaryCell);
+        const user = this.currentUserLogin;
+        this.saveState('Toggle reaction');
+        this.updateCellDataEntry(coord, data => {
+            const normalized = this.ensureCommentIds(coord, this.normalizeCommentData(data.comment) || {});
+            const entry = target === 'root'
+                ? normalized
+                : (normalized.replies || []).find(r => `${r?.id || ''}` === `${target}`);
+            if (!entry) return;
+            if (!Array.isArray(entry.reactions)) entry.reactions = [];
+            let record = entry.reactions.find(r => r.emoji === emoji);
+            if (!record) {
+                record = { emoji, users: [] };
+                entry.reactions.push(record);
+            }
+            const userSet = new Set(record.users.map(u => `${u}`));
+            if (userSet.has(user)) {
+                userSet.delete(user);
+            } else {
+                userSet.add(user);
+            }
+            record.users = Array.from(userSet);
+            entry.reactions = entry.reactions.filter(r => Array.isArray(r.users) && r.users.length > 0);
+            if (target === 'root') {
+                normalized.reactions = entry.reactions;
+            } else {
+                normalized.replies = normalized.replies.map(r => `${r.id || ''}` === `${target}` ? entry : r);
+            }
+            data.comment = normalized;
+        });
+        this.refreshAllVisibleCells();
+        this.updateCommentPopover();
+        this.updateDirtyState();
+    }
+
+    promptAddReaction(target) {
+        if (!this.currentUserLogin) {
+            window.alert?.('Sign in to react to comments.');
+            return;
+        }
+        const emoji = typeof window !== 'undefined' && window.prompt ? window.prompt('Enter an emoji to react with:') : '';
+        if (!emoji) return;
+        this.toggleReaction(target, emoji.trim());
+    }
+
+    copyCommentLink(target) {
+        if (!this.primaryCell || typeof window === 'undefined') return;
+        const coord = this.getCoord(this.primaryCell);
+        const { row, col } = this.getCoordPos(coord);
+        const address = this.getCellAddress(row, col);
+        const url = new URL(window.location.href);
+        url.searchParams.set('comment', address);
+        if (target && target !== 'root') {
+            url.searchParams.set('reply', target);
+        } else {
+            url.searchParams.delete('reply');
+        }
+        const href = url.toString();
+        if (navigator?.clipboard?.writeText) {
+            navigator.clipboard.writeText(href).catch(() => {
+                window.prompt('Copy comment link:', href);
+            });
+        } else {
+            window.prompt('Copy comment link:', href);
+        }
     }
 
     updateCellDisplay(cell, d = {}) {
@@ -13067,6 +14299,11 @@ class SpreadsheetApp {
         }
     }
 
+    buildAccountProfileUrl(owner) {
+        if (!owner) return '';
+        return `https://codeberg.org/${encodeURIComponent(owner)}`;
+    }
+
     buildAccountAvatarUrl(owner) {
         if (!owner) return null;
         return `https://codeberg.org/${encodeURIComponent(owner)}.png?size=64`;
@@ -13472,7 +14709,7 @@ class SpreadsheetApp {
                 const extraAttributes = [];
 
                 const rawValue = cellData.value ?? '';
-                const commentInfo = this.normalizeCommentData(cellData.comment);
+                const commentInfo = this.ensureCommentIds(coordKey, this.normalizeCommentData(cellData.comment));
                 const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
                 if (hasRawValue) {
                     datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
@@ -13487,19 +14724,41 @@ class SpreadsheetApp {
                     if (commentInfo.author) {
                         datasets.push(`data-comment-author="${escapeAttribute(commentInfo.author)}"`);
                     }
+                    if (commentInfo.authorId) {
+                        datasets.push(`data-comment-author-id="${escapeAttribute(commentInfo.authorId)}"`);
+                    }
                     if (Number.isFinite(commentInfo.at)) {
                         datasets.push(`data-comment-at="${commentInfo.at}"`);
                     }
                     if (commentInfo.avatar) {
                         datasets.push(`data-comment-avatar="${escapeAttribute(commentInfo.avatar)}"`);
                     }
+                    if (commentInfo.profileUrl) {
+                        datasets.push(`data-comment-profile="${escapeAttribute(commentInfo.profileUrl)}"`);
+                    }
+                    if (commentInfo.anonymousReason) {
+                        datasets.push(`data-comment-anon-reason="${escapeAttribute(commentInfo.anonymousReason)}"`);
+                    }
+                    if (commentInfo.id) {
+                        datasets.push(`data-comment-id="${escapeAttribute(commentInfo.id)}"`);
+                    }
+                    if (Array.isArray(commentInfo.replies) && commentInfo.replies.length) {
+                        const serializedReplies = JSON.stringify(commentInfo.replies);
+                        datasets.push(`data-comment-replies="${escapeAttribute(serializedReplies)}"`);
+                    }
+                    if (Array.isArray(commentInfo.reactions) && commentInfo.reactions.length) {
+                        datasets.push(`data-comment-reactions="${escapeAttribute(JSON.stringify(commentInfo.reactions))}"`);
+                    }
                     commentEntries.push({
                         coord: coordKey,
                         address: this.getCellAddress(row, col),
                         comment: commentInfo.text,
                         author: commentInfo.author || '',
+                        profileUrl: commentInfo.profileUrl || '',
                         avatar: commentInfo.avatar || '',
-                        at: commentInfo.at
+                        at: commentInfo.at,
+                        reactions: Array.isArray(commentInfo.reactions) ? commentInfo.reactions.map(r => ({ emoji: r.emoji, users: Array.isArray(r.users) ? r.users.slice() : [] })) : [],
+                        replies: Array.isArray(commentInfo.replies) ? commentInfo.replies.map(reply => this.cloneCommentEntry(reply)).filter(Boolean) : []
                     });
                 }
 
@@ -13572,6 +14831,7 @@ class SpreadsheetApp {
                 }
 
                 let cellContent = escapeHTML(displayText);
+                const safeCoordId = coordKey.replace(/,/g, '-');
                 if (!cellContent && cellData.linkUrl) {
                     cellContent = escapeHTML(cellData.linkUrl);
                 }
@@ -13580,7 +14840,42 @@ class SpreadsheetApp {
                     cellContent = `<a href="${href}">${cellContent}</a>`;
                 }
                 if (commentInfo?.text) {
-                    cellContent += '<span class="comment-flag" aria-label="Comment">💬</span>';
+                    const popoverId = `comment-popover-${safeCoordId}`;
+                    const anchorId = `comment-anchor-${safeCoordId}`;
+                    const authorLabel = escapeHTML(commentInfo.author || 'Anonymous');
+                    const timestampLabel = commentInfo.at ? escapeHTML(this.formatCommentTimestamp(commentInfo.at)) : '';
+                    const avatarSrc = escapeAttribute(commentInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData());
+                    const summaryPartsArr = [
+                        commentInfo.author ? `by ${commentInfo.author}` : '',
+                        timestampLabel,
+                        commentInfo.text
+                    ];
+                    const replyCount = Array.isArray(commentInfo.replies) ? commentInfo.replies.filter(entry => entry?.text).length : 0;
+                    if (replyCount) summaryPartsArr.push(`${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}`);
+                    const summaryParts = summaryPartsArr.filter(Boolean).join(' • ');
+                    const authorMarkup = commentInfo.profileUrl
+                        ? `<a href="${escapeAttribute(commentInfo.profileUrl)}">${authorLabel}</a>`
+                        : authorLabel;
+                    const reactionsHtml = this.renderReactionChips(commentInfo, { readOnly: true, allowAdd: false });
+                    const repliesHtml = Array.isArray(commentInfo.replies)
+                        ? commentInfo.replies.filter(entry => entry?.text).map(reply => this.renderReplyHTML(reply, { readOnly: true, allowAddReactions: false, highlightId: null })).join('')
+                        : '';
+                    const popoverContent = [
+                        '<div class="comment-popover__meta">',
+                        `  <img class="comment-popover__avatar" src="${avatarSrc}" alt="${escapeAttribute(commentInfo.author ? `${commentInfo.author} avatar` : 'Comment author avatar')}">`,
+                        '  <div class="comment-popover__meta-text">',
+                        `    <div class="comment-popover__author">${authorMarkup}</div>`,
+                        `    <div class="comment-popover__timestamp">${timestampLabel}</div>`,
+                        '  </div>',
+                        '</div>',
+                        `<div class="comment-popover__body">${this.renderCommentWithMentions(commentInfo.text)}</div>`,
+                        reactionsHtml ? `<div class="comment-reactions">${reactionsHtml}</div>` : '',
+                        repliesHtml ? `<div class="comment-popover__thread">${repliesHtml}</div>` : ''
+                    ].filter(Boolean).join('');
+                    cellContent += [
+                        `<button id="${anchorId}" type="button" class="comment-flag" popovertarget="${popoverId}" popovertargetaction="toggle" aria-label="View comment" title="${escapeAttribute(summaryParts)}">💬</button>`,
+                        `<div id="${popoverId}" class="comment-popover comment-popover--static" popover="auto" anchor="${anchorId}">${popoverContent}</div>`
+                    ].join('');
                 }
 
                 const styleAttr = styles.filter(Boolean).length ? ` style="${styles.join(';')}"` : '';
@@ -13611,11 +14906,48 @@ class SpreadsheetApp {
                 rows.push('                                <div class="comment-export__meta">');
                 rows.push(`                                    <img class="comment-export__avatar" src="${escapeAttribute(avatarSrc)}" alt="${escapeAttribute(author ? `${author} avatar` : 'Comment author avatar')}">`);
                 rows.push('                                    <div class="comment-export__meta-text">');
-                rows.push(`                                        <div class="comment-export__author">${escapeHTML(author)}</div>`);
+                if (entry.profileUrl) {
+                    rows.push(`                                        <div class="comment-export__author"><a href="${escapeAttribute(entry.profileUrl)}">${escapeHTML(author)}</a></div>`);
+                } else {
+                    rows.push(`                                        <div class="comment-export__author">${escapeHTML(author)}</div>`);
+                }
                 rows.push(`                                        <div class="comment-export__timestamp">${escapeHTML(timestampLabel || 'Time unknown')}</div>`);
                 rows.push('                                    </div>');
                 rows.push('                                </div>');
-                rows.push(`                                <div class="comment-export__body">${escapeHTML(entry.comment)}</div>`);
+                rows.push(`                                <div class="comment-export__body">${this.renderCommentWithMentions(entry.comment)}</div>`);
+                if (Array.isArray(entry.reactions) && entry.reactions.length) {
+                    const reactionBadges = this.renderReactionChips({ reactions: entry.reactions }, { readOnly: true, allowAdd: false });
+                    if (reactionBadges) {
+                        rows.push(`                                <div class="comment-export__reactions comment-reactions">${reactionBadges}</div>`);
+                    }
+                }
+                if (Array.isArray(entry.replies) && entry.replies.length) {
+                    rows.push('                                <ul class="comment-export__replies">');
+                    entry.replies.forEach(reply => {
+                        const replyAuthor = reply.author || 'Anonymous';
+                        const replyTimestamp = reply.at ? this.formatCommentTimestamp(reply.at) : '';
+                        const replyAuthorMarkup = reply.profileUrl
+                            ? `<a href="${escapeAttribute(reply.profileUrl)}">${escapeHTML(replyAuthor)}</a>`
+                            : escapeHTML(replyAuthor);
+                        const replyReactions = Array.isArray(reply.reactions) ? reply.reactions : [];
+                        const replyReactionHtml = replyReactions.length
+                            ? this.renderReactionChips({ reactions: replyReactions }, { readOnly: true, allowAdd: false, target: reply.id || 'root' })
+                            : '';
+                        rows.push('                                    <li class="comment-export__reply">');
+                        rows.push('                                        <div class="comment-export__reply-meta">');
+                        rows.push(`                                            <span class="comment-export__author">${replyAuthorMarkup}</span>`);
+                        if (replyTimestamp) {
+                            rows.push(`                                            <span class="comment-export__timestamp">${escapeHTML(replyTimestamp)}</span>`);
+                        }
+                        rows.push('                                        </div>');
+                        rows.push(`                                        <div class="comment-export__body">${this.renderCommentWithMentions(reply.text || '')}</div>`);
+                        if (replyReactionHtml) {
+                            rows.push(`                                        <div class="comment-export__reactions comment-reactions">${replyReactionHtml}</div>`);
+                        }
+                        rows.push('                                    </li>');
+                    });
+                    rows.push('                                </ul>');
+                }
                 rows.push('                            </li>');
             });
             rows.push('                        </ol>');
