@@ -734,7 +734,6 @@ class SpreadsheetApp {
             }
         ];
         this.formulaFunctionsMap = new Map(this.formulaFunctions.map(fn => [fn.name, fn]));
-        this.formulaFunctionOps = Object.fromEntries(this.formulaFunctions.map(fn => [fn.name, fn.evaluate]));
 
         this.formulaSuggestionsPanel = document.getElementById('formulaSuggestions');
         this.formulaSuggestionState = this.createDefaultFormulaSuggestionState();
@@ -12492,8 +12491,6 @@ class SpreadsheetApp {
     replaceFunctions(expr, context = {}) {
         if (!expr || typeof expr !== 'string') return expr;
         
-        const ops = this.formulaFunctionOps || {};
-        
         let result = '';
         let index = 0;
         const length = expr.length;
@@ -12516,8 +12513,7 @@ class SpreadsheetApp {
                     const { content, endIndex } = this.extractParenthesizedContent(expr, lookAhead);
                     
                     if (endIndex !== -1) {
-                        const fnKey = fnName.toUpperCase();
-                        const op = ops[fnKey];
+                        const op = this.formulaFunctionsMap.get(fnName.toUpperCase())?.evaluate;
                         if (typeof op === 'function') {
                             const args = this.splitFunctionArguments(content);
                             const collectedValues = [];
