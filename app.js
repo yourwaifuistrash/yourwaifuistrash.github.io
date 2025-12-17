@@ -749,8 +749,7 @@ class SpreadsheetApp {
         this.initializeTheme();
         this.generateHeaders();
         this.generateInitialGrid();
-        this.setupColorPalette();
-        this.setupFontColorPalette();
+        this.refreshPalettes();
         this.updateUndoRedoButtons();
         this.updateZoomDisplay();
         this.log('Spreadsheet initialized');
@@ -10662,9 +10661,13 @@ class SpreadsheetApp {
     getFontColorsInUse() { return this._getColorsInUse('fontColor'); }
     getBorderColorsInUse() { return this._getColorsInUse('borders'); }
     
-    refreshPalettes() {
-        this.setupColorPalette();
-        this.setupFontColorPalette();
+    refreshPalettes(type) {
+        if (!type || type === 'background') {
+            this.setupColorPalette();
+        }
+        if (!type || type === 'font') {
+            this.setupFontColorPalette();
+        }
     }
 
     _applyColor(prop, styleProp, color, updateFn) {
@@ -10722,7 +10725,7 @@ class SpreadsheetApp {
 
     applyBackgroundColor(c) { 
         this._applyColor('backgroundColor', 'backgroundColor', c, this.updateBackgroundColorButton); 
-        this.setupColorPalette();
+        this.refreshPalettes('background');
     }
     applyFontColor(c) { 
         // If we're editing, try inline color first to keep the caret position
@@ -10735,7 +10738,7 @@ class SpreadsheetApp {
             }
         }
         this._applyColor('fontColor', 'color', c, this.updateFontColorButton); 
-        this.setupFontColorPalette();
+        this.refreshPalettes('font');
     }
     
     _getCommonCellProperty(property) {
