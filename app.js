@@ -684,55 +684,7 @@ class SpreadsheetApp {
             awaitingCtrlRelease: false
         };
 
-        this.formulaFunctions = [
-            {
-                name: 'SUM',
-                signature: 'SUM(value1, [value2, ...])',
-                parameters: ['value1', '[value2, ...]'],
-                description: 'Adds all of the numbers in a range of cells.',
-                evaluate: values => values.reduce((total, value) => total + value, 0)
-            },
-            {
-                name: 'AVG',
-                signature: 'AVG(value1, [value2, ...])',
-                parameters: ['value1', '[value2, ...]'],
-                description: 'Returns the average of its arguments.',
-                evaluate: values => values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0
-            },
-            {
-                name: 'COUNT',
-                signature: 'COUNT(value1, [value2, ...])',
-                parameters: ['value1', '[value2, ...]'],
-                description: 'Counts how many numbers are in the list of arguments.',
-                evaluate: values => values.length
-            },
-            {
-                name: 'MIN',
-                signature: 'MIN(value1, [value2, ...])',
-                parameters: ['value1', '[value2, ...]'],
-                description: 'Returns the smallest number in a set of values.',
-                evaluate: values => values.length ? Math.min(...values) : 0
-            },
-            {
-                name: 'MAX',
-                signature: 'MAX(value1, [value2, ...])',
-                parameters: ['value1', '[value2, ...]'],
-                description: 'Returns the largest number in a set of values.',
-                evaluate: values => values.length ? Math.max(...values) : 0
-            },
-            {
-                name: 'MEDIAN',
-                signature: 'MEDIAN(value1, [value2, ...])',
-                parameters: ['value1', '[value2, ...]'],
-                description: 'Returns the median (middle value) of the given numbers.',
-                evaluate: values => {
-                    if (!values.length) return 0;
-                    const sorted = [...values].sort((a, b) => a - b);
-                    const mid = sorted.length >> 1;
-                    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-                }
-            }
-        ];
+        this.formulaFunctions = this.createFormulaFunctions();
         this.formulaFunctionsMap = new Map(this.formulaFunctions.map(fn => [fn.name, fn]));
 
         this.formulaSuggestionsPanel = document.getElementById('formulaSuggestions');
@@ -12199,6 +12151,30 @@ class SpreadsheetApp {
     applyActiveSuggestion() {
         if (this.formulaSuggestionState.activeIndex < 0) return;
         this.applyFormulaSuggestion(this.formulaSuggestionState.activeIndex);
+    }
+
+    createFormulaFunctions() {
+        const params = ['value1', '[value2, ...]'];
+        const defs = [
+            ['SUM', 'Adds all of the numbers in a range of cells.', values => values.reduce((total, value) => total + value, 0)],
+            ['AVG', 'Returns the average of its arguments.', values => values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0],
+            ['COUNT', 'Counts how many numbers are in the list of arguments.', values => values.length],
+            ['MIN', 'Returns the smallest number in a set of values.', values => values.length ? Math.min(...values) : 0],
+            ['MAX', 'Returns the largest number in a set of values.', values => values.length ? Math.max(...values) : 0],
+            ['MEDIAN', 'Returns the median (middle value) of the given numbers.', values => {
+                if (!values.length) return 0;
+                const sorted = [...values].sort((a, b) => a - b);
+                const mid = sorted.length >> 1;
+                return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            }]
+        ];
+        return defs.map(([name, description, evaluate]) => ({
+            name,
+            signature: `${name}(value1, [value2, ...])`,
+            parameters: params,
+            description,
+            evaluate
+        }));
     }
 
     createDefaultFormulaSuggestionState() {
