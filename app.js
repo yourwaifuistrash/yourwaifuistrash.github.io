@@ -560,7 +560,6 @@ class SpreadsheetApp {
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
         this.defaultCellStyle = {};
-        this.defaultAutoRowHeight = this.config?.cellHeight || 32;
         this.rowDefaultHeightOverrides = new Map();
         this.initialAutoRowHeights = new Map();
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
