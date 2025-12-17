@@ -3763,42 +3763,37 @@ class SpreadsheetApp {
         this.scheduleDirtyStateUpdate();
     }
 
-    undo() {
-        if (!this.undoStack.length) return;
-        this.redoStack.push({
-            cellData: this.cloneCellData(this.cellData),
-            mergedCells: this.cloneMergedCellsState(),
-            timestamp: Date.now()
-        });
-        const previous = this.undoStack.pop();
-        this.cellData = this.cloneCellData(previous?.cellData);
-        this.applyMergedCellsSnapshot(previous?.mergedCells);
+    performHistoryOperation(sourceStackName, targetStackName) {
+        const source = this[sourceStackName];
+        if (!Array.isArray(source) || !source.length) return;
+
+        const target = this[targetStackName];
+        if (Array.isArray(target)) {
+            target.push({
+                cellData: this.cloneCellData(this.cellData),
+                mergedCells: this.cloneMergedCellsState(),
+                timestamp: Date.now()
+            });
+        }
+
+        const snapshot = source.pop();
+        if (!snapshot) return;
+
+        this.cellData = this.cloneCellData(snapshot.cellData);
+        this.applyMergedCellsSnapshot(snapshot.mergedCells);
         this.recalculateAutoRowHeights();
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
-        
-        // Refresh both color palettes to update "colors in use"
         this.refreshPalettes();
         this.updateDirtyState();
     }
 
+    undo() {
+        this.performHistoryOperation('undoStack', 'redoStack');
+    }
+
     redo() {
-        if (!this.redoStack.length) return;
-        this.undoStack.push({
-            cellData: this.cloneCellData(this.cellData),
-            mergedCells: this.cloneMergedCellsState(),
-            timestamp: Date.now()
-        });
-        const next = this.redoStack.pop();
-        this.cellData = this.cloneCellData(next?.cellData);
-        this.applyMergedCellsSnapshot(next?.mergedCells);
-        this.recalculateAutoRowHeights();
-        this.refreshAllVisibleCells();
-        this.updateUndoRedoButtons();
-        
-        // Refresh both color palettes to update "colors in use"
-        this.refreshPalettes();
-        this.updateDirtyState();
+        this.performHistoryOperation('redoStack', 'undoStack');
     }
 
     updateUndoRedoButtons() {
