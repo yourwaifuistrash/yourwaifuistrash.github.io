@@ -597,21 +597,24 @@ class SpreadsheetApp {
         this.linkEditor = document.getElementById('linkEditor');
         this.borderMenu = document.getElementById('borderMenu');
         this.commentPopover = document.getElementById('cellCommentPopover');
-        this.commentPopoverText = document.getElementById('cellCommentText');
-        this.commentPopoverAuthor = document.getElementById('cellCommentAuthor');
-        this.commentPopoverTime = document.getElementById('cellCommentTime');
-        this.commentPopoverAvatar = document.getElementById('cellCommentAvatar');
-        this.commentPopoverCommand = document.getElementById('commentPopoverCommand');
-        this.codebergProfileContainer = document.getElementById('codebergProfile');
-        this.codebergAvatarImg = document.getElementById('codebergAvatarImg');
-        this.codebergAvatarInitials = document.getElementById('codebergAvatarInitials');
-        this.codebergProfileBadge = document.getElementById('codebergProfileBadge');
-        this.codebergOrgAvatar = document.getElementById('codebergOrgAvatar');
-        this.codebergOrgAvatarImg = document.getElementById('codebergOrgAvatarImg');
-        this.codebergOrgAvatarInitials = document.getElementById('codebergOrgAvatarInitials');
-        this.codebergProfileName = document.getElementById('codebergProfileName');
-        this.codebergProfileHint = document.getElementById('codebergProfileHint');
-        this.codebergProfileMeta = document.getElementById('codebergProfileMeta');
+        const $ = (id) => document.getElementById(id);
+        Object.assign(this, {
+            commentPopoverText: $('cellCommentText'),
+            commentPopoverAuthor: $('cellCommentAuthor'),
+            commentPopoverTime: $('cellCommentTime'),
+            commentPopoverAvatar: $('cellCommentAvatar'),
+            commentPopoverCommand: $('commentPopoverCommand'),
+            codebergProfileContainer: $('codebergProfile'),
+            codebergAvatarImg: $('codebergAvatarImg'),
+            codebergAvatarInitials: $('codebergAvatarInitials'),
+            codebergProfileBadge: $('codebergProfileBadge'),
+            codebergOrgAvatar: $('codebergOrgAvatar'),
+            codebergOrgAvatarImg: $('codebergOrgAvatarImg'),
+            codebergOrgAvatarInitials: $('codebergOrgAvatarInitials'),
+            codebergProfileName: $('codebergProfileName'),
+            codebergProfileHint: $('codebergProfileHint'),
+            codebergProfileMeta: $('codebergProfileMeta')
+        });
         if (this.codebergProfileMeta) {
             this.codebergProfileMeta.style.display = 'none';
         }
