@@ -493,11 +493,7 @@ class SpreadsheetApp {
         this.isFontSizeEditing = false;
         this.isPaletteFieldEditing = false;
         this.pendingEditorRefocus = false;
-        this.currentEditorSelection = null;
-        this.editorSelectionListener = null;
         this.editorBlurTimeout = null;
-        this.pendingFormattingInteraction = null;
-        this.activeFormattingInteraction = null;
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells = new Set();
         this.renderedCellCoords = new Set();
