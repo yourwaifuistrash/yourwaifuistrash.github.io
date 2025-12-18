@@ -1071,6 +1071,7 @@ body { margin: 0; padding: 0; }
 .comment-popover__title {
   font-weight: var(--font-weight-semibold);
   font-size: var(--font-size-base);
+  color: var(--color-text, #111);
 }
 
 .comment-popover__body {
@@ -1203,14 +1204,17 @@ body { margin: 0; padding: 0; }
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm, 6px);
   box-shadow: var(--shadow-lg);
-  display: flex;
+  display: none;
   flex-direction: column;
   min-width: 140px;
-  z-index: 5;
+  z-index: 2000;
 }
 
 .comment-menu.hidden {
   display: none;
+}
+.comment-menu.open {
+  display: flex;
 }
 
 .comment-menu button {
@@ -1224,6 +1228,15 @@ body { margin: 0; padding: 0; }
 
 .comment-menu button:hover {
   background: rgba(33, 128, 141, 0.08);
+}
+
+:root[data-theme='dark'] .comment-menu {
+  background: var(--color-surface-strong, #1f1f1f);
+  border-color: var(--color-border, #444);
+}
+
+:root[data-theme='dark'] .comment-menu button:hover {
+  background: rgba(33, 128, 141, 0.18);
 }
 
 .comment-card__body {
@@ -1257,6 +1270,7 @@ body { margin: 0; padding: 0; }
   border-radius: var(--radius-sm, 6px);
   padding: var(--space-8);
   background: var(--color-surface-alt);
+  color: var(--color-text);
 }
 
 .comment-reply--highlight {
@@ -1281,6 +1295,31 @@ body { margin: 0; padding: 0; }
 
 .comment-reply__timestamp {
   color: var(--color-text-secondary);
+}
+
+:root[data-theme='dark'] .comment-reply {
+  background: var(--color-surface-strong, #1f1f1f);
+  border-color: var(--color-border, #444);
+  color: var(--color-text, #f5f5f5);
+}
+
+:root[data-theme='dark'] .comment-reply__meta,
+:root[data-theme='dark'] .comment-reply__timestamp {
+  color: var(--color-text-secondary, #bbb);
+}
+
+:root[data-theme='dark'] .comment-reply .comment-body {
+  color: var(--color-text, #f5f5f5);
+}
+
+:root[data-theme='dark'] .comment-reply {
+  background: var(--color-surface-strong, #1f1f1f);
+  border-color: var(--color-border, #444);
+}
+
+:root[data-theme='dark'] .comment-reply__meta,
+:root[data-theme='dark'] .comment-reply__timestamp {
+  color: var(--color-text-secondary, #bbb);
 }
 
 .comment-reactions {

@@ -883,7 +883,8 @@ class SpreadsheetApp {
             const editBtn = rootMenu.querySelector('[data-comment-action="edit"]');
             const deleteBtn = rootMenu.querySelector('[data-comment-action="delete"]');
             const copyBtn = rootMenu.querySelector('[data-comment-action="copy-link"]');
-            rootMenu.classList.toggle('hidden', true);
+            rootMenu.classList.add('hidden');
+            rootMenu.classList.remove('open');
             if (editBtn) editBtn.disabled = !canEditRoot;
             if (deleteBtn) deleteBtn.disabled = !canEditRoot || !hasCommentBody;
             if (copyBtn) copyBtn.disabled = !hasCommentBody;
@@ -891,6 +892,7 @@ class SpreadsheetApp {
         if (this.commentPopover) {
             this.commentPopover.querySelectorAll('.comment-menu').forEach(menu => {
                 menu.classList.add('hidden');
+                menu.classList.remove('open');
             });
         }
 
@@ -947,12 +949,21 @@ class SpreadsheetApp {
             }
         }
 
+        const replyHydrateKey = `reply-${coord}`;
         if (this.commentReplyTextarea) {
-            this.commentReplyTextarea.value = '';
+            const hydratedFor = this.commentReplyTextarea.dataset.hydratedFor;
+            if (hydratedFor !== replyHydrateKey) {
+                this.commentReplyTextarea.value = '';
+                this.commentReplyTextarea.dataset.hydratedFor = replyHydrateKey;
+            }
         }
         if (this.commentReplyAnonymous) {
-            this.commentReplyAnonymous.checked = false;
-            this.commentReplyAnonymous.disabled = false;
+            const hydratedFor = this.commentReplyAnonymous.dataset.hydratedFor;
+            if (hydratedFor !== replyHydrateKey) {
+                this.commentReplyAnonymous.checked = false;
+                this.commentReplyAnonymous.disabled = false;
+                this.commentReplyAnonymous.dataset.hydratedFor = replyHydrateKey;
+            }
         }
         if (this.commentReplyComposer) {
             this.commentReplyComposer.classList.toggle('hidden', !(hasCommentBody && !editingRoot));
@@ -3698,7 +3709,14 @@ class SpreadsheetApp {
             const info = this.normalizeCommentData(value);
             if (!info?.text) return '∅';
             const meta = [];
-            if (info.author) meta.push(info.author);
+            const isAnonymous = info.anonymous || (!info.authorId && (info.author || '').toLowerCase() === 'anonymous');
+            if (isAnonymous) {
+                meta.push('anonymous');
+            } else if (info.authorId) {
+                meta.push(`user:${info.authorId}`);
+            } else if (info.author) {
+                meta.push(info.author);
+            }
             const replyTexts = Array.isArray(info.replies)
                 ? info.replies.filter(entry => entry?.text).map(entry => entry.text)
                 : [];
@@ -4095,13 +4113,12 @@ class SpreadsheetApp {
         const isEditing = !readOnly && this.activeCommentEditTarget === replyInfo.id;
         const bodyClass = isEditing ? 'comment-body hidden' : 'comment-body';
         const bodyDisplay = `<div class="${bodyClass}" data-reply-body="${escapeAttribute(replyInfo.id || '')}">${this.renderCommentRichText(replyInfo.text || '')}</div>`;
-        const forceAnonymous = !this.currentUserLogin;
-        const replyAnonChecked = replyInfo.anonymous || forceAnonymous;
+        const replyAnonChecked = Boolean(replyInfo.anonymous);
         const editor = `
             <div class="comment-editor-inline ${isEditing ? '' : 'hidden'}" data-reply-editor="${escapeAttribute(replyInfo.id || '')}">
                 <textarea class="form-control" rows="3" data-reply-textarea="${escapeAttribute(replyInfo.id || '')}">${escapeHTML(replyInfo.text || '')}</textarea>
                 <label class="comment-editor__checkbox">
-                    <input type="checkbox" data-reply-anon="${escapeAttribute(replyInfo.id || '')}" ${replyAnonChecked ? 'checked' : ''} ${forceAnonymous ? 'disabled' : ''}>
+                    <input type="checkbox" data-reply-anon="${escapeAttribute(replyInfo.id || '')}" ${replyAnonChecked ? 'checked' : ''}>
                     <span>Anonymous comment</span>
                 </label>
                 <div class="comment-editor__actions">
@@ -9273,19 +9290,64 @@ class SpreadsheetApp {
         this.addReplyFromComposer();
     }
 
-    handleCommentPopoverClick(event) {
-        if (!event || !(event.target instanceof HTMLElement)) return;
-        const menuToggle = event.target.closest('.comment-menu__toggle');
-        if (menuToggle) {
-            const target = menuToggle.dataset.commentTarget || 'root';
-            const menu = this.commentPopover?.querySelector(`[data-comment-menu="${CSS.escape(target)}"]`);
-            if (menu) {
-                const isHidden = menu.classList.contains('hidden');
-                this.commentPopover?.querySelectorAll('.comment-menu').forEach(m => m.classList.add('hidden'));
-                if (isHidden) {
-                    menu.classList.remove('hidden');
-                }
+    toggleCommentMenu(target = 'root') {
+        if (!this.commentPopover) return;
+        const normalizedTarget = `${target}`.trim();
+        const menus = Array.from(this.commentPopover.querySelectorAll('.comment-menu'));
+        let menu = null;
+        if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            menu = this.commentPopover.querySelector(`[data-comment-menu="${CSS.escape(normalizedTarget)}"]`);
+        }
+        if (!menu) {
+            menu = menus.find(m => (m.dataset.commentMenu || '') === `${normalizedTarget}`);
+        }
+        if (!menu && typeof normalizedTarget === 'string') {
+            menu = menus.find(m => m.getAttribute('data-comment-menu') === normalizedTarget);
+        }
+        if (!menu) {
+            // Fallback: look near the toggle to avoid selector mismatch
+            const localToggle = this.commentPopover.querySelector(`.comment-menu__toggle[data-comment-target="${normalizedTarget}"]`);
+            menu = localToggle?.parentElement?.querySelector('.comment-menu') || menu;
+        }
+        if (!menu) {
+            const available = menus.map(m => m.dataset.commentMenu || m.getAttribute('data-comment-menu'));
+            console.log('[comments] menu not found for toggle', normalizedTarget, 'available:', available);
+            return;
+        }
+        const isOpen = menu.classList.contains('open');
+        menus.forEach(m => {
+            if (m !== menu) {
+                m.classList.add('hidden');
+                m.classList.remove('open');
             }
+        });
+        if (isOpen) {
+            menu.classList.add('hidden');
+            menu.classList.remove('open');
+            console.log('[comments] closed menu for', target);
+            return;
+        }
+        menu.classList.remove('hidden');
+        menu.classList.add('open');
+        console.log('[comments] opened menu for', target);
+    }
+
+    handleCommentPopoverClick(event) {
+        if (!event) return;
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        if (!targetEl) return;
+        console.log('[comments] popover click', {
+            target: targetEl.className || targetEl.nodeName,
+            dataset: targetEl.dataset || {}
+        });
+        const menuToggle = targetEl.closest('.comment-menu__toggle');
+        if (menuToggle) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+            const target = (menuToggle.dataset.commentTarget || 'root').trim();
+            console.log('[comments] menu toggle clicked', target, menuToggle.dataset || {});
+            this.toggleCommentMenu(target);
             return;
         }
 
@@ -9314,6 +9376,12 @@ class SpreadsheetApp {
         if (actionBtn) {
             const action = actionBtn.dataset.commentAction;
             const target = actionBtn.dataset.commentTarget || 'root';
+            if (action === 'add-reply') {
+                console.debug('[comments] Reply button clicked', {
+                    text: this.commentReplyTextarea?.value,
+                    anonymous: this.commentReplyAnonymous?.checked
+                });
+            }
             this.handleCommentAction(action, target);
             return;
         }
@@ -9383,9 +9451,14 @@ class SpreadsheetApp {
         }
         const isLoggedIn = Boolean(this.currentUserLogin);
         const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
+        const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
         const anonymousOptIn = Boolean(this.commentMainAnonymous?.checked);
-        const anonymousSelection = anonymousOptIn || !isLoggedIn;
-        const author = anonymousSelection ? 'Anonymous' : (this.currentUserLogin || baseComment.author || authorFallback || 'Anonymous');
+        const anonymousSelection = anonymousOptIn;
+        const priorAuthor = `${baseComment.author || ''}`.trim();
+        const nonAnonAuthor = priorAuthor && priorAuthor.toLowerCase() !== 'anonymous' ? priorAuthor : '';
+        const author = anonymousSelection
+            ? 'Anonymous'
+            : (this.currentUserLogin || nonAnonAuthor || authorFallback || offlinePlaceholder || 'Anonymous');
         const authorId = anonymousSelection ? null : (this.currentUserLogin || baseComment.authorId || null);
         const profileUrl = authorId ? this.buildAccountProfileUrl(authorId) : '';
         const avatar = (!anonymousSelection ? (this.codebergAvatarImg?.src || baseComment.avatar) : baseComment.avatar) || this.getPlaceholderAvatarData();
@@ -9431,9 +9504,14 @@ class SpreadsheetApp {
         }
         const isLoggedIn = Boolean(this.currentUserLogin);
         const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
+        const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
         const anonymousOptIn = Boolean(anonToggle?.checked);
-        const anonymousSelection = anonymousOptIn || !isLoggedIn;
-        const author = anonymousSelection ? 'Anonymous' : (replyInfo.author || this.currentUserLogin || authorFallback || 'Anonymous');
+        const anonymousSelection = anonymousOptIn;
+        const priorAuthor = `${replyInfo.author || ''}`.trim();
+        const nonAnonAuthor = priorAuthor && priorAuthor.toLowerCase() !== 'anonymous' ? priorAuthor : '';
+        const author = anonymousSelection
+            ? 'Anonymous'
+            : (this.currentUserLogin || nonAnonAuthor || authorFallback || offlinePlaceholder || 'Anonymous');
         const authorId = anonymousSelection ? null : (replyInfo.authorId || this.currentUserLogin || null);
         const profileUrl = anonymousSelection ? '' : this.buildAccountProfileUrl(authorId);
         const avatar = replyInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
@@ -9497,13 +9575,28 @@ class SpreadsheetApp {
         const baseComment = this.ensureCommentIds(coord, this.normalizeCommentData(cellData.comment) || {});
         if (!baseComment?.text) return;
         const replyText = (this.commentReplyTextarea?.value || '').trim();
-        if (!replyText) return;
+        if (!replyText) {
+            console.warn('[comments] Empty reply ignored', { coord });
+            return;
+        }
 
         const isLoggedIn = Boolean(this.currentUserLogin);
         const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
+        const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
         const anonymousOptIn = this.commentReplyAnonymous?.checked;
         const anonymousSelection = anonymousOptIn || !isLoggedIn;
-        const author = anonymousSelection ? 'Anonymous' : (this.currentUserLogin || authorFallback || baseComment.author || 'Anonymous');
+        console.debug('[comments] Saving reply', {
+            coord,
+            text: replyText,
+            anonymous: anonymousSelection,
+            authorFallback,
+            loggedIn: isLoggedIn
+        });
+        const priorAuthor = `${baseComment.author || ''}`.trim();
+        const nonAnonAuthor = priorAuthor && priorAuthor.toLowerCase() !== 'anonymous' ? priorAuthor : '';
+        const author = anonymousSelection
+            ? 'Anonymous'
+            : (this.currentUserLogin || nonAnonAuthor || authorFallback || offlinePlaceholder || 'Anonymous');
         const authorId = anonymousSelection ? null : (this.currentUserLogin || baseComment.authorId || null);
         const profileUrl = anonymousSelection ? '' : this.buildAccountProfileUrl(authorId);
         const avatar = this.codebergAvatarImg?.src || baseComment.avatar || this.getPlaceholderAvatarData();
@@ -9524,7 +9617,7 @@ class SpreadsheetApp {
         });
 
         this.saveState('Reply to comment');
-        this.updateCellDataEntry(coord, data => {
+        const updated = this.updateCellDataEntry(coord, data => {
             const existingRaw = data.comment;
             const base = this.ensureCommentIds(coord, this.normalizeCommentData(existingRaw) || baseComment);
             if (!base) return;
@@ -9532,9 +9625,26 @@ class SpreadsheetApp {
             replies.push(replyEntry);
             base.replies = replies;
             data.comment = base;
+            return data;
         });
 
         if (this.commentReplyTextarea) this.commentReplyTextarea.value = '';
+        if (updated) {
+            const normalized = this.normalizeCommentData(updated.comment);
+            const repliesToRender = Array.isArray(normalized?.replies) ? normalized.replies.filter(r => r?.text) : [];
+            if (this.commentPopoverThread) {
+                if (repliesToRender.length) {
+                    this.commentPopoverThread.classList.remove('hidden');
+                    this.commentPopoverThread.innerHTML = this.renderRepliesHTML(repliesToRender, coord, {
+                        highlightId: this.highlightedReplyId,
+                        allowAddReactions: Boolean(this.currentUserLogin)
+                    });
+                } else {
+                    this.commentPopoverThread.classList.add('hidden');
+                    this.commentPopoverThread.innerHTML = '';
+                }
+            }
+        }
         this.refreshAllVisibleCells();
         this.updateCommentPopover();
         this.updateDirtyState();
