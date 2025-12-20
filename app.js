@@ -8063,7 +8063,8 @@ class SpreadsheetApp {
     }
 
     stopEditingCell(cancel = false) {
-        if (this.pendingEditorRefocus || this.isFormattingUIOpen()) {
+        // Always honor explicit cancels (e.g., Escape), even if a formatting UI is open
+        if (!cancel && (this.pendingEditorRefocus || this.isFormattingUIOpen())) {
             this.resumeEditingAfterToolbar();
             return;
         }
@@ -8073,11 +8074,17 @@ class SpreadsheetApp {
         this.isToolbarFormattingInteraction = false;
         const input = cell.querySelector('.cell-editor');
         const oldValue = cell.dataset.originalValue || '';
-
-        const { plainText, html: richHtml, hasRich } = cancel || !input
-            ? { plainText: oldValue, html: '', hasRich: false }
-            : this.serializeEditorContent(input);
-        const newValue = cancel ? oldValue : plainText;
+        const cellKey = this.getCoord(cell);
+        const { row, col } = this.getCellPos(cell);
+        const existingData = this.cellData.get(cellKey) || {};
+        const previousRichText = existingData.richText || '';
+        const baseFormatting = {
+            bold: !!existingData.bold,
+            italic: !!existingData.italic,
+            underline: !!existingData.underline,
+            strikethrough: !!existingData.strikethrough
+        };
+        const originalValue = existingData.value ?? oldValue;
 
         // Clear reference early to avoid re-entrancy leaving us with a null handle mid-cleanup
         this.currentEditingCell = null;
@@ -8090,17 +8097,19 @@ class SpreadsheetApp {
             return;
         }
 
-        const cellKey = this.getCoord(cell);
-        const { row, col } = this.getCellPos(cell);
-        const existingData = this.cellData.get(cellKey) || {};
-        const previousRichText = existingData.richText || '';
-        const baseFormatting = {
-            bold: !!existingData.bold,
-            italic: !!existingData.italic,
-            underline: !!existingData.underline,
-            strikethrough: !!existingData.strikethrough
-        };
-        let targetRichText = (!cancel && hasRich && !newValue.startsWith('=')) ? richHtml : '';
+        if (cancel) {
+            // Restore the previous display and styling without mutating stored data
+            cell.classList.remove('editing');
+            delete cell.dataset.originalValue;
+            this.formulaInput.value = originalValue || '';
+            this.updateCellDisplay(cell, existingData);
+            this.updateFormattingButtons();
+            return;
+        }
+
+        const { plainText, html: richHtml, hasRich } = this.serializeEditorContent(input);
+        const newValue = plainText;
+        let targetRichText = (hasRich && !newValue.startsWith('=')) ? richHtml : '';
         if (targetRichText && (baseFormatting.bold || baseFormatting.italic || baseFormatting.underline || baseFormatting.strikethrough)) {
             targetRichText = this.applyBaselineFormatting(targetRichText, baseFormatting);
         }
@@ -8114,7 +8123,7 @@ class SpreadsheetApp {
             // Formula - display result
             const result = this.parseFormula(newValue, row, col);
             cell.textContent = result;
-        } else if (!cancel && hasRich && richHtml) {
+        } else if (hasRich && richHtml) {
             cell.innerHTML = targetRichText || richHtml;
         } else {
             // Regular text
@@ -8124,7 +8133,7 @@ class SpreadsheetApp {
         cell.classList.remove('editing');
         delete cell.dataset.originalValue;
         
-        if (!cancel && (oldValue !== newValue || richChanged)) {
+        if (oldValue !== newValue || richChanged) {
             // Save state before making changes
             this.saveState(`Edit cell ${cell.dataset.address}`);
         }
