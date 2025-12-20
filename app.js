@@ -6529,6 +6529,9 @@ class SpreadsheetApp {
             cell.style[i === idx ? prop : i > idx && pos] = 
                 (i === idx ? sz : i > idx && getPos.call(this, i)) + 'px';
         });
+
+        // Keep merged cells in sync while resizing
+        this.updateMergedCellsForResize(idx, isCol);
     }
 
     updateGridSize() {
@@ -6583,6 +6586,29 @@ class SpreadsheetApp {
                     cell.classList.remove('merged-child');
                 }
             }
+        });
+    }
+
+    updateMergedCellsForResize(idx, isCol) {
+        if (!this.mergedCells || this.mergedCells.size === 0) return;
+        this.mergedCells.forEach((info, key) => {
+            const [row, col] = key.split(',').map(Number);
+            const affected = isCol
+                ? (col <= idx && idx < col + info.cols)
+                : (row <= idx && idx < row + info.rows);
+            if (!affected) return;
+            const cell = this.getCellAt(row, col);
+            if (!cell) return;
+
+            let totalWidth = 0;
+            let totalHeight = 0;
+            for (let c = 0; c < info.cols; c++) totalWidth += this.getColumnWidth(col + c);
+            for (let r = 0; r < info.rows; r++) totalHeight += this.getRowHeight(row + r);
+
+            cell.style.width = totalWidth + 'px';
+            cell.style.height = totalHeight + 'px';
+            cell.style.left = this.getColumnLeft(col) + 'px';
+            cell.style.top = this.getRowTop(row) + 'px';
         });
     }
     
