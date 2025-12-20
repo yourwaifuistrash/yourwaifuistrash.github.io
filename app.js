@@ -800,6 +800,12 @@ class SpreadsheetApp {
     updateCommentPopover() {
         if (!this.commentPopover) return;
 
+        // Hide popover while dragging a multi-cell selection so it does not obstruct selection
+        if (this.isDragging && this.selectedCellCoords.size > 1) {
+            this.hideCommentPopover();
+            return;
+        }
+
         if (!this.primaryCell) {
             if (this.commentReplyComposer) this.commentReplyComposer.classList.add('hidden');
             this.hideCommentPopover();
@@ -7009,6 +7015,15 @@ class SpreadsheetApp {
         const actualRow = this.getIndexAtCoordinate(y, this.getRowHeight, this.config.maxRows);
         console.log(`Mouse over: resolved=${String.fromCharCode(65+cellCol)}${cellRow+1}, actual=${String.fromCharCode(65+actualCol)}${actualRow+1}`);
 
+        const hideCommentIfMoved = (endCell) => {
+            if (!endCell || !this.commentPopover || this.commentPopover.classList.contains('hidden')) return;
+            const startCoord = this.dragStartCell ? this.getCoord(this.dragStartCell) : null;
+            const endCoord = this.getCoord(endCell);
+            if (startCoord && endCoord && startCoord !== endCoord) {
+                this.hideCommentPopover();
+            }
+        };
+
         if (this.isCtrlDragging) {
             // Handle Ctrl+drag: add cells to selection as user drags
             let endCell = cell;
@@ -7016,6 +7031,7 @@ class SpreadsheetApp {
                 const actualCell = this.getCellAt(actualRow, actualCol);
                 if (actualCell) endCell = actualCell;
             }
+            hideCommentIfMoved(endCell);
             const rangeCells = this.getCellsInRect(this.dragStartCell, endCell);
             rangeCells.forEach(c => {
                 if (!this.ctrlDragProcessedCells.has(c)) {
@@ -7030,6 +7046,7 @@ class SpreadsheetApp {
                 const actualCell = this.getCellAt(actualRow, actualCol);
                 if (actualCell) endCell = actualCell;
             }
+            hideCommentIfMoved(endCell);
             const rangeCells = this.getCellsInRect(this.dragStartCell, endCell);
             const expandedCells = this.expandSelectionForMergedCells(rangeCells);
             this.selectCells(expandedCells, true, this.dragStartCell);
