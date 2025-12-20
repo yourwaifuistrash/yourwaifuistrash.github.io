@@ -7999,6 +7999,7 @@ class SpreadsheetApp {
 
     updateEditorOverflow(cell, input) {
         const { row, col } = this.getCellPos(cell);
+        const mergedCols = Math.max(parseInt(cell?.dataset?.mergedCols || '1', 10), 1);
         const cellWidth = this.getEffectiveCellWidth(cell, col);
         const padding = 16; // matches the wrapper padding for left/right
         const availableWidth = Math.max(cellWidth - padding, 0);
@@ -8006,6 +8007,10 @@ class SpreadsheetApp {
         const wrapper = cell.querySelector('.cell-editor-wrapper');
         const textAlign = (input?.style?.textAlign || window.getComputedStyle(input).textAlign || 'left').toLowerCase();
         const maxOverflowCells = 10;
+
+        // Keep the editing backdrop in sync with the cell's background
+        const computedBg = window.getComputedStyle(cell).backgroundColor;
+        cell.style.setProperty('--cell-edit-background', computedBg || 'transparent');
         
         // Always set cell to allow overflow during editing
         cell.style.overflow = 'visible';
@@ -8029,32 +8034,51 @@ class SpreadsheetApp {
                 overflowWidth = totalWidth;
                 overflowOffset = cellWidth - overflowWidth;
             } else if (textAlign === 'center') {
-                let leftSpace = 0;
-                let rightSpace = 0;
+                // Expand evenly to the left/right using whole cells; never stop mid-cell
+                const leftWidths = [];
+                const rightWidths = [];
                 for (let c = col - 1, steps = 0; c >= 0 && steps < maxOverflowCells; c--, steps++) {
-                    leftSpace += this.getColumnWidth(c);
+                    leftWidths.push(this.getColumnWidth(c));
                 }
-                for (let c = col + 1, steps = 0; c < this.config.maxCols && steps < maxOverflowCells; c++, steps++) {
-                    rightSpace += this.getColumnWidth(c);
+                for (let c = col + mergedCols, steps = 0; c < this.config.maxCols && steps < maxOverflowCells; c++, steps++) {
+                    rightWidths.push(this.getColumnWidth(c));
                 }
-                const neededExtra = requiredWidth - cellWidth;
-                let extraLeft = Math.min(leftSpace, Math.ceil(neededExtra / 2));
-                let extraRight = Math.min(rightSpace, neededExtra - extraLeft);
-                const remaining = Math.max(0, neededExtra - (extraLeft + extraRight));
-                if (remaining > 0) {
-                    const leftRemaining = leftSpace - extraLeft;
-                    const rightRemaining = rightSpace - extraRight;
-                    if (leftRemaining >= rightRemaining) {
-                        extraLeft += Math.min(leftRemaining, remaining);
-                    } else {
-                        extraRight += Math.min(rightRemaining, remaining);
+
+                const overflowNeeded = Math.max(requiredWidth - cellWidth, 0);
+                const targetLeft = Math.ceil(overflowNeeded / 2);
+                const targetRight = Math.floor(overflowNeeded / 2);
+
+                let leftTotal = 0;
+                let rightTotal = 0;
+                let leftIdx = 0;
+                let rightIdx = 0;
+
+                while (leftIdx < leftWidths.length && leftTotal < targetLeft) {
+                    leftTotal += leftWidths[leftIdx++];
+                }
+                while (rightIdx < rightWidths.length && rightTotal < targetRight) {
+                    rightTotal += rightWidths[rightIdx++];
+                }
+
+                if (leftTotal < targetLeft) {
+                    const deficit = targetLeft - leftTotal;
+                    while (rightIdx < rightWidths.length && rightTotal < targetRight + deficit) {
+                        rightTotal += rightWidths[rightIdx++];
                     }
                 }
-                overflowWidth = cellWidth + extraLeft + extraRight;
-                overflowOffset = -extraLeft;
+
+                if (rightTotal < targetRight) {
+                    const deficit = targetRight - rightTotal;
+                    while (leftIdx < leftWidths.length && leftTotal < targetLeft + deficit) {
+                        leftTotal += leftWidths[leftIdx++];
+                    }
+                }
+
+                overflowWidth = cellWidth + leftTotal + rightTotal;
+                overflowOffset = -leftTotal;
             } else {
                 let totalWidth = cellWidth;
-                for (let c = col + 1, steps = 0; c < this.config.maxCols && steps < maxOverflowCells && totalWidth < requiredWidth; c++, steps++) {
+                for (let c = col + mergedCols, steps = 0; c < this.config.maxCols && steps < maxOverflowCells && totalWidth < requiredWidth; c++, steps++) {
                     totalWidth += this.getColumnWidth(c);
                 }
                 overflowWidth = totalWidth;
