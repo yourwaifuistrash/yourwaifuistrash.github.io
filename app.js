@@ -2876,22 +2876,26 @@ class SpreadsheetApp {
 
     applyPendingCommentAuthors() {
         if (!this.currentUserLogin) return false;
-        const displayName = this.codebergProfileName?.textContent?.trim() || this.currentUserLogin;
-        const profileUrl = this.buildAccountProfileUrl(this.currentUserLogin);
+        const username = `${this.currentUserLogin}`.trim();
+        if (!username) return false;
+        const profileUrl = this.buildAccountProfileUrl(username);
         const avatar = this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
         const updatedCoords = [];
 
         const promoteIfNeeded = (targetEntry, sourceInfo) => {
             if (!sourceInfo) return false;
-            if (sourceInfo.anonymousReason === 'opt-in') return false;
             if (sourceInfo.localOnly !== true) return false;
-            const isAnonymous = (sourceInfo.author || '').toLowerCase() === 'anonymous'
-                || sourceInfo.anonymousReason === 'unauthenticated'
-                || (sourceInfo.anonymous && !sourceInfo.authorId);
-            if (!isAnonymous) return false;
+            const reason = sourceInfo.anonymousReason;
+            if (reason === 'opt-in' || reason === 'unauthenticated') return false;
+            const currentAuthor = `${sourceInfo.author || ''}`.trim();
+            const currentAuthorId = `${sourceInfo.authorId || ''}`.trim();
+            const normalizedLogin = username.toLowerCase();
+            if (currentAuthor && currentAuthorId && currentAuthorId.toLowerCase() === normalizedLogin && currentAuthor.toLowerCase() === normalizedLogin) {
+                return false;
+            }
 
-            targetEntry.author = displayName;
-            targetEntry.authorId = this.currentUserLogin;
+            targetEntry.author = username;
+            targetEntry.authorId = username;
             targetEntry.profileUrl = profileUrl;
             targetEntry.avatar = targetEntry.avatar || avatar;
             targetEntry.at = targetEntry.at || sourceInfo.at || Date.now();
@@ -3249,6 +3253,7 @@ class SpreadsheetApp {
     async handlePullRequestOption(resumeFromOAuth = false) {
         this.setSaveModalBusy(true);
         try {
+            let artifacts = null;
             if (!resumeFromOAuth) {
                 this.updateSaveModalStatus('Gathering changes for pull request…');
                 if (sessionStorage.getItem('codeberg_oauth_in_progress') === 'true') {
@@ -3257,7 +3262,7 @@ class SpreadsheetApp {
                 }
             }
 
-            const artifacts = await this.gatherSaveArtifacts(); // Make sure this is awaited
+            artifacts = await this.gatherSaveArtifacts(); // Make sure this is awaited
             const repo = await this.resolveCodebergRepo();
             if (!repo) {
                 this.updateSaveModalStatus('Repository could not be detected. Use download to save your work.', true);
@@ -3273,6 +3278,14 @@ class SpreadsheetApp {
                 }
                 return;
             }
+
+            try {
+                await this.refreshCodebergProfileBadge();
+            } catch (error) {
+                console.warn('Failed to refresh Codeberg profile before pull request', error);
+            }
+
+            artifacts = await this.gatherSaveArtifacts();
 
             this.updateSaveModalStatus('Submitting pull request…');
             const prUrl = await this.submitPullRequest(repo, artifacts, token);
@@ -9659,8 +9672,8 @@ class SpreadsheetApp {
         const isLoggedIn = Boolean(this.currentUserLogin);
         const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
         const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
-        const anonymousOptIn = this.commentReplyAnonymous?.checked;
-        const anonymousSelection = anonymousOptIn || !isLoggedIn;
+        const anonymousOptIn = Boolean(this.commentReplyAnonymous?.checked);
+        const anonymousSelection = anonymousOptIn;
         console.debug('[comments] Saving reply', {
             coord,
             text: replyText,
@@ -14382,6 +14395,7 @@ class SpreadsheetApp {
         let hint = repoOwner || owner || 'Codeberg';
         let initialsSource = name;
         const tokenInfo = this.getStoredAccessToken();
+        const prevLogin = this.currentUserLogin;
 
         if (tokenInfo?.token) {
             try {
@@ -14392,6 +14406,10 @@ class SpreadsheetApp {
                     initialsSource = user.full_name || user.login || name;
                     userLogin = user.login || null;
                     this.currentUserLogin = userLogin;
+                    if (userLogin && prevLogin !== userLogin) {
+                        // refresh comments created while offline so the OAuth login shows as author
+                        this.applyPendingCommentAuthors();
+                    }
                     isLoggedIn = true;
                 }
             } catch (error) {
