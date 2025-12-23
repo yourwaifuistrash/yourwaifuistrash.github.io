@@ -682,6 +682,12 @@ class SpreadsheetApp {
             codebergProfileHint: $('codebergProfileHint'),
             codebergProfileMeta: $('codebergProfileMeta')
         });
+        this.commentMainAuthorState = {
+            author: this.getLocalAuthorPlaceholder(),
+            profileUrl: ''
+        };
+        this.commentMenuToggleIgnoreClick = null;
+        this.replyAnonDrafts = new Map();
         this.commentEditor = null;
         this.commentEditorTextarea = null;
         this.commentEditorAnonymous = null;
@@ -800,6 +806,11 @@ class SpreadsheetApp {
     updateCommentPopover() {
         if (!this.commentPopover) return;
 
+        const activeElement = document.activeElement;
+        const preserveFocusInfo = (activeElement && this.commentPopover.contains(activeElement))
+            ? this.captureCommentPopoverFocus(activeElement)
+            : null;
+
         // Hide popover while dragging a multi-cell selection so it does not obstruct selection
         if (this.isDragging && this.selectedCellCoords.size > 1) {
             this.hideCommentPopover();
@@ -827,7 +838,7 @@ class SpreadsheetApp {
         const isLoggedIn = Boolean(this.currentUserLogin);
         const defaultAuthor = isLoggedIn
             ? (this.currentUserLogin || this.codebergProfileName?.textContent?.trim() || 'Anonymous')
-            : 'Anonymous';
+            : this.getLocalAuthorPlaceholder();
         const baseComment = commentData && typeof commentData === 'object'
             ? this.cloneCommentEntry(commentData)
             : null;
@@ -836,7 +847,7 @@ class SpreadsheetApp {
             author: defaultAuthor,
             authorId: isLoggedIn ? this.currentUserLogin : null,
             profileUrl: isLoggedIn ? this.buildAccountProfileUrl(this.currentUserLogin) : '',
-            avatar: this.codebergAvatarImg?.src || this.getPlaceholderAvatarData(),
+            avatar: this.getActiveUserAvatar(),
             at: commentData?.at ?? null,
             anonymous: !isLoggedIn,
             anonymousReason: isLoggedIn ? null : 'unauthenticated',
@@ -851,25 +862,16 @@ class SpreadsheetApp {
                 data.comment = this.ensureCommentIds(coord, this.normalizeCommentData(data.comment) || hydratedComment);
             });
         }
+        const editingFallbackAuthor = this.currentUserLogin || this.getLocalAuthorPlaceholder();
         const author = hydratedComment.author || defaultAuthor;
-        const timestampLabel = hydratedComment.at ? this.formatCommentTimestamp(hydratedComment.at) : '';
+        const timestampDisplay = hydratedComment.at ? this.formatCommentTimestamp(hydratedComment.at) : '';
         const avatarSrc = this.getCommentAvatarSrc(hydratedComment);
-
-        if (this.commentMainAuthor) {
-            this.commentMainAuthor.textContent = '';
-            if (hydratedComment.profileUrl) {
-                const link = document.createElement('a');
-                link.href = hydratedComment.profileUrl;
-                link.textContent = author;
-                link.target = '_blank';
-                link.rel = 'noreferrer noopener';
-                this.commentMainAuthor.appendChild(link);
-            } else {
-                this.commentMainAuthor.textContent = author;
-            }
-        }
+        this.setCommentMainAuthorState(
+            editingRoot ? editingFallbackAuthor : author,
+            editingRoot && this.currentUserLogin ? this.buildAccountProfileUrl(this.currentUserLogin) : (hydratedComment.profileUrl || '')
+        );
         if (this.commentMainTime) {
-            this.commentMainTime.textContent = timestampLabel;
+            this.commentMainTime.textContent = timestampDisplay;
         }
         if (this.commentMainAvatar) {
             this.commentMainAvatar.src = avatarSrc;
@@ -929,6 +931,7 @@ class SpreadsheetApp {
                 this.commentMainAnonymous.disabled = false;
             }
         }
+        this.renderCommentMainAuthorLabel(editingRoot);
 
         if (this.commentMainReactions) {
             const reactionsHtml = hydratedComment.text
@@ -943,12 +946,27 @@ class SpreadsheetApp {
 
         if (this.commentPopoverThread) {
             const replies = Array.isArray(hydratedComment.replies) ? hydratedComment.replies.filter(entry => entry?.text) : [];
+            const repliesWithDrafts = replies.map(entry => {
+                const draft = this.replyAnonDrafts?.get(entry?.id);
+                if (!draft || typeof draft.anonymous !== 'boolean') return entry;
+                const override = { ...entry, anonymous: draft.anonymous };
+                if (draft.anonymous) {
+                    override.author = 'Anonymous';
+                    override.profileUrl = '';
+                } else {
+                    const resolved = this.resolveReplyAuthorForDisplay(entry);
+                    override.author = resolved.author;
+                    override.profileUrl = resolved.profileUrl;
+                }
+                override.edited = entry.edited;
+                return override;
+            });
             if (!replies.length) {
                 this.commentPopoverThread.innerHTML = '';
                 this.commentPopoverThread.classList.add('hidden');
             } else {
                 this.commentPopoverThread.classList.remove('hidden');
-                this.commentPopoverThread.innerHTML = this.renderRepliesHTML(replies, coord, {
+                this.commentPopoverThread.innerHTML = this.renderRepliesHTML(repliesWithDrafts, coord, {
                     highlightId: this.highlightedReplyId,
                     allowAddReactions: Boolean(this.currentUserLogin)
                 });
@@ -998,18 +1016,120 @@ class SpreadsheetApp {
         if (typeof this.commentPopover.showPopover === 'function') {
             try { this.commentPopover.showPopover(); } catch (error) { /* noop */ }
         }
+
+        if (preserveFocusInfo) {
+            this.restoreCommentPopoverFocus(preserveFocusInfo);
+        }
+    }
+
+    setCommentMainAuthorState(author, profileUrl) {
+        const resolvedAuthor = (() => {
+            const candidate = `${author || ''}`.trim();
+            if (candidate && candidate.toLowerCase() !== 'local preview' && candidate.toLowerCase() !== 'spreadsheet') {
+                return candidate;
+            }
+            return this.getLocalAuthorPlaceholder() || 'Anonymous';
+        })();
+        this.commentMainAuthorState = {
+            author: resolvedAuthor,
+            profileUrl: profileUrl ? String(profileUrl).trim() : ''
+        };
+    }
+
+    renderCommentMainAuthorLabel(editingRoot = false) {
+        if (!this.commentMainAuthor) return;
+        const showAnonymous = editingRoot && Boolean(this.commentMainAnonymous?.checked);
+        if (showAnonymous) {
+            this.commentMainAuthor.textContent = 'Anonymous';
+            return;
+        }
+        const state = this.commentMainAuthorState || {};
+        const loggedInAuthor = this.currentUserLogin
+            ? (this.codebergProfileName?.textContent?.trim() || this.currentUserLogin)
+            : null;
+        const fallbackAuthor = loggedInAuthor
+            ? (loggedInAuthor || this.getLocalAuthorPlaceholder())
+            : (this.getLocalAuthorPlaceholder() || '$USER');
+        const existingAuthor = state.author || '';
+        const author = existingAuthor
+            ? existingAuthor
+            : (editingRoot ? fallbackAuthor : (fallbackAuthor || 'Anonymous'));
+        let profileUrl = state.profileUrl || '';
+        if (!profileUrl && editingRoot && this.currentUserLogin) {
+            profileUrl = this.buildAccountProfileUrl(this.currentUserLogin);
+        }
+        console.log('[comments] renderCommentMainAuthorLabel', {
+            author,
+            profileUrl,
+            editingRoot,
+            placeholder: this.getLocalAuthorPlaceholder(),
+            loggedInAuthor
+        });
+        this.commentMainAuthor.textContent = '';
+        if (profileUrl) {
+            const link = document.createElement('a');
+            link.href = profileUrl;
+            link.textContent = author;
+            link.target = '_blank';
+            link.rel = 'noreferrer noopener';
+            this.commentMainAuthor.appendChild(link);
+        } else {
+            this.commentMainAuthor.textContent = author;
+        }
     }
 
     hideCommentPopover() {
         if (!this.commentPopover) return;
         this.activeCommentEditTarget = null;
         this.highlightedReplyId = null;
+        this.replyAnonDrafts.clear();
         this.commentPopover.classList.add('hidden');
         if (this.commentReplyComposer) {
             this.commentReplyComposer.classList.add('hidden');
         }
         if (typeof this.commentPopover.hidePopover === 'function') {
             try { this.commentPopover.hidePopover(); } catch (error) { /* noop */ }
+        }
+    }
+
+    captureCommentPopoverFocus(activeElement) {
+        if (!activeElement) return null;
+        const dataTarget = activeElement.dataset?.replyTextarea || activeElement.dataset?.replyAnon || null;
+        const selectionStart = (activeElement instanceof HTMLTextAreaElement || activeElement instanceof HTMLInputElement)
+            ? activeElement.selectionStart
+            : null;
+        const selectionEnd = (activeElement instanceof HTMLTextAreaElement || activeElement instanceof HTMLInputElement)
+            ? activeElement.selectionEnd
+            : null;
+        return {
+            id: activeElement.id || null,
+            dataTarget,
+            selectionStart,
+            selectionEnd
+        };
+    }
+
+    restoreCommentPopoverFocus(info) {
+        if (!info) return;
+        const cssEscape = (value) => {
+            if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(value);
+            return `${value}`.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+        };
+        let target = null;
+        if (info.id) {
+            target = document.getElementById(info.id);
+        }
+        if (!target && info.dataTarget) {
+            const escaped = cssEscape(info.dataTarget);
+            target = this.commentPopover?.querySelector(`[data-reply-textarea=\"${escaped}\"]`) ||
+                this.commentPopover?.querySelector(`[data-reply-anon=\"${escaped}\"]`);
+        }
+        if (!target || document.activeElement === target) return;
+        target.focus({ preventScroll: true });
+        if ((target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) &&
+            info.selectionStart != null) {
+            const end = info.selectionEnd ?? info.selectionStart;
+            target.setSelectionRange(info.selectionStart, end);
         }
     }
 
@@ -2879,7 +2999,7 @@ class SpreadsheetApp {
         const username = `${this.currentUserLogin}`.trim();
         if (!username) return false;
         const profileUrl = this.buildAccountProfileUrl(username);
-        const avatar = this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const avatar = this.getActiveUserAvatar();
         const updatedCoords = [];
 
         const promoteIfNeeded = (targetEntry, sourceInfo) => {
@@ -2897,7 +3017,7 @@ class SpreadsheetApp {
             targetEntry.author = username;
             targetEntry.authorId = username;
             targetEntry.profileUrl = profileUrl;
-            targetEntry.avatar = targetEntry.avatar || avatar;
+            targetEntry.avatar = avatar;
             targetEntry.at = targetEntry.at || sourceInfo.at || Date.now();
             targetEntry.anonymous = false;
             targetEntry.anonymousReason = null;
@@ -3824,7 +3944,8 @@ class SpreadsheetApp {
                 localOnly: false,
                 replies: [],
                 reactions: [],
-                id: null
+                id: null,
+                edited: false
             };
         }
         if (typeof raw === 'object') {
@@ -3856,7 +3977,8 @@ class SpreadsheetApp {
                 localOnly: Boolean(raw.localOnly),
                 replies,
                 reactions,
-                id: raw.id ? `${raw.id}` : null
+                id: raw.id ? `${raw.id}` : null,
+                edited: Boolean(raw.edited)
             };
         }
         return null;
@@ -4127,15 +4249,18 @@ class SpreadsheetApp {
             allowAdd: allowAddReactions,
             target: replyInfo.id || 'root'
         });
+        const replyIdSafe = (replyInfo.id || 'root').toString().replace(/[^a-zA-Z0-9_-]/g, '-');
+        const replyEditorId = `replyEditorText-${replyIdSafe}`;
+        const replyAnonInputId = `replyAnon-${replyIdSafe}`;
         const isEditing = !readOnly && this.activeCommentEditTarget === replyInfo.id;
         const bodyClass = isEditing ? 'comment-body hidden' : 'comment-body';
         const bodyDisplay = `<div class="${bodyClass}" data-reply-body="${escapeAttribute(replyInfo.id || '')}">${this.renderCommentRichText(replyInfo.text || '')}</div>`;
         const replyAnonChecked = Boolean(replyInfo.anonymous);
         const editor = `
             <div class="comment-editor-inline ${isEditing ? '' : 'hidden'}" data-reply-editor="${escapeAttribute(replyInfo.id || '')}">
-                <textarea class="form-control" rows="3" data-reply-textarea="${escapeAttribute(replyInfo.id || '')}">${escapeHTML(replyInfo.text || '')}</textarea>
+                <textarea id="${escapeAttribute(replyEditorId)}" name="${escapeAttribute(replyEditorId)}" class="form-control" rows="3" data-reply-textarea="${escapeAttribute(replyInfo.id || '')}">${escapeHTML(replyInfo.text || '')}</textarea>
                 <label class="comment-editor__checkbox">
-                    <input type="checkbox" data-reply-anon="${escapeAttribute(replyInfo.id || '')}" ${replyAnonChecked ? 'checked' : ''}>
+                    <input type="checkbox" id="${escapeAttribute(replyAnonInputId)}" name="${escapeAttribute(replyAnonInputId)}" data-reply-anon="${escapeAttribute(replyInfo.id || '')}" ${replyAnonChecked ? 'checked' : ''}>
                     <span>Anonymous comment</span>
                 </label>
                 <div class="comment-editor__actions">
@@ -4227,7 +4352,8 @@ class SpreadsheetApp {
             localOnly: info.localOnly,
             replies,
             reactions,
-            id: info.id || null
+            id: info.id || null,
+            edited: Boolean(info.edited)
         };
     }
 
@@ -4423,6 +4549,9 @@ class SpreadsheetApp {
                     }
                     if (ds.commentId) {
                         commentRecord.id = ds.commentId;
+                    }
+                    if (ds.commentEdited === 'true') {
+                        commentRecord.edited = true;
                     }
                     if (ds.commentReactions) {
                         try {
@@ -4844,7 +4973,7 @@ class SpreadsheetApp {
     }
 
     getCommentEntryBlockReason(entry) {
-        if (!entry) return 'No comment to edit.';
+        if (!entry) return '';
         const isLoggedIn = Boolean(this.currentUserLogin);
         const isLocal = entry.localOnly === true;
         if (!isLoggedIn && !isLocal) {
@@ -4964,8 +5093,8 @@ class SpreadsheetApp {
                     this.beginZoomEdit();
                 }
             }],
-            ['#themeToggleBtn', 'click', () => this.toggleTheme()],
-            [this.codebergProfileContainer, 'click', e => this.handleProfileSignInClick(e)]
+        ['#themeToggleBtn', 'click', () => this.toggleTheme()],
+        [this.codebergProfileContainer, 'click', e => this.handleProfileSignInClick(e)]
         ];
         
         events.forEach(([sel, evt, fn]) => {
@@ -5013,6 +5142,33 @@ class SpreadsheetApp {
             document.getElementById(`align${n}Btn`)?.addEventListener('click', () => this.setVerticalAlign(a))
         );
 
+        if (this.commentMainAnonymous) {
+            this.commentMainAnonymous.addEventListener('change', () => this.renderCommentMainAuthorLabel(true));
+        }
+        const guardInlineEditorClicks = (event) => {
+            const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+            if (!targetEl) return;
+            if (targetEl.closest('.comment-editor-inline') || targetEl.closest('#commentReplyComposer')) {
+                event.stopPropagation();
+            }
+        };
+        [this.commentPopover, this.commentPopoverThread].forEach(el => {
+            if (!el) return;
+            el.addEventListener('click', event => this.handleCommentActionCapture(event), true);
+            el.addEventListener('click', guardInlineEditorClicks);
+        });
+        if (this.commentPopover && !this.commentPopover.dataset.replyAnonGuard) {
+            this.commentPopover.addEventListener('change', event => this.handleReplyAnonToggle(event));
+            this.commentPopover.dataset.replyAnonGuard = 'true';
+        }
+        document.addEventListener('click', event => this.handleCommentActionCapture(event), true);
+        document.addEventListener('pointerdown', event => this.logCommentActionEvent(event, 'document-pointerdown'), true);
+        document.addEventListener('pointerup', event => this.handleCommentMenuButton(event), true);
+        document.body.addEventListener('click', event => this.handleCommentMenuButton(event), true);
+        if (this.commentPopover) {
+            this.commentPopover.addEventListener('pointerdown', event => this.handleCommentMenuPointerDown(event), true);
+            this.commentPopover.addEventListener('click', event => this.handleCommentAuthorLinkClick(event), true);
+        }
         if (typeof window !== 'undefined') {
             window.addEventListener('beforeunload', () => {
                 if (this.draftSaveTimer) {
@@ -7137,15 +7293,19 @@ class SpreadsheetApp {
             this.applyPaintedFormatToSelection();
             return;
         }
-        
+
         this.isDragging = false;
         this.dragStartCell = null;
         this.isCtrlDragging = false;
         this.ctrlDragAction = null;
         this.ctrlDragProcessedCells.clear();
-        
-        // Update UI elements after any selection change
-        if (this.selectedCells.size > 0) {
+
+        const clickInsideComment = event && this.commentPopover && event.target instanceof Node
+            ? this.commentPopover.contains(event.target)
+            : false;
+
+        // Update UI elements after any selection change (but avoid stealing focus from the comment popover)
+        if (this.selectedCells.size > 0 && !clickInsideComment) {
             this.updateUI();
         }
     }
@@ -9419,6 +9579,82 @@ class SpreadsheetApp {
         console.log('[comments] opened menu for', target);
     }
 
+    handleCommentAuthorLinkClick(event) {
+        if (!event) return;
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        const anchor = targetEl?.closest?.('.comment-popover__author a');
+        const url = anchor?.href || '';
+        if (!url) return;
+        event.preventDefault();
+        event.stopPropagation();
+        window.open(url, '_blank', 'noopener');
+    }
+
+    handleCommentActionCapture(event) {
+        if (!event) {
+            console.log('[comments] action capture aborted: no event');
+            return;
+        }
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        if (!targetEl) {
+            console.log('[comments] action capture aborted: missing target element');
+            return;
+        }
+        const actionBtn = targetEl.closest('[data-comment-action]');
+        if (!actionBtn) {
+            console.log('[comments] action capture aborted: no data action button', { targetElClass: targetEl.className, dataset: targetEl.dataset });
+            return;
+        }
+        const inPopover = this.commentPopover?.contains(actionBtn);
+        const inThread = this.commentPopoverThread?.contains(actionBtn);
+        if (!inPopover && !inThread) {
+            console.log('[comments] action capture ignored: action button outside tracked popovers', { actionBtn, inPopover, inThread });
+            return;
+        }
+        const action = actionBtn.dataset.commentAction;
+        const target = actionBtn.dataset.commentTarget || 'root';
+        console.log('[comments] action capture triggered', { action, target });
+        if (action === 'add-reply') {
+            console.debug('[comments] Reply button clicked', {
+                text: this.commentReplyTextarea?.value,
+                anonymous: this.commentReplyAnonymous?.checked
+            });
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        this.handleCommentAction(action, target);
+    }
+
+    logCommentActionEvent(event, label) {
+        if (!event) return;
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        console.log('[comments]', label, {
+            type: event.type,
+            target: targetEl ? targetEl.className : null,
+            dataset: targetEl ? targetEl.dataset : null,
+            defaultPrevented: event.defaultPrevented
+        });
+    }
+
+    handleCommentMenuPointerDown(event) {
+        if (!event) return;
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        const menuToggle = targetEl?.closest?.('.comment-menu__toggle');
+        if (!menuToggle) return;
+        const target = (menuToggle.dataset.commentTarget || 'root').trim();
+        if (!target) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        this.commentMenuToggleIgnoreClick = target;
+        this.toggleCommentMenu(target);
+        setTimeout(() => {
+            if (this.commentMenuToggleIgnoreClick === target) {
+                this.commentMenuToggleIgnoreClick = null;
+            }
+        }, 300);
+    }
+
     handleCommentPopoverClick(event) {
         if (!event) return;
         const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
@@ -9429,16 +9665,20 @@ class SpreadsheetApp {
         });
         const menuToggle = targetEl.closest('.comment-menu__toggle');
         if (menuToggle) {
+            const target = (menuToggle.dataset.commentTarget || 'root').trim();
+            if (this.commentMenuToggleIgnoreClick === target) {
+                this.commentMenuToggleIgnoreClick = null;
+                return;
+            }
             event.preventDefault();
             event.stopPropagation();
             if (event.stopImmediatePropagation) event.stopImmediatePropagation();
-            const target = (menuToggle.dataset.commentTarget || 'root').trim();
             console.log('[comments] menu toggle clicked', target, menuToggle.dataset || {});
             this.toggleCommentMenu(target);
             return;
         }
 
-        const reactionBtn = event.target.closest('[data-reaction-emoji]');
+        const reactionBtn = targetEl.closest('[data-reaction-emoji]');
         if (reactionBtn) {
             const emoji = reactionBtn.dataset.reactionEmoji || '';
             const target = reactionBtn.dataset.commentTarget || 'root';
@@ -9446,23 +9686,30 @@ class SpreadsheetApp {
             return;
         }
 
-        const addReactionBtn = event.target.closest('[data-add-reaction]');
+        const addReactionBtn = targetEl.closest('[data-add-reaction]');
         if (addReactionBtn) {
             const target = addReactionBtn.dataset.commentTarget || 'root';
             this.promptAddReaction(target);
             return;
         }
 
-        if (event.target.closest('[data-comment-close]')) {
+        const closeBtn = targetEl.closest('[data-comment-close]');
+        if (closeBtn) {
             this.activeCommentEditTarget = null;
             this.hideCommentPopover();
             return;
         }
 
-        const actionBtn = event.target.closest('[data-comment-action]');
+        const actionBtn = targetEl.closest('[data-comment-action]');
         if (actionBtn) {
             const action = actionBtn.dataset.commentAction;
             const target = actionBtn.dataset.commentTarget || 'root';
+            console.log('[comments] popover click action button', {
+                action,
+                target,
+                targetClass: targetEl.className,
+                dataset: targetEl.dataset || {}
+            });
             if (action === 'add-reply') {
                 console.debug('[comments] Reply button clicked', {
                     text: this.commentReplyTextarea?.value,
@@ -9475,6 +9722,9 @@ class SpreadsheetApp {
     }
 
     handleCommentAction(action, target) {
+        if (['edit', 'delete', 'copy-link'].includes(action)) {
+            console.log('[comments] menu action triggered', { action, target });
+        }
         switch (action) {
             case 'edit':
                 if (!this.canEditTarget(target, { notify: true })) return;
@@ -9483,6 +9733,9 @@ class SpreadsheetApp {
                 break;
             case 'cancel-edit':
                 this.activeCommentEditTarget = null;
+                if (target && target !== 'root') {
+                    this.replyAnonDrafts.delete(target);
+                }
                 this.updateCommentPopover();
                 break;
             case 'save-edit':
@@ -9502,6 +9755,130 @@ class SpreadsheetApp {
             default:
                 break;
         }
+    }
+
+    resolveReplyAuthorForDisplay(replyInfo = {}) {
+        const placeholder = this.getLocalAuthorPlaceholder();
+
+        if (this.currentUserLogin) {
+            return {
+                author: this.currentUserLogin,
+                profileUrl: this.buildAccountProfileUrl(this.currentUserLogin)
+            };
+        }
+
+        if (replyInfo.authorId) {
+            return {
+                author: replyInfo.authorId,
+                profileUrl: this.buildAccountProfileUrl(replyInfo.authorId)
+            };
+        }
+
+        if (replyInfo.author && replyInfo.author.toLowerCase() !== 'anonymous') {
+            return {
+                author: replyInfo.author,
+                profileUrl: replyInfo.profileUrl || ''
+            };
+        }
+
+        return {
+            author: placeholder || 'Anonymous',
+            profileUrl: ''
+        };
+    }
+
+    handleReplyAnonToggle(event) {
+        const input = event?.target;
+        if (!(input instanceof HTMLInputElement)) return;
+        const replyId = input.dataset?.replyAnon;
+        if (!replyId) return;
+        const container = input.closest('.comment-reply');
+        const authorEl = container?.querySelector('.comment-popover__author');
+        if (!authorEl) return;
+
+        const checked = input.checked;
+        let author = 'Anonymous';
+        let profileUrl = '';
+
+        if (!checked) {
+            const replyInfo = this.getReplyEntryById(replyId) || {};
+            const resolved = this.resolveReplyAuthorForDisplay(replyInfo);
+            author = resolved.author;
+            profileUrl = resolved.profileUrl;
+        }
+
+        authorEl.textContent = '';
+        if (profileUrl) {
+            const link = document.createElement('a');
+            link.href = profileUrl;
+            link.target = '_blank';
+            link.rel = 'noreferrer noopener';
+            link.textContent = author;
+            authorEl.appendChild(link);
+        } else {
+            authorEl.textContent = author;
+        }
+
+        this.replyAnonDrafts.set(replyId, { anonymous: checked });
+    }
+
+    getReplyEntryById(replyId) {
+        const coord = this.activeCommentCoord || (this.primaryCell ? this.getCoord(this.primaryCell) : null);
+        if (!coord) return null;
+        const commentData = this.normalizeCommentData(this.cellData.get(coord)?.comment);
+        if (!commentData || !Array.isArray(commentData.replies)) return null;
+        const matchId = `${replyId}`;
+        return commentData.replies.find(entry => `${entry?.id || ''}` === matchId) || null;
+    }
+
+    findCommentActionButton(event) {
+        if (!event) return null;
+        if (typeof event.composedPath === 'function') {
+            for (const node of event.composedPath()) {
+                if (node instanceof Element && node.matches('[data-comment-action]')) {
+                    return node;
+                }
+            }
+        }
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        return targetEl?.closest?.('[data-comment-action]') || null;
+    }
+
+    describeEventPath(event) {
+        if (!event) return null;
+        if (typeof event.composedPath === 'function') {
+            return event.composedPath()
+                .filter(node => node instanceof Element)
+                .map(el => ({
+                    tag: el.tagName,
+                    class: el.className,
+                    dataset: { ...el.dataset }
+                }));
+        }
+        return [];
+    }
+
+    handleCommentMenuButton(event) {
+        if (!event) return;
+        const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
+        if (targetEl?.tagName && ['TEXTAREA', 'INPUT'].includes(targetEl.tagName)) {
+            return;
+        }
+        const button = this.findCommentActionButton(event);
+        if (!button) {
+            console.log('[comments] handleCommentMenuButton: no action button in path', {
+                path: this.describeEventPath(event)
+            });
+            return;
+        }
+        if (!this.commentPopover?.contains(button) && !this.commentPopoverThread?.contains(button)) return;
+        const action = button.dataset.commentAction;
+        const target = button.dataset.commentTarget || 'root';
+        console.log('[comments] direct menu button click', { action, target, btn: button.className });
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        this.handleCommentAction(action, target);
     }
 
     canEditTarget(target, { notify = false } = {}) {
@@ -9537,20 +9914,22 @@ class SpreadsheetApp {
             return;
         }
         const isLoggedIn = Boolean(this.currentUserLogin);
-        const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
-        const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
+        const placeholderAuthor = this.getLocalAuthorPlaceholder();
         const anonymousOptIn = Boolean(this.commentMainAnonymous?.checked);
         const anonymousSelection = anonymousOptIn;
         const priorAuthor = `${baseComment.author || ''}`.trim();
         const nonAnonAuthor = priorAuthor && priorAuthor.toLowerCase() !== 'anonymous' ? priorAuthor : '';
         const author = anonymousSelection
             ? 'Anonymous'
-            : (this.currentUserLogin || nonAnonAuthor || authorFallback || offlinePlaceholder || 'Anonymous');
+            : (this.currentUserLogin || nonAnonAuthor || placeholderAuthor || 'Anonymous');
         const authorId = anonymousSelection ? null : (this.currentUserLogin || baseComment.authorId || null);
         const profileUrl = authorId ? this.buildAccountProfileUrl(authorId) : '';
-        const avatar = (!anonymousSelection ? (this.codebergAvatarImg?.src || baseComment.avatar) : baseComment.avatar) || this.getPlaceholderAvatarData();
+        const avatar = anonymousSelection
+            ? (baseComment.avatar || this.getAnonymousAvatarData())
+            : (this.getActiveUserAvatar() || baseComment.avatar || this.getPlaceholderAvatarData());
         const timestamp = baseComment.at ?? Date.now();
         const anonymousReason = anonymousSelection ? (!isLoggedIn ? 'unauthenticated' : 'opt-in') : null;
+        const wasEdited = Boolean(baseComment.edited || baseComment.text !== commentText);
 
         this.saveState('Update comment');
         this.updateCellDataEntry(coord, data => {
@@ -9564,7 +9943,8 @@ class SpreadsheetApp {
                 at: timestamp,
                 anonymous: anonymousSelection,
                 anonymousReason,
-                localOnly: true
+                localOnly: true,
+                edited: wasEdited
             };
         });
         this.activeCommentEditTarget = null;
@@ -9590,20 +9970,22 @@ class SpreadsheetApp {
             return;
         }
         const isLoggedIn = Boolean(this.currentUserLogin);
-        const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
-        const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
+        const placeholderAuthor = this.getLocalAuthorPlaceholder();
         const anonymousOptIn = Boolean(anonToggle?.checked);
         const anonymousSelection = anonymousOptIn;
         const priorAuthor = `${replyInfo.author || ''}`.trim();
         const nonAnonAuthor = priorAuthor && priorAuthor.toLowerCase() !== 'anonymous' ? priorAuthor : '';
         const author = anonymousSelection
             ? 'Anonymous'
-            : (this.currentUserLogin || nonAnonAuthor || authorFallback || offlinePlaceholder || 'Anonymous');
+            : (this.currentUserLogin || nonAnonAuthor || placeholderAuthor || 'Anonymous');
         const authorId = anonymousSelection ? null : (replyInfo.authorId || this.currentUserLogin || null);
         const profileUrl = anonymousSelection ? '' : this.buildAccountProfileUrl(authorId);
-        const avatar = replyInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const avatar = anonymousSelection
+            ? (replyInfo.avatar || this.getAnonymousAvatarData())
+            : (this.getActiveUserAvatar() || replyInfo.avatar || this.getPlaceholderAvatarData());
         const timestamp = replyInfo.at ?? Date.now();
         const anonymousReason = anonymousSelection ? (!isLoggedIn ? 'unauthenticated' : 'opt-in') : null;
+        const wasEdited = replyInfo.edited || replyInfo.text !== nextText;
 
         this.saveState('Update reply');
         this.updateCellDataEntry(coord, data => {
@@ -9620,11 +10002,13 @@ class SpreadsheetApp {
                 at: timestamp,
                 anonymous: anonymousSelection,
                 anonymousReason,
+                edited: wasEdited,
                 localOnly: true
             };
             data.comment = normalized;
         });
         this.activeCommentEditTarget = null;
+        this.replyAnonDrafts.delete(replyId);
         this.refreshAllVisibleCells();
         this.updateCommentPopover();
         this.updateDirtyState();
@@ -9639,6 +10023,7 @@ class SpreadsheetApp {
             if (!this.canEditCommentEntry(baseComment)) return;
             this.saveState('Delete comment');
             this.updateCellDataEntry(coord, data => { delete data.comment; });
+            this.replyAnonDrafts.clear();
         } else {
             const idx = Array.isArray(baseComment.replies) ? baseComment.replies.findIndex(r => `${r?.id || ''}` === `${target}`) : -1;
             if (idx === -1 || !this.canEditCommentEntry(baseComment.replies[idx])) return;
@@ -9648,6 +10033,7 @@ class SpreadsheetApp {
                 normalized.replies = normalized.replies.filter(r => `${r?.id || ''}` !== `${target}`);
                 data.comment = normalized;
             });
+            this.replyAnonDrafts.delete(target);
         }
         this.activeCommentEditTarget = null;
         this.refreshAllVisibleCells();
@@ -9668,25 +10054,24 @@ class SpreadsheetApp {
         }
 
         const isLoggedIn = Boolean(this.currentUserLogin);
-        const authorFallback = this.codebergProfileName?.textContent?.trim() || '';
-        const offlinePlaceholder = (typeof process !== 'undefined' && process?.env?.USER) ? process.env.USER : '$USER';
+        const placeholderAuthor = this.getLocalAuthorPlaceholder();
         const anonymousOptIn = Boolean(this.commentReplyAnonymous?.checked);
         const anonymousSelection = anonymousOptIn;
         console.debug('[comments] Saving reply', {
             coord,
             text: replyText,
             anonymous: anonymousSelection,
-            authorFallback,
+            authorPlaceholder: placeholderAuthor,
             loggedIn: isLoggedIn
         });
         const priorAuthor = `${baseComment.author || ''}`.trim();
         const nonAnonAuthor = priorAuthor && priorAuthor.toLowerCase() !== 'anonymous' ? priorAuthor : '';
         const author = anonymousSelection
             ? 'Anonymous'
-            : (this.currentUserLogin || nonAnonAuthor || authorFallback || offlinePlaceholder || 'Anonymous');
+            : (this.currentUserLogin || nonAnonAuthor || placeholderAuthor || 'Anonymous');
         const authorId = anonymousSelection ? null : (this.currentUserLogin || baseComment.authorId || null);
         const profileUrl = anonymousSelection ? '' : this.buildAccountProfileUrl(authorId);
-        const avatar = this.codebergAvatarImg?.src || baseComment.avatar || this.getPlaceholderAvatarData();
+        const avatar = this.getActiveUserAvatar() || baseComment.avatar || this.getPlaceholderAvatarData();
         const timestamp = Date.now();
         const anonymousReason = anonymousSelection ? (!isLoggedIn ? 'unauthenticated' : 'opt-in') : null;
         const replyEntry = this.ensureCommentIds(coord, {
@@ -14394,6 +14779,7 @@ class SpreadsheetApp {
         let initialsSource = name;
         const tokenInfo = this.getStoredAccessToken();
         const prevLogin = this.currentUserLogin;
+        let shouldApplyPendingAuthors = false;
 
         if (tokenInfo?.token) {
             try {
@@ -14406,7 +14792,7 @@ class SpreadsheetApp {
                     this.currentUserLogin = userLogin;
                     if (userLogin && prevLogin !== userLogin) {
                         // refresh comments created while offline so the OAuth login shows as author
-                        this.applyPendingCommentAuthors();
+                        shouldApplyPendingAuthors = true;
                     }
                     isLoggedIn = true;
                 }
@@ -14447,6 +14833,9 @@ class SpreadsheetApp {
             isLocal,
             status: this.resolveProfileStatus({ isLocal, userLogin, repoOwner })
         });
+        if (shouldApplyPendingAuthors) {
+            this.applyPendingCommentAuthors();
+        }
         this.applyCodebergOrgAvatar({
             avatarUrl: repoAvatarUrl,
             repoName,
@@ -14670,6 +15059,18 @@ class SpreadsheetApp {
     getAnonymousAvatarData() {
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="64" fill="#000"/><text x="50%" y="50%" fill="#fff" font-family="Inter, Arial, sans-serif" font-size="80" font-weight="600" text-anchor="middle" dominant-baseline="central">?</text></svg>`;
         return `data:image/svg+xml;base64,${btoa(svg)}`;
+    }
+
+    getActiveUserAvatar() {
+        if (this.currentUserLogin) {
+            return this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        }
+        return this.getAnonymousAvatarData();
+    }
+
+    getLocalAuthorPlaceholder() {
+        // Always use a neutral placeholder to avoid leaking host/service usernames
+        return '$USER';
     }
 
     getCommentAvatarSrc(entry) {
@@ -14935,44 +15336,47 @@ class SpreadsheetApp {
                 const extraAttributes = [];
 
                 const rawValue = cellData.value ?? '';
-                const commentInfo = this.ensureCommentIds(coordKey, this.normalizeCommentData(cellData.comment));
-                const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
-                if (hasRawValue) {
-                    datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
-                }
+        const commentInfo = this.ensureCommentIds(coordKey, this.normalizeCommentData(cellData.comment));
+        const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
+        if (hasRawValue) {
+            datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
+        }
 
                 if (cellData.linkUrl) {
                     datasets.push(`data-link="${escapeAttribute(cellData.linkUrl)}"`);
                 }
 
-                if (commentInfo?.text) {
-                    datasets.push(`data-comment="${escapeAttribute(commentInfo.text)}"`);
-                    if (commentInfo.author) {
-                        datasets.push(`data-comment-author="${escapeAttribute(commentInfo.author)}"`);
-                    }
-                    if (commentInfo.authorId) {
-                        datasets.push(`data-comment-author-id="${escapeAttribute(commentInfo.authorId)}"`);
-                    }
-                    if (Number.isFinite(commentInfo.at)) {
-                        datasets.push(`data-comment-at="${commentInfo.at}"`);
-                    }
-                    if (commentInfo.avatar) {
-                        datasets.push(`data-comment-avatar="${escapeAttribute(commentInfo.avatar)}"`);
-                    }
-                    if (commentInfo.profileUrl) {
-                        datasets.push(`data-comment-profile="${escapeAttribute(commentInfo.profileUrl)}"`);
-                    }
-                    if (commentInfo.anonymousReason) {
-                        datasets.push(`data-comment-anon-reason="${escapeAttribute(commentInfo.anonymousReason)}"`);
-                    }
-                    if (commentInfo.id) {
-                        datasets.push(`data-comment-id="${escapeAttribute(commentInfo.id)}"`);
-                    }
-                    if (Array.isArray(commentInfo.replies) && commentInfo.replies.length) {
-                        const serializedReplies = JSON.stringify(commentInfo.replies);
-                        datasets.push(`data-comment-replies="${escapeAttribute(serializedReplies)}"`);
-                    }
-                    if (Array.isArray(commentInfo.reactions) && commentInfo.reactions.length) {
+        if (commentInfo?.text) {
+            datasets.push(`data-comment="${escapeAttribute(commentInfo.text)}"`);
+            if (commentInfo.author) {
+                datasets.push(`data-comment-author="${escapeAttribute(commentInfo.author)}"`);
+            }
+            if (commentInfo.authorId) {
+                datasets.push(`data-comment-author-id="${escapeAttribute(commentInfo.authorId)}"`);
+            }
+            if (Number.isFinite(commentInfo.at)) {
+                datasets.push(`data-comment-at="${commentInfo.at}"`);
+            }
+            if (commentInfo.avatar) {
+                datasets.push(`data-comment-avatar="${escapeAttribute(commentInfo.avatar)}"`);
+            }
+            if (commentInfo.profileUrl) {
+                datasets.push(`data-comment-profile="${escapeAttribute(commentInfo.profileUrl)}"`);
+            }
+            if (commentInfo.anonymousReason) {
+                datasets.push(`data-comment-anon-reason="${escapeAttribute(commentInfo.anonymousReason)}"`);
+            }
+            if (commentInfo.id) {
+                datasets.push(`data-comment-id="${escapeAttribute(commentInfo.id)}"`);
+            }
+            if (commentInfo.edited) {
+                datasets.push('data-comment-edited="true"');
+            }
+            if (Array.isArray(commentInfo.replies) && commentInfo.replies.length) {
+                const serializedReplies = JSON.stringify(commentInfo.replies);
+                datasets.push(`data-comment-replies="${escapeAttribute(serializedReplies)}"`);
+            }
+            if (Array.isArray(commentInfo.reactions) && commentInfo.reactions.length) {
                         datasets.push(`data-comment-reactions="${escapeAttribute(JSON.stringify(commentInfo.reactions))}"`);
                     }
                     commentEntries.push({
@@ -14984,6 +15388,7 @@ class SpreadsheetApp {
                         avatar: commentInfo.avatar || '',
                         anonymous: Boolean(commentInfo.anonymous),
                         anonymousReason: commentInfo.anonymousReason,
+                        edited: Boolean(commentInfo.edited),
                         at: commentInfo.at,
                         reactions: Array.isArray(commentInfo.reactions) ? commentInfo.reactions.map(r => ({ emoji: r.emoji, users: Array.isArray(r.users) ? r.users.slice() : [] })) : [],
                         replies: Array.isArray(commentInfo.replies) ? commentInfo.replies.map(reply => this.cloneCommentEntry(reply)).filter(Boolean) : []
@@ -15129,7 +15534,7 @@ class SpreadsheetApp {
                 const author = entry.author || 'Anonymous';
                 const authorLabel = escapeHTML(author);
                 const avatarSrc = this.getCommentAvatarSrc(entry);
-                const timestampLabel = entry.at ? this.formatCommentTimestamp(entry.at) : '';
+                const timestampDisplay = entry.at ? this.formatCommentTimestamp(entry.at) : '';
                 rows.push(`                            <li class="comment-export__item" id="comment-${safeId}" data-comment-coord="${entry.coord}">`);
                 rows.push(`                                <div class="comment-export__address">${escapeHTML(entry.address)}</div>`);
                 rows.push('                                <div class="comment-export__meta">');
@@ -15137,7 +15542,7 @@ class SpreadsheetApp {
                 rows.push('                                    <div class="comment-export__meta-text">');
                 const authorMarkup = this.buildProfileLink(entry.profileUrl, authorLabel);
                 rows.push(`                                        <div class="comment-export__author">${authorMarkup}</div>`);
-                rows.push(`                                        <div class="comment-export__timestamp">${escapeHTML(timestampLabel || 'Time unknown')}</div>`);
+                rows.push(`                                        <div class="comment-export__timestamp">${escapeHTML(timestampDisplay || 'Time unknown')}</div>`);
                 rows.push('                                    </div>');
                 rows.push('                                </div>');
                 rows.push(`                                <div class="comment-export__body">${this.renderCommentWithMentions(entry.comment)}</div>`);
@@ -15151,7 +15556,7 @@ class SpreadsheetApp {
                     rows.push('                                <ul class="comment-export__replies">');
                     entry.replies.forEach(reply => {
                         const replyAuthor = reply.author || 'Anonymous';
-                        const replyTimestamp = reply.at ? this.formatCommentTimestamp(reply.at) : '';
+                        const replyTimestampDisplay = reply.at ? this.formatCommentTimestamp(reply.at) : '';
                         const replyAuthorMarkup = reply.profileUrl
                             ? `<a href="${escapeAttribute(reply.profileUrl)}">${escapeHTML(replyAuthor)}</a>`
                             : escapeHTML(replyAuthor);
@@ -15162,8 +15567,8 @@ class SpreadsheetApp {
                         rows.push('                                    <li class="comment-export__reply">');
                         rows.push('                                        <div class="comment-export__reply-meta">');
                         rows.push(`                                            <span class="comment-export__author">${replyAuthorMarkup}</span>`);
-                        if (replyTimestamp) {
-                            rows.push(`                                            <span class="comment-export__timestamp">${escapeHTML(replyTimestamp)}</span>`);
+                        if (replyTimestampDisplay) {
+                            rows.push(`                                            <span class="comment-export__timestamp">${escapeHTML(replyTimestampDisplay)}</span>`);
                         }
                         rows.push('                                        </div>');
                         rows.push(`                                        <div class="comment-export__body">${this.renderCommentWithMentions(reply.text || '')}</div>`);
