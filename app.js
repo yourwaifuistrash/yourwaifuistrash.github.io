@@ -853,7 +853,7 @@ class SpreadsheetApp {
         }
         const author = hydratedComment.author || defaultAuthor;
         const timestampLabel = hydratedComment.at ? this.formatCommentTimestamp(hydratedComment.at) : '';
-        const avatarSrc = hydratedComment.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+        const avatarSrc = this.getCommentAvatarSrc(hydratedComment);
 
         if (this.commentMainAuthor) {
             this.commentMainAuthor.textContent = '';
@@ -4120,10 +4120,8 @@ class SpreadsheetApp {
         if (!replyInfo) return '';
         const author = escapeHTML(replyInfo.author || 'Anonymous');
         const timestampLabel = replyInfo.at ? escapeHTML(this.formatCommentTimestamp(replyInfo.at)) : '';
-        const authorMarkup = replyInfo.profileUrl
-            ? `<a href="${escapeAttribute(replyInfo.profileUrl)}">${author}</a>`
-            : author;
-        const avatar = escapeAttribute(replyInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData());
+        const authorMarkup = this.buildProfileLink(replyInfo.profileUrl, author);
+        const avatar = escapeAttribute(this.getCommentAvatarSrc(replyInfo));
         const reactionHtml = this.renderReactionChips(replyInfo, {
             readOnly,
             allowAdd: allowAddReactions,
@@ -14669,6 +14667,30 @@ class SpreadsheetApp {
         return `data:image/svg+xml;base64,${btoa(svg)}`;
     }
 
+    getAnonymousAvatarData() {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="64" fill="#000"/><text x="50%" y="50%" fill="#fff" font-family="Inter, Arial, sans-serif" font-size="80" font-weight="600" text-anchor="middle" dominant-baseline="central">?</text></svg>`;
+        return `data:image/svg+xml;base64,${btoa(svg)}`;
+    }
+
+    getCommentAvatarSrc(entry) {
+        if (entry?.anonymous) {
+            return this.getAnonymousAvatarData();
+        }
+        if (entry?.avatar) {
+            return entry.avatar;
+        }
+        if (this.codebergAvatarImg?.src) {
+            return this.codebergAvatarImg.src;
+        }
+        return this.getPlaceholderAvatarData();
+    }
+
+    buildProfileLink(profileUrl, label) {
+        if (!profileUrl) return label;
+        const href = escapeAttribute(profileUrl);
+        return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    }
+
     getOfflineRepoAvatarData() {
         // No-entry badge for repo overlay in offline mode (data URI)
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="265" height="265" fill-rule="evenodd" viewBox="0 0 265 265"><path d="M251.75 132.5c0-65.86-53.39-119.25-119.25-119.25S13.25 66.64 13.25 132.5 66.64 251.75 132.5 251.75s119.25-53.39 119.25-119.25" fill="#fff"/><path d="M238.369 132.5c0-58.47-47.399-105.869-105.869-105.869a105.42 105.42 0 0 0-67.175 24.04l149.366 148.554c14.802-18.209 23.678-41.429 23.678-66.725zM50.309 65.775c-14.801 18.21-23.678 41.429-23.678 66.725 0 58.47 47.399 105.869 105.869 105.869 25.503 0 48.899-9.019 67.175-24.04zM265 132.5C265 59.322 205.678 0 132.5 0S0 59.322 0 132.5 59.322 265 132.5 265 265 205.678 265 132.5" fill="#b71f2e"/></svg>`;
@@ -14960,6 +14982,8 @@ class SpreadsheetApp {
                         author: commentInfo.author || '',
                         profileUrl: commentInfo.profileUrl || '',
                         avatar: commentInfo.avatar || '',
+                        anonymous: Boolean(commentInfo.anonymous),
+                        anonymousReason: commentInfo.anonymousReason,
                         at: commentInfo.at,
                         reactions: Array.isArray(commentInfo.reactions) ? commentInfo.reactions.map(r => ({ emoji: r.emoji, users: Array.isArray(r.users) ? r.users.slice() : [] })) : [],
                         replies: Array.isArray(commentInfo.replies) ? commentInfo.replies.map(reply => this.cloneCommentEntry(reply)).filter(Boolean) : []
@@ -15048,7 +15072,7 @@ class SpreadsheetApp {
                     const anchorId = `comment-anchor-${safeCoordId}`;
                     const authorLabel = escapeHTML(commentInfo.author || 'Anonymous');
                     const timestampLabel = commentInfo.at ? escapeHTML(this.formatCommentTimestamp(commentInfo.at)) : '';
-                    const avatarSrc = escapeAttribute(commentInfo.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData());
+                    const avatarSrc = escapeAttribute(this.getCommentAvatarSrc(commentInfo));
                     const summaryPartsArr = [
                         commentInfo.author ? `by ${commentInfo.author}` : '',
                         timestampLabel,
@@ -15103,18 +15127,16 @@ class SpreadsheetApp {
             sortedComments.forEach(entry => {
                 const safeId = entry.coord.replace(/,/g, '-');
                 const author = entry.author || 'Anonymous';
-                const avatarSrc = entry.avatar || this.codebergAvatarImg?.src || this.getPlaceholderAvatarData();
+                const authorLabel = escapeHTML(author);
+                const avatarSrc = this.getCommentAvatarSrc(entry);
                 const timestampLabel = entry.at ? this.formatCommentTimestamp(entry.at) : '';
                 rows.push(`                            <li class="comment-export__item" id="comment-${safeId}" data-comment-coord="${entry.coord}">`);
                 rows.push(`                                <div class="comment-export__address">${escapeHTML(entry.address)}</div>`);
                 rows.push('                                <div class="comment-export__meta">');
                 rows.push(`                                    <img class="comment-export__avatar" src="${escapeAttribute(avatarSrc)}" alt="${escapeAttribute(author ? `${author} avatar` : 'Comment author avatar')}">`);
                 rows.push('                                    <div class="comment-export__meta-text">');
-                if (entry.profileUrl) {
-                    rows.push(`                                        <div class="comment-export__author"><a href="${escapeAttribute(entry.profileUrl)}">${escapeHTML(author)}</a></div>`);
-                } else {
-                    rows.push(`                                        <div class="comment-export__author">${escapeHTML(author)}</div>`);
-                }
+                const authorMarkup = this.buildProfileLink(entry.profileUrl, authorLabel);
+                rows.push(`                                        <div class="comment-export__author">${authorMarkup}</div>`);
                 rows.push(`                                        <div class="comment-export__timestamp">${escapeHTML(timestampLabel || 'Time unknown')}</div>`);
                 rows.push('                                    </div>');
                 rows.push('                                </div>');
