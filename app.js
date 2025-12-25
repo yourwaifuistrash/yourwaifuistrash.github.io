@@ -4484,7 +4484,7 @@ class SpreadsheetApp {
 
         if (!document.getElementById('authorPreviewCard')) {
             document.body.insertAdjacentHTML('beforeend', `
-                <div id="authorPreviewCard" class="author-preview hidden" role="tooltip" aria-live="polite">
+                <div id="authorPreviewCard" class="author-preview hidden" role="tooltip" aria-live="polite" popover="manual">
                     <div class="author-preview__avatar-wrap">
                         <img class="author-preview__avatar" alt="">
                     </div>
@@ -14800,6 +14800,18 @@ class SpreadsheetApp {
         let orgAvatarUrl = null;
         let isLoggedIn = false;
         let repoAvatarUrl = null;
+        const hasRepo = Boolean(repo?.owner && repo?.repo);
+
+        if (!isLocal && hasRepo) {
+            try {
+                repoAvatarUrl = await this.fetchRepoAvatar(repo);
+            } catch (error) {
+                console.warn('Failed to fetch repo avatar', error);
+            }
+            if (!repoAvatarUrl) {
+                repoAvatarUrl = this.buildRepoAvatarUrl(repo);
+            }
+        }
         if (isLocal) {
             this.applyCodebergAvatar({
                 avatarUrl: this.getPlaceholderAvatarData(),
@@ -14868,11 +14880,12 @@ class SpreadsheetApp {
             if (!orgAvatarUrl) orgAvatarUrl = this.buildAccountAvatarUrl(owner);
         }
 
-        // For overlay: offline uses no-entry icon; logged-in uses org/owner avatar; logged-out hides overlay
-        if (isLoggedIn) {
+        // Fill any remaining gaps with owner/org avatars
+        if (!repoAvatarUrl) {
             repoAvatarUrl = orgAvatarUrl || ownerAvatarUrl || this.buildAccountAvatarUrl(owner);
         }
 
+        this.ensureFavicon(repoAvatarUrl);
         this.applyCodebergAvatar({
             avatarUrl,
             name,
@@ -14886,8 +14899,9 @@ class SpreadsheetApp {
         if (shouldApplyPendingAuthors) {
             this.applyPendingCommentAuthors();
         }
+        const overlayAvatarUrl = orgAvatarUrl || ownerAvatarUrl || this.buildAccountAvatarUrl(owner);
         this.applyCodebergOrgAvatar({
-            avatarUrl: repoAvatarUrl,
+            avatarUrl: overlayAvatarUrl,
             repoName,
             owner: repoOwner,
             status: this.resolveRepoBadgeStatus({ isLocal, repoOwner, userLogin }),
@@ -14938,6 +14952,19 @@ class SpreadsheetApp {
             console.warn('Failed to fetch repo avatar', error);
             return null;
         }
+    }
+
+    ensureFavicon(repoAvatarUrl = null) {
+        if (typeof document === 'undefined') return;
+        const existing = document.querySelector('link[rel~="icon"], link[rel="shortcut icon"]');
+        if (existing) return;
+        const href = repoAvatarUrl || (this.repoConfig ? this.buildRepoAvatarUrl(this.repoConfig) : null);
+        if (!href) return;
+        const link = document.createElement('link');
+        link.rel = 'icon';
+        link.type = 'image/png';
+        link.href = href;
+        document.head.appendChild(link);
     }
 
     buildAccountProfileUrl(owner) {
@@ -15285,11 +15312,17 @@ class SpreadsheetApp {
         card.style.left = `${left}px`;
         card.style.top = `${top}px`;
         card.classList.remove('hidden');
+        if (typeof card.showPopover === 'function') {
+            try { card.showPopover(); } catch (error) { /* ignore */ }
+        }
         this.activeAuthorPreview = login;
     }
 
     hideAuthorPreview() {
         if (!this.authorPreviewCard) return;
+        if (typeof this.authorPreviewCard.hidePopover === 'function') {
+            try { this.authorPreviewCard.hidePopover(); } catch (error) { /* ignore */ }
+        }
         this.authorPreviewCard.classList.add('hidden');
         this.activeAuthorPreview = null;
     }
