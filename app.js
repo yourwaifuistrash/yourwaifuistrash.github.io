@@ -3863,6 +3863,17 @@ class SpreadsheetApp {
                 const counts = info.reactions.map(r => `${r.emoji}×${(r.users || []).length || 0}`);
                 meta.push(`reactions:${counts.join(',')}`);
             }
+            if (Array.isArray(info.replies)) {
+                const replyReactions = info.replies
+                    .filter(entry => Array.isArray(entry?.reactions) && entry.reactions.length)
+                    .map(entry => {
+                        const counts = entry.reactions.map(r => `${r.emoji}×${(r.users || []).length || 0}`);
+                        return `${entry.id || 'reply'}:[${counts.join(',')}]`;
+                    });
+                if (replyReactions.length) {
+                    meta.push(`reply-reactions:${replyReactions.join(';')}`);
+                }
+            }
             if (Number.isFinite(info.at)) {
                 const ts = this.formatCommentTimestamp(info.at);
                 if (ts) meta.push(ts);
