@@ -15162,7 +15162,14 @@ class SpreadsheetApp {
         if (entry?.anonymous) {
             return this.getAnonymousAvatarData();
         }
-        if (entry?.avatar) {
+        const login = entry?.authorId
+            || this.extractCodebergLogin(entry?.profileUrl)
+            || '';
+        if (login) {
+            return this.buildAccountAvatarUrl(login);
+        }
+        // Prefer a non-embedded avatar URL if provided, otherwise fall back to user/avatar placeholders
+        if (entry?.avatar && !String(entry.avatar).startsWith('data:')) {
             return entry.avatar;
         }
         if (this.codebergAvatarImg?.src) {
