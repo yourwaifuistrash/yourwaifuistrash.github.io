@@ -688,6 +688,11 @@ class SpreadsheetApp {
         };
         this.commentMenuToggleIgnoreClick = null;
         this.replyAnonDrafts = new Map();
+        this.authorPreviewCache = new Map();
+        this.authorPreviewCard = null;
+        this.authorPreviewShowTimer = null;
+        this.authorPreviewHideTimer = null;
+        this.activeAuthorPreview = null;
         this.commentEditor = null;
         this.commentEditorTextarea = null;
         this.commentEditorAnonymous = null;
@@ -1034,6 +1039,7 @@ class SpreadsheetApp {
             author: resolvedAuthor,
             profileUrl: profileUrl ? String(profileUrl).trim() : ''
         };
+        this.updateAuthorLinkDataset(this.commentMainAuthor, resolvedAuthor, profileUrl);
     }
 
     renderCommentMainAuthorLabel(editingRoot = false) {
@@ -1072,6 +1078,7 @@ class SpreadsheetApp {
             link.textContent = author;
             link.target = '_blank';
             link.rel = 'noreferrer noopener';
+            this.updateAuthorLinkDataset(link, author, profileUrl);
             this.commentMainAuthor.appendChild(link);
         } else {
             this.commentMainAuthor.textContent = author;
@@ -4264,6 +4271,10 @@ class SpreadsheetApp {
             allowAdd: allowAddReactions,
             target: replyInfo.id || 'root'
         });
+        const authorLogin = (replyInfo.authorId || replyInfo.author || '').replace(/^@/, '');
+        const authorLink = replyInfo.profileUrl
+            ? `<a href="${escapeAttribute(replyInfo.profileUrl)}" target="_blank" rel="noopener noreferrer" data-author-login="${escapeAttribute(authorLogin)}">${author}</a>`
+            : author;
         const replyIdSafe = (replyInfo.id || 'root').toString().replace(/[^a-zA-Z0-9_-]/g, '-');
         const replyEditorId = `replyEditorText-${replyIdSafe}`;
         const replyAnonInputId = `replyAnon-${replyIdSafe}`;
@@ -4302,7 +4313,7 @@ class SpreadsheetApp {
             '    <div class="comment-card__meta-left">',
             `      <img class="comment-popover__avatar" src="${avatar}" alt="${escapeAttribute(replyInfo.author ? `${replyInfo.author} avatar` : 'Reply avatar')}">`,
             '      <div class="comment-popover__meta-text">',
-            `        <div class="comment-popover__author">${authorMarkup}</div>`,
+            `        <div class="comment-popover__author">${authorLink}</div>`,
             timestampLabel ? `        <div class="comment-popover__timestamp">${timestampLabel}</div>` : '',
             '      </div>',
             '    </div>',
@@ -4469,6 +4480,22 @@ class SpreadsheetApp {
 
         if (!document.getElementById('cellCommentPopover')) {
             document.body.insertAdjacentHTML('beforeend', COMMENT_POPOVER_HTML);
+        }
+
+        if (!document.getElementById('authorPreviewCard')) {
+            document.body.insertAdjacentHTML('beforeend', `
+                <div id="authorPreviewCard" class="author-preview hidden" role="tooltip" aria-live="polite">
+                    <div class="author-preview__avatar-wrap">
+                        <img class="author-preview__avatar" alt="">
+                    </div>
+                    <div class="author-preview__body">
+                        <div class="author-preview__name" id="authorPreviewName"></div>
+                        <div class="author-preview__username" id="authorPreviewUsername"></div>
+                        <div class="author-preview__bio" id="authorPreviewBio"></div>
+                        <a class="author-preview__link" id="authorPreviewLink" target="_blank" rel="noreferrer noopener">View profile</a>
+                    </div>
+                </div>
+            `);
         }
     }
 
@@ -5108,14 +5135,22 @@ class SpreadsheetApp {
                     this.beginZoomEdit();
                 }
             }],
-        ['#themeToggleBtn', 'click', () => this.toggleTheme()],
-        [this.codebergProfileContainer, 'click', e => this.handleProfileSignInClick(e)]
+            ['#themeToggleBtn', 'click', () => this.toggleTheme()],
+            [this.codebergProfileContainer, 'click', e => this.handleProfileSignInClick(e)]
         ];
         
         events.forEach(([sel, evt, fn]) => {
             const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
             if (el) el.addEventListener(evt, fn);
         });
+
+        document.addEventListener('mouseover', e => this.handleAuthorHover(e), true);
+        document.addEventListener('mouseout', e => this.handleAuthorHoverOut(e), true);
+        const previewCard = document.getElementById('authorPreviewCard');
+        if (previewCard) {
+            previewCard.addEventListener('mouseenter', () => this.cancelHideAuthorPreview());
+            previewCard.addEventListener('mouseleave', () => this.scheduleHideAuthorPreview());
+        }
 
         const fontSizeInput = document.getElementById('fontSizeInput');
         if (fontSizeInput && !fontSizeInput.dataset.guardAttached) {
@@ -15083,6 +15118,14 @@ class SpreadsheetApp {
         return this.getAnonymousAvatarData();
     }
 
+    updateAuthorLinkDataset(link, author, profileUrl) {
+        if (!link) return;
+        const login = this.extractCodebergLogin(profileUrl) || (author || '').replace(/^@/, '').trim();
+        if (login) {
+            link.dataset.authorLogin = login;
+        }
+    }
+
     getLocalAuthorPlaceholder() {
         // Always use a neutral placeholder to avoid leaking host/service usernames
         return '$USER';
@@ -15101,16 +15144,159 @@ class SpreadsheetApp {
         return this.getPlaceholderAvatarData();
     }
 
+    extractCodebergLogin(profileUrl) {
+        if (!profileUrl) return '';
+        try {
+            const url = new URL(profileUrl, window.location.origin);
+            const host = (url.hostname || '').toLowerCase();
+            if (!host.includes('codeberg')) return '';
+            const segments = url.pathname.split('/').filter(Boolean);
+            return segments[0] || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
     buildProfileLink(profileUrl, label) {
         if (!profileUrl) return label;
         const href = escapeAttribute(profileUrl);
-        return `<a href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+        const login = this.extractCodebergLogin(profileUrl) || String(label || '').replace(/^@/, '').trim();
+        const dataAttr = login ? ` data-author-login="${escapeAttribute(login)}"` : '';
+        return `<a href="${href}"${dataAttr} target="_blank" rel="noopener noreferrer">${label}</a>`;
     }
 
     getOfflineRepoAvatarData() {
         // No-entry badge for repo overlay in offline mode (data URI)
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="265" height="265" fill-rule="evenodd" viewBox="0 0 265 265"><path d="M251.75 132.5c0-65.86-53.39-119.25-119.25-119.25S13.25 66.64 13.25 132.5 66.64 251.75 132.5 251.75s119.25-53.39 119.25-119.25" fill="#fff"/><path d="M238.369 132.5c0-58.47-47.399-105.869-105.869-105.869a105.42 105.42 0 0 0-67.175 24.04l149.366 148.554c14.802-18.209 23.678-41.429 23.678-66.725zM50.309 65.775c-14.801 18.21-23.678 41.429-23.678 66.725 0 58.47 47.399 105.869 105.869 105.869 25.503 0 48.899-9.019 67.175-24.04zM265 132.5C265 59.322 205.678 0 132.5 0S0 59.322 0 132.5 59.322 265 132.5 265 265 205.678 265 132.5" fill="#b71f2e"/></svg>`;
         return `data:image/svg+xml;base64,${btoa(svg)}`;
+    }
+
+    async fetchAuthorPreview(login) {
+        if (!login) return null;
+        const cacheKey = login.toLowerCase();
+        if (this.authorPreviewCache.has(cacheKey)) {
+            return this.authorPreviewCache.get(cacheKey);
+        }
+        const fetchProfile = async (path) => {
+            try {
+                const data = await this.callCodebergApi(path, null);
+                if (!data) return null;
+                return {
+                    login,
+                    name: data.full_name || data.username || data.login || login,
+                    avatar: data.avatar_url || '',
+                    bio: data.description || data.bio || '',
+                    htmlUrl: data.html_url || this.buildAccountProfileUrl(login)
+                };
+            } catch (error) {
+                return null;
+            }
+        };
+
+        let profile = await fetchProfile(`/users/${encodeURIComponent(login)}`);
+        if (!profile) {
+            profile = await fetchProfile(`/orgs/${encodeURIComponent(login)}`);
+        }
+        if (!profile) {
+            profile = {
+                login,
+                name: login,
+                avatar: '',
+                bio: '',
+                htmlUrl: this.buildAccountProfileUrl(login)
+            };
+        }
+        this.authorPreviewCache.set(cacheKey, profile);
+        return profile;
+    }
+
+    handleAuthorHover(event) {
+        const link = event.target instanceof Element
+            ? event.target.closest('a[data-author-login], .comment-popover__author a, .comment-export__author a')
+            : null;
+        if (!link) return;
+        const login = link.dataset.authorLogin || this.extractCodebergLogin(link.href) || (link.textContent || '').replace(/^@/, '').trim();
+        if (!login) return;
+        this.cancelHideAuthorPreview();
+        if (this.authorPreviewShowTimer) clearTimeout(this.authorPreviewShowTimer);
+        this.authorPreviewShowTimer = setTimeout(() => {
+            this.showAuthorPreview(link, login);
+        }, 150);
+    }
+
+    handleAuthorHoverOut(event) {
+        const isLink = event.target instanceof Element &&
+            event.target.closest('a[data-author-login], .comment-popover__author a, .comment-export__author a');
+        const related = event.relatedTarget;
+        const card = document.getElementById('authorPreviewCard');
+        if (card && card.contains(related)) return;
+        if (isLink) {
+            this.scheduleHideAuthorPreview();
+        }
+    }
+
+    cancelHideAuthorPreview() {
+        if (this.authorPreviewHideTimer) {
+            clearTimeout(this.authorPreviewHideTimer);
+            this.authorPreviewHideTimer = null;
+        }
+    }
+
+    scheduleHideAuthorPreview() {
+        this.cancelHideAuthorPreview();
+        this.authorPreviewHideTimer = setTimeout(() => this.hideAuthorPreview(), 120);
+    }
+
+    async showAuthorPreview(link, login) {
+        this.ensureAuthorPreviewCard();
+        const card = this.authorPreviewCard;
+        const nameEl = document.getElementById('authorPreviewName');
+        const userEl = document.getElementById('authorPreviewUsername');
+        const bioEl = document.getElementById('authorPreviewBio');
+        const linkEl = document.getElementById('authorPreviewLink');
+        const avatarEl = card?.querySelector('.author-preview__avatar');
+
+        if (nameEl) nameEl.textContent = 'Loading…';
+        if (userEl) userEl.textContent = '';
+        if (bioEl) bioEl.textContent = '';
+        if (avatarEl) avatarEl.src = '';
+
+        const profile = await this.fetchAuthorPreview(login);
+        if (!profile) return;
+
+        if (nameEl) nameEl.textContent = profile.name || login;
+        if (userEl) userEl.textContent = `@${login}`;
+        if (bioEl) bioEl.textContent = profile.bio || '';
+        if (linkEl) {
+            linkEl.href = profile.htmlUrl || this.buildAccountProfileUrl(login);
+            linkEl.textContent = 'View profile';
+        }
+        if (avatarEl) {
+            avatarEl.src = profile.avatar || this.buildAccountAvatarUrl(login) || this.getPlaceholderAvatarData();
+            avatarEl.alt = `${profile.name || login} avatar`;
+        }
+
+        const rect = link.getBoundingClientRect();
+        const viewportW = window.innerWidth || document.documentElement.clientWidth;
+        const preferredLeft = rect.left;
+        const top = rect.bottom + 8;
+        const width = card.offsetWidth || 260;
+        let left = Math.min(Math.max(8, preferredLeft), viewportW - width - 8);
+        card.style.left = `${left}px`;
+        card.style.top = `${top}px`;
+        card.classList.remove('hidden');
+        this.activeAuthorPreview = login;
+    }
+
+    hideAuthorPreview() {
+        if (!this.authorPreviewCard) return;
+        this.authorPreviewCard.classList.add('hidden');
+        this.activeAuthorPreview = null;
+    }
+
+    ensureAuthorPreviewCard() {
+        if (this.authorPreviewCard) return;
+        this.authorPreviewCard = document.getElementById('authorPreviewCard');
     }
 
     buildCodebergIssueUrl(repo, diffText, diffTruncated) {
