@@ -3859,6 +3859,10 @@ class SpreadsheetApp {
             const replyTexts = Array.isArray(info.replies)
                 ? info.replies.filter(entry => entry?.text).map(entry => entry.text)
                 : [];
+            if (Array.isArray(info.reactions) && info.reactions.length) {
+                const counts = info.reactions.map(r => `${r.emoji}×${(r.users || []).length || 0}`);
+                meta.push(`reactions:${counts.join(',')}`);
+            }
             if (Number.isFinite(info.at)) {
                 const ts = this.formatCommentTimestamp(info.at);
                 if (ts) meta.push(ts);
