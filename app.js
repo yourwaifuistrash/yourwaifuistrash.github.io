@@ -6130,6 +6130,64 @@ class SpreadsheetApp {
         parent.removeChild(element);
     }
 
+    stripInlineFontColorFromHtml(html = '') {
+        if (!html) return html;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, null);
+        const cleanedNodes = [];
+
+        while (walker.nextNode()) {
+            const el = walker.currentNode;
+            let removed = false;
+            if (el.style && el.style.color) {
+                el.style.removeProperty('color');
+                removed = true;
+                if (!el.getAttribute('style')) {
+                    el.removeAttribute('style');
+                }
+            }
+            if (el.tagName === 'FONT' && el.hasAttribute('color')) {
+                el.removeAttribute('color');
+                removed = true;
+            }
+            if (removed) {
+                cleanedNodes.push(el);
+            }
+        }
+
+        cleanedNodes.forEach(node => this.cleanupFormattingSpan(node));
+        return container.innerHTML;
+    }
+
+    stripInlineFontColorFromElement(element) {
+        if (!element) return;
+        const root = element.querySelector('.cell-editor') || element;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
+        const cleanedNodes = [];
+
+        while (walker.nextNode()) {
+            const el = walker.currentNode;
+            let removed = false;
+            if (el.style && el.style.color) {
+                el.style.removeProperty('color');
+                removed = true;
+                if (!el.getAttribute('style')) {
+                    el.removeAttribute('style');
+                }
+            }
+            if (el.tagName === 'FONT' && el.hasAttribute('color')) {
+                el.removeAttribute('color');
+                removed = true;
+            }
+            if (removed) {
+                cleanedNodes.push(el);
+            }
+        }
+
+        cleanedNodes.forEach(node => this.cleanupFormattingSpan(node));
+    }
+
     sanitizeRichTextHTML(rawHtml = '') {
         const allowed = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'SPAN', 'FONT']);
         const container = document.createElement('div');
@@ -12491,6 +12549,7 @@ class SpreadsheetApp {
             this.pendingEditorRefocus = true;
             this.isToolbarFormattingInteraction = true;
         }
+        const cleanRichText = prop === 'fontColor';
         const applyToAll = this.isFullGridSelection();
         this.saveState(`Apply ${prop}${applyToAll ? ' (all cells)' : ''}`);
 
@@ -12499,6 +12558,16 @@ class SpreadsheetApp {
             const keysToDelete = [];
             this.cellData.forEach((data, coord) => {
                 delete data[prop];
+                if (cleanRichText && data.richText) {
+                    const cleaned = this.stripInlineFontColorFromHtml(data.richText);
+                    if (cleaned !== data.richText) {
+                        if (cleaned) {
+                            data.richText = cleaned;
+                        } else {
+                            delete data.richText;
+                        }
+                    }
+                }
                 if (this.isCellEffectivelyEmpty(data)) {
                     keysToDelete.push(coord);
                 }
@@ -12510,6 +12579,8 @@ class SpreadsheetApp {
             return;
         }
 
+        const coordsNeedingRefresh = new Set();
+
         this.selectedCellCoords.forEach(c => {
             this.updateCellDataEntry(c, data => {
                 if (color) {
@@ -12517,10 +12588,30 @@ class SpreadsheetApp {
                 } else {
                     delete data[prop];
                 }
+                if (cleanRichText && data.richText) {
+                    const cleaned = this.stripInlineFontColorFromHtml(data.richText);
+                    if (cleaned !== data.richText) {
+                        if (cleaned) {
+                            data.richText = cleaned;
+                        } else {
+                            delete data.richText;
+                        }
+                        coordsNeedingRefresh.add(c);
+                    }
+                }
             });
         });
         
-        this.selectedCells.forEach(el => el.style[styleProp] = color || '');
+        this.selectedCells.forEach(el => {
+            el.style[styleProp] = color || '';
+            if (cleanRichText) {
+                const coord = this.getCoord(el);
+                if (coordsNeedingRefresh.has(coord) && !el.classList.contains('editing')) {
+                    const cellData = this.cellData.get(coord) || {};
+                    this.updateCellDisplay(el, cellData);
+                }
+            }
+        });
         updateFn.call(this);
 
         // Keep editing experience continuous if we're editing one of the selected cells
