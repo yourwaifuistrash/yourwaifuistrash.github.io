@@ -2548,12 +2548,19 @@ class SpreadsheetApp {
                 styleParts.push(...borderStyles);
             }
 
+            const canUseRich = cellRecord.richText && !(cellRecord.value || '').startsWith('=');
+            const richHtml = canUseRich ? this.sanitizeRichTextHTML(cellRecord.richText) : '';
             const displayText = this.getDisplayTextFromSnapshot(snapshotMap, row, col, cellRecord);
             if (displayText && displayText.includes('\n')) {
                 styleParts.push('white-space:pre-wrap');
             }
 
-            content = displayText ? escapeHTML(displayText).replace(/\n/g, '<br>') : '<span class="save-modal__diff-placeholder">Empty</span>';
+            if (richHtml) {
+                content = richHtml;
+            } else {
+                content = displayText ? escapeHTML(displayText).replace(/\n/g, '<br>') : '<span class="save-modal__diff-placeholder">Empty</span>';
+            }
+
             if (cellRecord.linkUrl) {
                 const href = escapeAttribute(cellRecord.linkUrl);
                 content = `<a href="${href}" target="_blank" rel="noopener">${content}</a>`;
@@ -3831,7 +3838,8 @@ class SpreadsheetApp {
             ['verticalAlign', 'vertical align'],
             ['linkUrl', 'link'],
             ['comment', 'comment'],
-            ['borders', 'borders']
+            ['borders', 'borders'],
+            ['richText', 'rich text']
         ];
 
         const changes = [];
@@ -3907,11 +3915,90 @@ class SpreadsheetApp {
             return val === 'bottom' ? 'default' : val;
         }
 
+        if (key === 'richText') {
+            if (!value) return '∅';
+            const summary = this.summarizeRichText(value);
+            const preview = summary.text
+                ? (summary.text.length > 40 ? `${summary.text.slice(0, 40)}…` : summary.text)
+                : '(rich text)';
+            const colorPart = summary.colors.length
+                ? ` colors:${summary.colors.join(',')}`
+                : ' colors:none';
+            const sig = summary.fingerprint ? ` sig:${summary.fingerprint}` : '';
+            return `"${preview}"${colorPart}${sig}`;
+        }
+
         if (key === 'borders') {
             return value ? JSON.stringify(value) : 'none';
         }
 
         return this.formatValue(value);
+    }
+
+    summarizeRichText(html = '') {
+        if (!html) return { text: '', colors: [], fingerprint: '' };
+        const normalizedHtml = this.sanitizeRichTextHTML(html);
+        const container = document.createElement('div');
+        container.innerHTML = normalizedHtml;
+        const normalized = container.innerHTML;
+        const text = (container.textContent || '').replace(/\s+/g, ' ').trim();
+        const colors = new Set();
+
+        const addColor = (raw) => {
+            if (!raw) return;
+            const val = String(raw).trim();
+            if (!val) return;
+            colors.add(val.toUpperCase());
+        };
+
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, null);
+        while (walker.nextNode()) {
+            const el = walker.currentNode;
+            if (el.style && el.style.color) addColor(el.style.color);
+            const styleAttr = el.getAttribute && el.getAttribute('style');
+            if (styleAttr) {
+                styleAttr.split(';').forEach(rule => {
+                    const [prop, value] = rule.split(':');
+                    if (prop && value && prop.trim().toLowerCase() === 'color') {
+                        addColor(value);
+                    }
+                });
+            }
+            if (el.tagName === 'FONT' && el.hasAttribute('color')) {
+                addColor(el.getAttribute('color'));
+            }
+            if (el.dataset && el.dataset.font) {
+                addColor(el.dataset.font);
+            }
+        }
+
+        // Fallback: scan raw HTML for color tokens
+        const colorPattern = /#[0-9a-fA-F]{3,8}\b|(rgb|rgba|hsl|hsla)\([^)]{1,40}\)/gi;
+        let match;
+        while ((match = colorPattern.exec(normalizedHtml))) {
+            addColor(match[0]);
+        }
+
+        return { text, colors: Array.from(colors).sort(), fingerprint: this.shortHash(normalized) };
+    }
+
+    describeRichText(html = '') {
+        if (!html) return '';
+        const summary = this.summarizeRichText(html);
+        const preview = summary.text
+            ? (summary.text.length > 32 ? `${summary.text.slice(0, 32)}…` : summary.text)
+            : 'formatted';
+        const colors = summary.colors.length ? `colors=${summary.colors.join(',')}` : 'colors=none';
+        const sig = summary.fingerprint ? ` sig=${summary.fingerprint}` : '';
+        return `${this.formatValue(preview)} ${colors}${sig}`;
+    }
+
+    shortHash(input = '') {
+        let hash = 0;
+        for (let i = 0; i < input.length; i++) {
+            hash = ((hash << 5) - hash + input.charCodeAt(i)) | 0;
+        }
+        return (hash >>> 0).toString(36);
     }
 
     formatValue(value) {
@@ -3945,6 +4032,7 @@ class SpreadsheetApp {
         if (normalizedComment?.text) fragments.push(`comment=${this.formatValue(normalizedComment.text)}`);
         if (normalizedComment?.replies?.length) fragments.push(`replies=${normalizedComment.replies.length}`);
         if (data.borders) fragments.push(`borders=${JSON.stringify(data.borders)}`);
+        if (data.richText) fragments.push(`rich=${this.describeRichText(data.richText)}`);
 
         return fragments.length ? fragments.join(', ') : 'empty';
     }
@@ -4554,6 +4642,9 @@ class SpreadsheetApp {
                     data.value = raw;
                 } else if (value && value.length) {
                     data.value = value;
+                }
+                if (ds.rich) {
+                    data.richText = this.sanitizeRichTextHTML(ds.rich);
                 }
                 if (ds.bg) data.backgroundColor = ds.bg;
                 if (ds.font) data.fontColor = ds.font;
@@ -5951,6 +6042,7 @@ class SpreadsheetApp {
             }
             this.resumeEditingAfterToolbar();
             this.updateFormattingButtons();
+            this.refreshPalettes('font');
             return true;
         } catch (err) {
             console.warn('Unable to apply inline font color', err);
@@ -8531,6 +8623,10 @@ class SpreadsheetApp {
 
         // Refresh toolbar state (e.g. bold/italic buttons) based on the saved rich text
         this.updateFormattingButtons();
+
+        // Refresh palette usage immediately so inline colors show up without a reload
+        this.recomputeColorUsageFromData();
+        this.refreshPalettes('font');
     }
 
     recalculateAllFormulas() {
@@ -12458,10 +12554,20 @@ class SpreadsheetApp {
                     const match = data.borders[side]?.match(/#[0-9A-F]{6}/i);
                     if (match) colors.add(match[0].toUpperCase());
                 });
+            } else if (prop === 'fontColor' && data.richText) {
+                const summary = this.summarizeRichText(data.richText);
+                summary.colors.forEach(c => colors.add(c.toUpperCase()));
             } else if (data[prop]) {
                 colors.add(data[prop].toUpperCase());
             }
         });
+        if (prop === 'fontColor' && this.currentEditingCell) {
+            const editor = this.currentEditingCell.querySelector('.cell-editor');
+            if (editor) {
+                const summary = this.summarizeRichText(editor.innerHTML || '');
+                summary.colors.forEach(c => colors.add(c.toUpperCase()));
+            }
+        }
         const defaultValue = this.defaultCellStyle[prop];
         if (defaultValue) {
             colors.add(String(defaultValue).toUpperCase());
@@ -15736,6 +15842,8 @@ class SpreadsheetApp {
                 }
 
                 const displayText = this.getDisplayTextForCell(row, col, cellData);
+                const canUseRich = cellData.richText && !String(rawValue || '').startsWith('=');
+                const richHtml = canUseRich ? this.sanitizeRichTextHTML(cellData.richText) : '';
                 if (cellData.backgroundColor) {
                     datasets.push(`data-bg="${escapeAttribute(cellData.backgroundColor)}"`);
                     styles.push(`background-color:${cellData.backgroundColor}`);
@@ -15795,7 +15903,11 @@ class SpreadsheetApp {
                     styles.push(...borderStyles);
                 }
 
-                let cellContent = escapeHTML(displayText);
+                if (canUseRich && richHtml) {
+                    datasets.push(`data-rich="${escapeAttribute(richHtml)}"`);
+                }
+
+                let cellContent = canUseRich && richHtml ? richHtml : escapeHTML(displayText);
                 const safeCoordId = coordKey.replace(/,/g, '-');
                 if (!cellContent && cellData.linkUrl) {
                     cellContent = escapeHTML(cellData.linkUrl);
