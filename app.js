@@ -8282,9 +8282,12 @@ class SpreadsheetApp {
                 this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, effectiveCount, limit);
                 this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, effectiveCount, limit);
                 this.rowDefaultHeightOverrides = this.shiftIndexedMap(this.rowDefaultHeightOverrides, startIndex, effectiveCount, limit);
+                this.rowStyles = this.shiftIndexedMap(this.rowStyles, startIndex, effectiveCount, limit);
             } else {
                 this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, effectiveCount, limit);
+                this.columnStyles = this.shiftIndexedMap(this.columnStyles, startIndex, effectiveCount, limit);
             }
+            this.shiftCellStyleMetaForInsertion(axis, startIndex, effectiveCount);
 
         if (this.clipboard?.sourceCells instanceof Set) {
             this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'insert');
@@ -8329,9 +8332,12 @@ class SpreadsheetApp {
                 this.autoRowHeights = this.shiftIndexedMap(this.autoRowHeights, startIndex, -effectiveCount, limit, effectiveCount);
                 this.rowHeightModes = this.shiftIndexedMap(this.rowHeightModes, startIndex, -effectiveCount, limit, effectiveCount);
                 this.rowDefaultHeightOverrides = this.shiftIndexedMap(this.rowDefaultHeightOverrides, startIndex, -effectiveCount, limit, effectiveCount);
+                this.rowStyles = this.shiftIndexedMap(this.rowStyles, startIndex, -effectiveCount, limit, effectiveCount);
             } else {
                 this.columnWidths = this.shiftIndexedMap(this.columnWidths, startIndex, -effectiveCount, limit, effectiveCount);
+                this.columnStyles = this.shiftIndexedMap(this.columnStyles, startIndex, -effectiveCount, limit, effectiveCount);
             }
+            this.shiftCellStyleMetaForDeletion(axis, startIndex, effectiveCount);
 
         if (this.clipboard?.sourceCells instanceof Set) {
             this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'delete');
@@ -8372,6 +8378,23 @@ class SpreadsheetApp {
         this.cellData = updated;
     }
 
+    shiftCellStyleMetaForInsertion(axis, startIndex, count) {
+        if (!(this.cellStyleMeta instanceof Map)) return;
+        const isRow = axis === 'row';
+        const limitRow = this.config.maxRows;
+        const limitCol = this.config.maxCols;
+        const updated = new Map();
+        this.cellStyleMeta.forEach((value, key) => {
+            const { row, col } = this.getCoordPos(key);
+            const newRow = isRow && row >= startIndex ? row + count : row;
+            const newCol = !isRow && col >= startIndex ? col + count : col;
+            if (newRow < limitRow && newCol < limitCol) {
+                updated.set(`${newRow},${newCol}`, value);
+            }
+        });
+        this.cellStyleMeta = updated;
+    }
+
     shiftCellDataForDeletion(axis, startIndex, count) {
         const isRow = axis === 'row';
         const removalEnd = startIndex + count - 1;
@@ -8396,6 +8419,30 @@ class SpreadsheetApp {
         });
 
         this.cellData = updated;
+    }
+
+    shiftCellStyleMetaForDeletion(axis, startIndex, count) {
+        if (!(this.cellStyleMeta instanceof Map)) return;
+        const isRow = axis === 'row';
+        const removalEnd = startIndex + count - 1;
+        const updated = new Map();
+        this.cellStyleMeta.forEach((value, key) => {
+            const { row, col } = this.getCoordPos(key);
+            if (isRow) {
+                if (row < startIndex) {
+                    updated.set(key, value);
+                } else if (row > removalEnd) {
+                    updated.set(`${row - count},${col}`, value);
+                }
+            } else {
+                if (col < startIndex) {
+                    updated.set(key, value);
+                } else if (col > removalEnd) {
+                    updated.set(`${row},${col - count}`, value);
+                }
+            }
+        });
+        this.cellStyleMeta = updated;
     }
 
     shiftIndexedMap(map, startIndex, delta, limit, removeCount = 0) {
@@ -8476,6 +8523,8 @@ class SpreadsheetApp {
         this.updateGridSize();
         this.generateHeaders();
         this.updateVisibleCells();
+        this.recalculateAutoRowHeights();
+        this.refreshLayoutAfterRowHeightChange();
     }
 
     shiftCoordSetForStructureChange(coordSet, axis, startIndex, count, type) {
