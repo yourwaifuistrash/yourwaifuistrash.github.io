@@ -34,7 +34,7 @@ const TOOLBAR_AND_FORMULA_HTML = `
                 <button class="btn btn--sm toolbar-btn" id="strikethroughBtn" title="Strikethrough">
                     <span style="text-decoration: line-through;">S</span>
                 </button>
-                <input type="number" id="fontSizeInput" class="form-control" style="width: 70px; padding: 4px 8px; font-size: 12px;" placeholder="Size" min="6" max="200" title="Font Size (px)">
+                <input type="number" id="fontSizeInput" class="form-control" style="width: 70px; padding: 4px 8px; font-size: 12px;" placeholder="Size" max="200" title="Font Size (px)">
                 <button class="btn btn--sm toolbar-btn" id="fontColorBtn" title="Font Color">
                     <span style="position: relative; display: inline-block;">
                         A
@@ -551,6 +551,7 @@ class SpreadsheetApp {
         this.isPaletteInteraction = false;
         this.isFontSizeEditing = false;
         this.isPaletteFieldEditing = false;
+        this.lastInlineFontSize = null;
         this.pendingEditorRefocus = false;
         this.editorBlurTimeout = null;
         this.ctrlDragAction = null;
@@ -2774,7 +2775,10 @@ class SpreadsheetApp {
             const existing = rowMaxFont.get(row);
             const currentMax = Number.isFinite(existing) ? existing : defaultFontSize;
             const cellFont = Number(data?.fontSize);
-            const effective = Number.isFinite(cellFont) && cellFont > 0 ? cellFont : defaultFontSize;
+            const inlineMax = this.getMaxFontSizeInHTML(data?.richText);
+            let effective = defaultFontSize;
+            if (Number.isFinite(cellFont) && cellFont > 0) effective = cellFont;
+            if (Number.isFinite(inlineMax) && inlineMax > 0) effective = Math.max(effective, inlineMax);
             rowMaxFont.set(row, Math.max(currentMax, effective));
         });
 
@@ -5246,21 +5250,20 @@ class SpreadsheetApp {
         const fontSizeInput = document.getElementById('fontSizeInput');
         if (fontSizeInput && !fontSizeInput.dataset.guardAttached) {
             fontSizeInput.addEventListener('pointerdown', () => {
+                this.isFontSizeEditing = true;
                 if (this.currentEditingCell) {
-                    this.isFontSizeEditing = true;
                     this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
                 }
             }, { capture: true });
             fontSizeInput.addEventListener('focus', () => {
-                if (this.currentEditingCell) {
-                    this.isFontSizeEditing = true;
-                }
+                this.isFontSizeEditing = true;
             });
             fontSizeInput.addEventListener('blur', () => {
                 if (this.currentEditingCell) {
                     this.isFontSizeEditing = false;
                     this.resumeEditingAfterToolbar();
                 }
+                this.isFontSizeEditing = false;
             });
             fontSizeInput.dataset.guardAttached = 'true';
         }
@@ -5896,6 +5899,7 @@ class SpreadsheetApp {
             editor.style.color = resolvedColor;
             editor.style.textAlign = effective.textAlign || 'left';
             editor.style.textDecoration = decorations.length ? decorations.join(' ') : 'none';
+            this.syncEditorLineHeight(editor);
             this.restoreEditorSelection(editor);
             this.updateEditorOverflow(cell, editor);
         }
@@ -6521,6 +6525,67 @@ class SpreadsheetApp {
         return sawText;
     }
 
+    getUniformRichTextFontSize(html) {
+        if (!html) return null;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        let uniform = null;
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length) {
+                let el = node.parentElement;
+                let size = null;
+                while (el && el !== container) {
+                    const styleAttr = typeof el.getAttribute === 'function' ? el.getAttribute('style') : '';
+                    if (styleAttr) {
+                        const match = styleAttr.match(/font-size\s*:\s*([0-9.]+)px/i);
+                        if (match) {
+                            size = parseFloat(match[1]);
+                            break;
+                        }
+                    }
+                    el = el.parentElement;
+                }
+                if (!Number.isFinite(size)) return null;
+                uniform = uniform === null ? size : (Math.abs(uniform - size) < 0.01 ? uniform : null);
+                if (uniform === null) return null;
+            }
+            node = walker.nextNode();
+        }
+        return uniform === null ? null : Math.round(uniform);
+    }
+
+    getMaxFontSizeInHTML(html) {
+        if (!html) return null;
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        let maxSize = null;
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length) {
+                let el = node.parentElement;
+                while (el && el !== container) {
+                    const styleAttr = typeof el.getAttribute === 'function' ? el.getAttribute('style') : '';
+                    if (styleAttr) {
+                        const match = styleAttr.match(/font-size\s*:\s*([0-9.]+)px/i);
+                        if (match) {
+                            const size = parseFloat(match[1]);
+                            if (Number.isFinite(size)) {
+                                maxSize = maxSize === null ? size : Math.max(maxSize, size);
+                            }
+                            break;
+                        }
+                    }
+                    el = el.parentElement;
+                }
+            }
+            node = walker.nextNode();
+        }
+        return maxSize === null ? null : Math.round(maxSize);
+    }
+
     clearRichTextFormat(html, format) {
         if (!html || !format) return html;
         const container = document.createElement('div');
@@ -6994,35 +7059,48 @@ class SpreadsheetApp {
         const raw = input.value.trim();
         if (!raw.length) return;
         const size = parseInt(raw, 10);
-        if (!Number.isFinite(size) || size < 1 || !this.hasSelection()) return;
+        const hasCellSelection = this.hasSelection();
+        const canInline = !!this.currentEditingCell;
+        if (!Number.isFinite(size) || size < 1 || (!hasCellSelection && !canInline)) return;
+
+        // Allow the user to type freely and only enforce the minimum once they leave the field.
+        if (!finalize && size < 6) return;
 
         const clamped = finalize ? Math.max(6, Math.min(200, size)) : Math.min(200, size);
         if (finalize) input.value = clamped;
-        this.applyFontSize(clamped);
+        this.applyFontSize(clamped, { finalize });
         if (finalize && this.currentEditingCell) {
             this.isFontSizeEditing = false;
             setTimeout(() => this.resumeEditingAfterToolbar(), 0);
         }
     }
 
-    applyFontSize(fontSize) {
+    applyFontSize(fontSize, { finalize = false } = {}) {
         // Inline edit path: apply size to selection inside the active editor
         if (this.currentEditingCell) {
             const editor = this.currentEditingCell.querySelector('.cell-editor');
             if (editor) {
                 this.restoreEditorSelection(editor);
-                const inlineApplied = this.applyInlineFontSize(editor, fontSize);
-                if (inlineApplied) {
-                    this.updateEditorOverflow(this.currentEditingCell, editor);
-                    this.syncEditorToFormulaBar(editor);
-                    this.saveEditorSelection(editor);
-                    this.updateFormattingButtons();
-                    return;
+        const inlineApplied = this.applyInlineFontSize(editor, fontSize);
+        if (inlineApplied) {
+            this.lastInlineFontSize = fontSize;
+            this.syncEditorLineHeight(editor);
+            this.updateEditorOverflow(this.currentEditingCell, editor);
+            const rowIdx = Number.parseInt(this.currentEditingCell.dataset.row, 10);
+            const maxInlineSize = this.getMaxFontSizeInEditor(editor);
+            if (Number.isFinite(rowIdx) && Number.isFinite(maxInlineSize)) {
+                this.applyInlineRowHeightAdjustment(rowIdx, maxInlineSize);
+            }
+            this.syncEditorToFormulaBar(editor);
+            this.saveEditorSelection(editor);
+            this.updateFormattingButtons();
+            this.log(`Applied font size ${fontSize}px to inline selection${finalize ? ' (finalized)' : ''}`);
+            return 'inline';
                 }
             }
         }
         
-        if (!this.hasSelection()) return;
+        if (!this.hasSelection()) return null;
         const applyToAll = this.isFullGridSelection();
         const affectedRows = applyToAll ? null : new Set(this.getSelectionPositions().map(pos => pos.row));
         this.saveState(`Apply font size ${fontSize}px`);
@@ -7037,7 +7115,8 @@ class SpreadsheetApp {
             keysToDelete.forEach(coord => this.cellData.delete(coord));
             this.refreshAllVisibleCells();
             this.updateFontSizeInput();
-            return;
+            this.log(`Set default font size ${fontSize}px for entire grid${finalize ? ' (finalized)' : ''}`);
+            return 'all';
         }
         
         // Update data model
@@ -7061,6 +7140,8 @@ class SpreadsheetApp {
         if (this.selectedCells.size) {
             this._updateCellsAndAdjacent(this.selectedCells);
         }
+        const targetedCells = this.selectedCells.size || this.selectedCellCoords.size;
+        this.log(`Applied font size ${fontSize}px to ${targetedCells} cell${targetedCells === 1 ? '' : 's'}${finalize ? ' (finalized)' : ''}`);
 
         // Keep live editor styling; refocus only when not actively editing size input
         if (this.currentEditingCell) {
@@ -7074,11 +7155,28 @@ class SpreadsheetApp {
                 }
             }
         }
+        return 'cells';
     }
 
     updateFontSizeInput() {
         const fontSizeInput = document.getElementById('fontSizeInput');
+        if (!fontSizeInput) return;
         
+        // Do not override while the user is actively typing a size.
+        if (document.activeElement === fontSizeInput) {
+            return;
+        }
+
+        // While inline-editing, show the current selection's font size when uniform.
+        if (this.currentEditingCell) {
+            const editor = this.currentEditingCell.querySelector('.cell-editor');
+            const inlineSize = this.getEditorSelectionFontSize(editor);
+            if (Number.isFinite(inlineSize)) {
+                fontSizeInput.value = inlineSize;
+                return;
+            }
+        }
+
         if (!this.hasSelection()) {
             fontSizeInput.value = '';
             return;
@@ -7088,6 +7186,12 @@ class SpreadsheetApp {
         if (this.primaryCellCoord) {
             const cellData = this.cellData.get(this.primaryCellCoord);
             let fontSize = cellData?.fontSize;
+            if (fontSize === undefined || fontSize === null) {
+                fontSize = this.getUniformRichTextFontSize(cellData?.richText);
+            }
+            if (fontSize === undefined || fontSize === null) {
+                fontSize = this.currentEditingCell ? this.lastInlineFontSize : null;
+            }
             if (fontSize === undefined || fontSize === null) {
                 fontSize = this.defaultCellStyle.fontSize;
             }
@@ -8242,6 +8346,7 @@ class SpreadsheetApp {
             this.stopEditingCell();
         }
 
+        this.lastInlineFontSize = null;
         this.currentEditingCell = cell;
         const cellKey = this.getCoord(cell);
         const cellData = this.cellData.get(cellKey);
@@ -8302,6 +8407,7 @@ class SpreadsheetApp {
         input.style.color = resolvedColor;
         const appliedDecoration = decorations.length ? decorations.join(' ') : 'none';
         input.style.textDecoration = appliedDecoration;
+        this.syncEditorLineHeight(input);
         
         editorWrapper.appendChild(input);
         cell.innerHTML = '';
@@ -8509,6 +8615,7 @@ class SpreadsheetApp {
         const cell = this.currentEditingCell;
         if (!cell) return;
 
+        this.lastInlineFontSize = null;
         this.isToolbarFormattingInteraction = false;
         const input = cell.querySelector('.cell-editor');
         const oldValue = cell.dataset.originalValue || '';
@@ -10685,6 +10792,40 @@ class SpreadsheetApp {
         };
     }
 
+    getEditorSelectionFontSize(editor) {
+        if (!editor || typeof window.getSelection !== 'function') return null;
+        const selection = window.getSelection();
+        if (!selection || !selection.rangeCount) return null;
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return null;
+
+        const collectSize = (node) => {
+            const el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+            const size = parseFloat(window.getComputedStyle(el || editor).fontSize);
+            return Number.isFinite(size) ? Math.round(size) : null;
+        };
+
+        if (range.collapsed) {
+            return collectSize(range.startContainer);
+        }
+
+        const sizes = new Set();
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
+                const size = collectSize(node);
+                if (size !== null) sizes.add(size);
+                if (sizes.size > 1) break; // mixed; bail early
+            }
+            node = walker.nextNode();
+        }
+        if (sizes.size === 1) {
+            return Array.from(sizes)[0];
+        }
+        return null;
+    }
+
     getSelectionOffsets(editor, range) {
         if (!editor || !range) return null;
         const startMeasure = document.createRange();
@@ -10841,6 +10982,64 @@ class SpreadsheetApp {
         selection.addRange(range);
     }
 
+    getMaxFontSizeInEditor(editor) {
+        if (!editor) return null;
+        let max = null;
+        const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
+        let node = walker.nextNode();
+        while (node) {
+            if (node.nodeValue && node.nodeValue.length) {
+                const el = node.parentElement || editor;
+                const size = parseFloat(window.getComputedStyle(el).fontSize);
+                if (Number.isFinite(size)) {
+                    max = max === null ? size : Math.max(max, size);
+                }
+            }
+            node = walker.nextNode();
+        }
+        return max;
+    }
+
+    syncEditorLineHeight(editor) {
+        if (!editor) return;
+        const maxSize = this.getMaxFontSizeInEditor(editor);
+        if (!Number.isFinite(maxSize) || maxSize <= 0) {
+            editor.style.lineHeight = '';
+            return;
+        }
+        const lh = Math.max(maxSize * (this.cellLineHeightMultiplier || 1.2), maxSize);
+        editor.style.lineHeight = `${lh}px`;
+    }
+
+    applyInlineRowHeightAdjustment(row, maxFontSize) {
+        if (!Number.isFinite(row) || !Number.isFinite(maxFontSize)) return;
+        if (this.rowHeightModes.get(row) === 'explicit') return;
+        const baseHeight = this.getDefaultRowHeightForRow(row);
+        const desired = this.computeRowHeightForFontSize(maxFontSize);
+        const existing = this.autoRowHeights.get(row);
+        let changed = false;
+
+        if (desired > baseHeight) {
+            if (existing !== desired) {
+                this.autoRowHeights.set(row, desired);
+                this.rowHeightModes.set(row, 'implicit');
+                changed = true;
+            }
+        } else {
+            if (this.autoRowHeights.has(row)) {
+                this.autoRowHeights.delete(row);
+                if (this.rowHeightModes.get(row) === 'implicit') {
+                    this.rowHeightModes.delete(row);
+                }
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.refreshLayoutAfterRowHeightChange();
+        }
+    }
+
     applyInlineFontSize(editor, fontSize) {
         const selection = window.getSelection();
         if (!selection || !selection.rangeCount) return false;
@@ -10855,6 +11054,18 @@ class SpreadsheetApp {
         const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT, null);
         const affected = [];
         let node = walker.nextNode();
+        const baselineColor = window.getComputedStyle(editor).color;
+        const hasInlineStyleProp = (textNode, regex) => {
+            let el = textNode.parentElement;
+            while (el && el !== editor) {
+                const styleAttr = typeof el.getAttribute === 'function' ? el.getAttribute('style') : '';
+                if (styleAttr && regex.test(styleAttr)) return true;
+                const legacy = regex.test((typeof el.getAttribute === 'function' ? el.getAttribute('color') : '') || '');
+                if (legacy) return true;
+                el = el.parentElement;
+            }
+            return false;
+        };
         while (node) {
             if (node.nodeValue && node.nodeValue.length && this.rangeIntersectsNode(range, node)) {
                 let start = 0;
@@ -10879,8 +11090,12 @@ class SpreadsheetApp {
             const wrapper = document.createElement('span');
             wrapper.style.fontSize = `${fontSize}px`;
 
-            if (fmt.color) wrapper.style.color = fmt.color;
-            if (fmt.backgroundColor && fmt.backgroundColor !== 'transparent' && fmt.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+            const allowInlineColor = hasInlineStyleProp(textNode, /\bcolor\s*:/i);
+            const allowInlineBg = hasInlineStyleProp(textNode, /\bbackground(-color)?\s*:/i);
+            if (allowInlineColor && fmt.color && fmt.color !== baselineColor) {
+                wrapper.style.color = fmt.color;
+            }
+            if (allowInlineBg && fmt.backgroundColor && fmt.backgroundColor !== 'transparent' && fmt.backgroundColor !== 'rgba(0, 0, 0, 0)') {
                 wrapper.style.backgroundColor = fmt.backgroundColor;
             }
 
