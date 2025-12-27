@@ -9526,6 +9526,38 @@ class SpreadsheetApp {
             colWidthItem.style.display = isColContext ? 'flex' : 'none';
         }
 
+        const insertRowItem = this.contextMenu.querySelector('[data-action="insertRow"]');
+        const deleteRowItem = this.contextMenu.querySelector('[data-action="deleteRow"]');
+        const insertColItem = this.contextMenu.querySelector('[data-action="insertCol"]');
+        const deleteColItem = this.contextMenu.querySelector('[data-action="deleteCol"]');
+        const insertDeleteSeparator = document.getElementById('linkSeparator2');
+        const setMenuItemDisplay = (el, show, isSeparator = false) => {
+            if (!el) return;
+            el.style.display = show ? (isSeparator ? 'block' : 'flex') : 'none';
+        };
+
+        if (isRowContext) {
+            setMenuItemDisplay(insertRowItem, true);
+            setMenuItemDisplay(deleteRowItem, true);
+            setMenuItemDisplay(insertColItem, false);
+            setMenuItemDisplay(deleteColItem, false);
+        } else if (isColContext) {
+            setMenuItemDisplay(insertRowItem, false);
+            setMenuItemDisplay(deleteRowItem, false);
+            setMenuItemDisplay(insertColItem, true);
+            setMenuItemDisplay(deleteColItem, true);
+        } else {
+            setMenuItemDisplay(insertRowItem, true);
+            setMenuItemDisplay(deleteRowItem, true);
+            setMenuItemDisplay(insertColItem, true);
+            setMenuItemDisplay(deleteColItem, true);
+        }
+
+        if (insertDeleteSeparator) {
+            const shouldShowSeparator = [insertRowItem, deleteRowItem, insertColItem, deleteColItem].some(el => el && el.style.display !== 'none');
+            setMenuItemDisplay(insertDeleteSeparator, shouldShowSeparator, true);
+        }
+
         setTimeout(() => {
             const rect = this.contextMenu.getBoundingClientRect();
             if (rect.right > window.innerWidth) {
