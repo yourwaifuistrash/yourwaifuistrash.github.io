@@ -508,6 +508,18 @@ const escapeHTML = (str = '') => str
 
 const escapeAttribute = (str = '') => escapeHTML(str).replace(/\r/g, '&#13;').replace(/\n/g, '&#10;');
 
+const STYLE_PROPS = [
+    'backgroundColor',
+    'fontColor',
+    'fontSize',
+    'bold',
+    'italic',
+    'underline',
+    'strikethrough',
+    'textAlign',
+    'verticalAlign'
+];
+
 class SpreadsheetApp {
     constructor() {
         this.persistedRange = { maxRow: 19, maxCol: 9 };
@@ -622,6 +634,15 @@ class SpreadsheetApp {
         this.visibleRows = { start: 0, end: 30 };
         this.visibleCols = { start: 0, end: 20 };
         this.defaultCellStyle = {};
+        this.rowStyles = new Map();
+        this.columnStyles = new Map();
+        this.cellStyleMeta = new Map(); // Track last-applied sequence per style prop per cell
+        this.defaultStyleMeta = {}; // Track last-applied sequence for default styles
+        this.styleSequence = 1;
+        this.initialRowStyles = new Map();
+        this.initialColumnStyles = new Map();
+        this.initialCellStyleMeta = new Map();
+        this.initialDefaultStyleMeta = {};
         this.rowDefaultHeightOverrides = new Map();
         this.initialAutoRowHeights = new Map();
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
@@ -717,12 +738,17 @@ class SpreadsheetApp {
         this.branchCommitLatest = null;
         this.branchCommitLoadPromise = null;
         this.loadInitialDataFromDOM();
+        this.initializeStyleMetadataFromData();
         this.recomputeColorUsageFromData();
         this.initializeDynamicDimensions();
         this.recalculateAutoRowHeights();
         this.initialColorUsage = this.cloneColorUsage();
         this.initialMergedCells = this.cloneMergedCellsState();
         this.initialCellData = this.cloneCellData(this.cellData);
+        this.initialRowStyles = this.cloneStyleMap(this.rowStyles);
+        this.initialColumnStyles = this.cloneStyleMap(this.columnStyles);
+        this.initialCellStyleMeta = this.cloneStyleMap(this.cellStyleMeta);
+        this.initialDefaultStyleMeta = this.cloneStyleMeta(this.defaultStyleMeta);
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
@@ -730,6 +756,7 @@ class SpreadsheetApp {
         this.initialRowHeightModes = new Map(this.rowHeightModes);
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
+        this.initialStyleSequence = this.styleSequence;
         
         // Select cell A1 by default
         setTimeout(() => {
@@ -1485,6 +1512,91 @@ class SpreadsheetApp {
         }
     }
 
+    cloneStyleMeta(source = {}) {
+        if (!source || typeof source !== 'object') return {};
+        return { ...source };
+    }
+
+    cloneStyleMap(source = new Map()) {
+        const clone = new Map();
+        if (!(source instanceof Map)) return clone;
+        source.forEach((value, key) => {
+            clone.set(key, this.cloneCellRecord(value));
+        });
+        return clone;
+    }
+
+    computeMaxStyleSequence() {
+        let max = Number.isFinite(this.styleSequence) ? this.styleSequence : 1;
+        const scanMeta = (meta) => {
+            if (!meta || typeof meta !== 'object') return;
+            Object.values(meta).forEach(seq => {
+                const num = Number(seq);
+                if (Number.isFinite(num)) {
+                    max = Math.max(max, num);
+                }
+            });
+        };
+        const scanMapMeta = (map) => {
+            if (!(map instanceof Map)) return;
+            map.forEach(entry => scanMeta(entry?._meta));
+        };
+
+        scanMeta(this.defaultStyleMeta);
+        scanMapMeta(this.rowStyles);
+        scanMapMeta(this.columnStyles);
+        if (this.cellStyleMeta instanceof Map) {
+            this.cellStyleMeta.forEach(meta => scanMeta(meta));
+        }
+        return max;
+    }
+
+    nextStyleSequence() {
+        const current = Number.isFinite(this.styleSequence) ? this.styleSequence : 1;
+        this.styleSequence = current + 1;
+        return this.styleSequence;
+    }
+
+    getCellStyleMeta(coord, create = false) {
+        if (!this.cellStyleMeta) {
+            this.cellStyleMeta = new Map();
+        }
+        let meta = this.cellStyleMeta.get(coord);
+        if (!meta && create) {
+            meta = {};
+            this.cellStyleMeta.set(coord, meta);
+        }
+        return meta || null;
+    }
+
+    getDimensionStyle(kind, index, create = false) {
+        const map = kind === 'row' ? this.rowStyles : this.columnStyles;
+        if (!map) return null;
+        if (map.has(index)) return map.get(index);
+        const strKey = String(index);
+        if (map.has(strKey)) return map.get(strKey);
+        if (!create) return null;
+        const entry = { _meta: {} };
+        map.set(index, entry);
+        return entry;
+    }
+
+    isStyleEntryEmpty(entry) {
+        if (!entry || typeof entry !== 'object') return true;
+        return !STYLE_PROPS.some(prop => Object.prototype.hasOwnProperty.call(entry, prop));
+    }
+
+    setStyleValue(target, prop, value) {
+        if (!target || !prop) return;
+        if (!target._meta) target._meta = {};
+        target._meta[prop] = this.nextStyleSequence();
+        if (value === undefined) {
+            delete target[prop];
+        } else {
+            target[prop] = value;
+        }
+    }
+
     initializeDynamicDimensions() {
         const requiredRows = (this.persistedRange?.maxRow ?? 0) + 1;
         const requiredCols = (this.persistedRange?.maxCol ?? 0) + 1;
@@ -1516,9 +1628,40 @@ class SpreadsheetApp {
     setDefaultCellProperty(prop, value) {
         if (value === null || value === undefined || value === '') {
             delete this.defaultCellStyle[prop];
+            if (this.defaultStyleMeta && Object.prototype.hasOwnProperty.call(this.defaultStyleMeta, prop)) {
+                delete this.defaultStyleMeta[prop];
+            }
         } else {
             this.defaultCellStyle[prop] = value;
+            if (!this.defaultStyleMeta) this.defaultStyleMeta = {};
+            this.defaultStyleMeta[prop] = this.nextStyleSequence();
         }
+    }
+
+    getSelectionScope() {
+        if (!this.hasSelection()) return { type: 'none' };
+        const totalCells = this.config.maxRows * this.config.maxCols;
+        if (this.fullSheetSelection || (totalCells > 0 && this.selectedCellCoords.size >= totalCells)) {
+            return { type: 'all' };
+        }
+
+        const rows = this.getSelectedRows();
+        const cols = this.getSelectedCols();
+        const isFullRows = rows.length > 0
+            && this.selectedCellCoords.size === rows.length * this.config.maxCols
+            && rows.every(row => this.isRangeFullySelected('row', row));
+        if (isFullRows) {
+            return { type: 'rows', rows };
+        }
+
+        const isFullCols = cols.length > 0
+            && this.selectedCellCoords.size === cols.length * this.config.maxRows
+            && cols.every(col => this.isRangeFullySelected('column', col));
+        if (isFullCols) {
+            return { type: 'columns', cols };
+        }
+
+        return { type: 'cells' };
     }
 
     getDefaultCellProperty(prop, fallback = null) {
@@ -1951,6 +2094,59 @@ class SpreadsheetApp {
             }
         }
 
+        const appendStyleDiffs = (kind, initialMap, currentMap) => {
+            const indices = new Set();
+            if (initialMap instanceof Map) {
+                initialMap.forEach((_, key) => indices.add(key));
+            }
+            if (currentMap instanceof Map) {
+                currentMap.forEach((_, key) => indices.add(key));
+            }
+            const getEntry = (map, idx) => {
+                if (!(map instanceof Map)) return null;
+                if (map.has(idx)) return map.get(idx);
+                const str = String(idx);
+                return map.has(str) ? map.get(str) : null;
+            };
+
+            indices.forEach(rawIndex => {
+                const index = Number(rawIndex);
+                if (!Number.isInteger(index)) return;
+                const before = this.extractStyleSnapshot(getEntry(initialMap, index) || {});
+                const after = this.extractStyleSnapshot(getEntry(currentMap, index) || {});
+                const styleChanges = this.describeStyleDifferences(before, after);
+                if (!styleChanges.length) return;
+
+                const coordKey = `${kind}Style:${index}`;
+                total += 1;
+                if (entries.length + extraEntries.length < maxEntries) {
+                    const entry = {
+                        coord: coordKey,
+                        row: kind === 'row' ? index : 0,
+                        col: kind === 'column' ? index : 0,
+                        address: kind === 'row'
+                            ? `Row ${index + 1} style`
+                            : `Column ${this.getColumnName(index)} style`,
+                        changeType: 'modified',
+                        before,
+                        after,
+                        beforeSize: null,
+                        afterSize: null,
+                        changes: styleChanges,
+                        meta: { kind: `${kind}Style`, index }
+                    };
+                    extraEntries.push(entry);
+                    entryMap.set(coordKey, entry);
+                } else {
+                    truncated = true;
+                    entryMap.set(coordKey, null);
+                }
+            });
+        };
+
+        appendStyleDiffs('column', this.initialColumnStyles, this.columnStyles);
+        appendStyleDiffs('row', this.initialRowStyles, this.rowStyles);
+
         const mergeDiffs = this.computeMergeDiffs(this.initialMergedCells, this.cloneMergedCellsState());
         mergeDiffs.forEach(diff => {
             const beforeSize = null;
@@ -2005,6 +2201,10 @@ class SpreadsheetApp {
 
     restoreBaselineState() {
         this.cellData = this.cloneCellData(this.initialCellData);
+        this.rowStyles = this.cloneStyleMap(this.initialRowStyles);
+        this.columnStyles = this.cloneStyleMap(this.initialColumnStyles);
+        this.cellStyleMeta = this.cloneStyleMap(this.initialCellStyleMeta);
+        this.defaultStyleMeta = this.cloneStyleMeta(this.initialDefaultStyleMeta);
         this.rowHeights = new Map(this.initialRowHeights || []);
         this.autoRowHeights = new Map(this.initialAutoRowHeights || []);
         this.defaultAutoRowHeight = this.initialDefaultRowHeight || this.config.cellHeight;
@@ -2013,6 +2213,7 @@ class SpreadsheetApp {
         this.rowHeightModes = new Map(this.initialRowHeightModes || []);
         this.columnWidths = new Map(this.initialColumnWidths || []);
         this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
+        this.styleSequence = this.initialStyleSequence || this.styleSequence || 1;
         this.applyMergedCellsSnapshot(this.initialMergedCells);
     }
 
@@ -2186,6 +2387,11 @@ class SpreadsheetApp {
                 autoRowHeights: this.serializeMap(this.autoRowHeights),
                 rowDefaultHeightOverrides: this.serializeMap(this.rowDefaultHeightOverrides),
                 columnWidths: this.serializeMap(this.columnWidths),
+                rowStyles: this.serializeMap(this.rowStyles),
+                columnStyles: this.serializeMap(this.columnStyles),
+                cellStyleMeta: this.serializeMap(this.cellStyleMeta),
+                defaultStyleMeta: this.cloneStyleMeta(this.defaultStyleMeta),
+                styleSequence: this.styleSequence,
                 persistedRange: { ...this.persistedRange },
                 mergedCells: this.cloneMergedCellsState(),
                 defaultAutoRowHeight: this.defaultAutoRowHeight,
@@ -2273,6 +2479,27 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (payload.rowStyles) {
+                this.rowStyles = this.deserializeMap(payload.rowStyles);
+                restored = true;
+                needsRefresh = true;
+            }
+            if (payload.columnStyles) {
+                this.columnStyles = this.deserializeMap(payload.columnStyles);
+                restored = true;
+                needsRefresh = true;
+            }
+            if (payload.cellStyleMeta) {
+                this.cellStyleMeta = this.deserializeMap(payload.cellStyleMeta);
+                restored = true;
+                needsRefresh = true;
+            }
+            if (payload.defaultStyleMeta && typeof payload.defaultStyleMeta === 'object') {
+                this.defaultStyleMeta = this.cloneStyleMeta(payload.defaultStyleMeta);
+            }
+            if (Number.isFinite(payload.styleSequence)) {
+                this.styleSequence = payload.styleSequence;
+            }
             if (Object.prototype.hasOwnProperty.call(payload, 'mergedCells')) {
                 const snapshot = this.cloneMergedCellsState(payload.mergedCells);
                 this.applyMergedCellsSnapshot(snapshot);
@@ -2312,6 +2539,7 @@ class SpreadsheetApp {
                 this.userMadeChanges = false;
             }
             if (needsRefresh) {
+                this.initializeStyleMetadataFromData();
                 this.recalculateAutoRowHeights();
                 this.updateGridSize();
                 this.repositionCells();
@@ -2356,6 +2584,10 @@ class SpreadsheetApp {
         this.markCommentsCommitted();
         this.initialColorUsage = this.cloneColorUsage();
         this.initialCellData = this.cloneCellData(this.cellData);
+        this.initialRowStyles = this.cloneStyleMap(this.rowStyles);
+        this.initialColumnStyles = this.cloneStyleMap(this.columnStyles);
+        this.initialCellStyleMeta = this.cloneStyleMap(this.cellStyleMeta);
+        this.initialDefaultStyleMeta = this.cloneStyleMeta(this.defaultStyleMeta);
         this.initialRowHeights = new Map(this.rowHeights);
         this.initialAutoRowHeights = new Map(this.autoRowHeights);
         this.initialDefaultRowHeight = this.defaultAutoRowHeight;
@@ -2365,6 +2597,7 @@ class SpreadsheetApp {
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialMergedCells = this.cloneMergedCellsState();
+        this.initialStyleSequence = this.styleSequence;
         this.latestDiffEntries = [];
         this.latestDiffTotal = 0;
         this.latestDiffTruncated = false;
@@ -2852,13 +3085,44 @@ class SpreadsheetApp {
     }
 
     describeDefaultStyleDifferences(before = {}, after = {}) {
+        return this.describeStyleDifferences(before, after);
+    }
+
+    extractStyleSnapshot(entry = {}) {
+        const snapshot = {};
+        if (!entry || typeof entry !== 'object') return snapshot;
+        STYLE_PROPS.forEach(prop => {
+            if (Object.prototype.hasOwnProperty.call(entry, prop)) {
+                snapshot[prop] = entry[prop];
+            }
+        });
+        return snapshot;
+    }
+
+    getStyleLabel(prop) {
+        const labels = {
+            backgroundColor: 'background',
+            fontColor: 'font color',
+            fontSize: 'font size',
+            bold: 'bold',
+            italic: 'italic',
+            underline: 'underline',
+            strikethrough: 'strikethrough',
+            textAlign: 'text align',
+            verticalAlign: 'vertical align'
+        };
+        return labels[prop] || prop;
+    }
+
+    describeStyleDifferences(before = {}, after = {}) {
+        const beforeSnap = this.extractStyleSnapshot(before);
+        const afterSnap = this.extractStyleSnapshot(after);
         const changes = [];
-        const fields = [['fontSize', 'font size']];
-        fields.forEach(([key, label]) => {
-            const beforeVal = this.normalizeField(before[key], key);
-            const afterVal = this.normalizeField(after[key], key);
+        STYLE_PROPS.forEach(prop => {
+            const beforeVal = this.normalizeField(beforeSnap[prop], prop);
+            const afterVal = this.normalizeField(afterSnap[prop], prop);
             if (beforeVal === afterVal) return;
-            changes.push(`${label}: ${beforeVal} → ${afterVal}`);
+            changes.push(`${this.getStyleLabel(prop)}: ${beforeVal} → ${afterVal}`);
         });
         return changes;
     }
@@ -3859,6 +4123,10 @@ class SpreadsheetApp {
     }
 
     normalizeField(value, key) {
+        if (STYLE_PROPS.includes(key) && value === null) {
+            return 'cleared';
+        }
+
         if (key === 'bold' || key === 'italic' || key === 'underline' || key === 'strikethrough') {
             return value ? 'on' : 'off';
         }
@@ -4479,15 +4747,7 @@ class SpreadsheetApp {
         if (!data || typeof data !== 'object') return true;
 
         if (data.value !== undefined && data.value !== null && data.value !== '') return false;
-        if (data.backgroundColor) return false;
-        if (data.fontColor) return false;
-        if (data.fontSize) return false;
-        if (data.bold) return false;
-        if (data.italic) return false;
-        if (data.underline) return false;
-        if (data.strikethrough) return false;
-        if (data.textAlign && data.textAlign !== 'left') return false;
-        if (data.verticalAlign && data.verticalAlign !== 'bottom') return false;
+        if (STYLE_PROPS.some(prop => Object.prototype.hasOwnProperty.call(data, prop))) return false;
         if (data.linkUrl) return false;
         const normalizedComment = this.normalizeCommentData(data.comment);
         if (normalizedComment?.text) return false;
@@ -4595,6 +4855,35 @@ class SpreadsheetApp {
         if (!this.gridContent) return;
         const fallbackTable = this.gridContent.querySelector('table[data-spreadsheet-export]');
         if (!fallbackTable) return;
+
+        const styleMetaScript = this.gridContent.querySelector('script[data-spreadsheet-style-meta]');
+        if (styleMetaScript && styleMetaScript.textContent) {
+            try {
+                const payload = JSON.parse(styleMetaScript.textContent);
+                if (payload.defaultCellStyle && typeof payload.defaultCellStyle === 'object') {
+                    this.defaultCellStyle = this.cloneDefaultCellStyle(payload.defaultCellStyle);
+                }
+                if (payload.defaultStyleMeta && typeof payload.defaultStyleMeta === 'object') {
+                    this.defaultStyleMeta = this.cloneStyleMeta(payload.defaultStyleMeta);
+                }
+                if (payload.rowStyles) {
+                    this.rowStyles = this.deserializeMap(payload.rowStyles);
+                }
+                if (payload.columnStyles) {
+                    this.columnStyles = this.deserializeMap(payload.columnStyles);
+                }
+                if (payload.cellStyleMeta) {
+                    this.cellStyleMeta = this.deserializeMap(payload.cellStyleMeta);
+                }
+                if (Number.isFinite(payload.styleSequence)) {
+                    this.styleSequence = payload.styleSequence;
+                }
+            } catch (error) {
+                console.warn('Unable to parse style metadata', error);
+            } finally {
+                styleMetaScript.remove();
+            }
+        }
 
         this.columnWidths = new Map();
         this.rowHeights = new Map();
@@ -4761,6 +5050,47 @@ class SpreadsheetApp {
 
         const commentExport = this.gridContent.querySelector('.comment-export');
         if (commentExport) commentExport.remove();
+    }
+
+    initializeStyleMetadataFromData() {
+        if (!this.defaultStyleMeta) this.defaultStyleMeta = {};
+
+        STYLE_PROPS.forEach(prop => {
+            if (Object.prototype.hasOwnProperty.call(this.defaultCellStyle, prop) && !this.defaultStyleMeta[prop]) {
+                this.defaultStyleMeta[prop] = this.nextStyleSequence();
+            }
+        });
+
+        const seedDimensionMeta = (map) => {
+            if (!(map instanceof Map)) return;
+            map.forEach(entry => {
+                if (!entry || typeof entry !== 'object') return;
+                if (!entry._meta) entry._meta = {};
+                STYLE_PROPS.forEach(prop => {
+                    if (Object.prototype.hasOwnProperty.call(entry, prop) && !entry._meta[prop]) {
+                        entry._meta[prop] = this.nextStyleSequence();
+                    }
+                });
+            });
+        };
+
+        seedDimensionMeta(this.rowStyles);
+        seedDimensionMeta(this.columnStyles);
+
+        this.cellData.forEach((data, coord) => {
+            if (!data || typeof data !== 'object') return;
+            STYLE_PROPS.forEach(prop => {
+                if (Object.prototype.hasOwnProperty.call(data, prop)) {
+                    const meta = this.getCellStyleMeta(coord, true);
+                    if (!meta[prop]) {
+                        meta[prop] = this.nextStyleSequence();
+                    }
+                }
+            });
+        });
+
+        const maxSeq = this.computeMaxStyleSequence();
+        this.styleSequence = Math.max(maxSeq + 1, this.styleSequence || 1);
     }
 
     // Undo/Redo Methods
@@ -5471,6 +5801,12 @@ class SpreadsheetApp {
                 data[key] = this.formatPainter.format[key];
             });
         });
+        const meta = this.getCellStyleMeta(cellKey, true);
+        Object.keys(this.formatPainter.format || {}).forEach(key => {
+            if (STYLE_PROPS.includes(key)) {
+                meta[key] = this.nextStyleSequence();
+            }
+        });
         
         // Update cell display
         this.updateCellDisplay(cell, cellData || {});
@@ -5552,6 +5888,12 @@ class SpreadsheetApp {
                         Object.keys(format).forEach(key => {
                             data[key] = format[key];
                         });
+                    });
+                    const meta = this.getCellStyleMeta(coordKey, true);
+                    Object.keys(format).forEach(key => {
+                        if (STYLE_PROPS.includes(key)) {
+                            meta[key] = this.nextStyleSequence();
+                        }
                     });
                 }
             });
@@ -5677,9 +6019,16 @@ class SpreadsheetApp {
         const [classes, prefix] = configs[type];
         const isToggle = typeof value === 'boolean';
         const remove = isToggle && this.checkIfAllCellsHaveFormat(type);
-        const applyToAll = this.isFullGridSelection();
+        const scope = this.getSelectionScope();
+        const applyToAll = scope.type === 'all';
+        const scopeLabel = (() => {
+            if (applyToAll) return ' (all cells)';
+            if (scope.type === 'rows') return ` (${scope.rows.length} row${scope.rows.length === 1 ? '' : 's'})`;
+            if (scope.type === 'columns') return ` (${scope.cols.length} column${scope.cols.length === 1 ? '' : 's'})`;
+            return '';
+        })();
 
-        this.saveState(`${isToggle ? 'Toggle' : 'Set'} ${type}`);
+        this.saveState(`${isToggle ? 'Toggle' : 'Set'} ${type}${scopeLabel}`);
 
         if (applyToAll) {
             if (isToggle) {
@@ -5701,26 +6050,42 @@ class SpreadsheetApp {
             return;
         }
 
+        if (scope.type === 'rows' || scope.type === 'columns') {
+            const indices = scope.type === 'rows' ? scope.rows : scope.cols;
+            const map = scope.type === 'rows' ? this.rowStyles : this.columnStyles;
+            const newValue = remove ? null : (isToggle ? true : value);
+            indices.forEach(idx => {
+                const entry = this.getDimensionStyle(scope.type === 'rows' ? 'row' : 'column', idx, true);
+                this.setStyleValue(entry, type, newValue);
+                if (this.isStyleEntryEmpty(entry) && (!entry._meta || Object.keys(entry._meta).length === 0)) {
+                    map.delete(idx);
+                }
+            });
+            this.refreshAllVisibleCells();
+            (isToggle ? this.updateFormattingButtons : this.updateAlignmentButtons).call(this);
+            return;
+        }
+
         this.selectedCellCoords.forEach(coord => {
             this.updateCellDataEntry(coord, data => {
-                if (remove) {
-                    delete data[type];
+                const newValue = remove ? null : (isToggle ? true : value);
+                if (newValue === null) {
+                    data[type] = null;
                     if (data.richText && ['bold', 'italic', 'underline', 'strikethrough'].includes(type)) {
                         data.richText = this.clearRichTextFormat(data.richText, type);
                     }
                 } else {
-                    data[type] = isToggle ? true : value;
+                    data[type] = newValue;
                     if (data.richText && ['bold', 'italic', 'underline', 'strikethrough'].includes(type)) {
                         data.richText = this.setRichTextFormat(data.richText, type, true);
                     }
                 }
             });
+            const meta = this.getCellStyleMeta(coord, true);
+            meta[type] = this.nextStyleSequence();
         });
         
         this.selectedCells.forEach(cell => {
-            cell.classList.remove(...classes);
-            !remove && cell.classList.add(prefix ? `${prefix}${value}` : type);
-
             const cellKey = this.getCoord(cell);
             const cellData = this.cellData.get(cellKey) || {};
 
@@ -5868,7 +6233,8 @@ class SpreadsheetApp {
         if (!cell || cell !== this.currentEditingCell) return;
         const editor = cell.querySelector('.cell-editor');
         const wrapper = cell.querySelector('.cell-editor-wrapper');
-        const effective = { ...this.defaultCellStyle, ...cellData };
+        const { row, col } = this.getCellPos(cell);
+        const effective = this.getEffectiveStyle(row, col, cellData);
 
         // Re-align wrapper to match new alignment
         if (wrapper) {
@@ -7101,9 +7467,16 @@ class SpreadsheetApp {
         }
         
         if (!this.hasSelection()) return null;
-        const applyToAll = this.isFullGridSelection();
+        const scope = this.getSelectionScope();
+        const applyToAll = scope.type === 'all';
         const affectedRows = applyToAll ? null : new Set(this.getSelectionPositions().map(pos => pos.row));
-        this.saveState(`Apply font size ${fontSize}px`);
+        const scopeLabel = (() => {
+            if (applyToAll) return ' (all cells)';
+            if (scope.type === 'rows') return ` (${scope.rows.length} row${scope.rows.length === 1 ? '' : 's'})`;
+            if (scope.type === 'columns') return ` (${scope.cols.length} column${scope.cols.length === 1 ? '' : 's'})`;
+            return '';
+        })();
+        this.saveState(`Apply font size ${fontSize}px${scopeLabel}`);
 
         if (applyToAll) {
             this.setDefaultCellProperty('fontSize', fontSize || null);
@@ -7118,6 +7491,27 @@ class SpreadsheetApp {
             this.log(`Set default font size ${fontSize}px for entire grid${finalize ? ' (finalized)' : ''}`);
             return 'all';
         }
+
+        if (scope.type === 'rows' || scope.type === 'columns') {
+            const indices = scope.type === 'rows' ? scope.rows : scope.cols;
+            const map = scope.type === 'rows' ? this.rowStyles : this.columnStyles;
+            indices.forEach(idx => {
+                const entry = this.getDimensionStyle(scope.type === 'rows' ? 'row' : 'column', idx, true);
+                this.setStyleValue(entry, 'fontSize', fontSize || null);
+                if (this.isStyleEntryEmpty(entry) && (!entry._meta || Object.keys(entry._meta).length === 0)) {
+                    map.delete(idx);
+                }
+            });
+            if (scope.type === 'rows') {
+                this.recalculateAutoRowHeights(new Set(indices));
+            } else {
+                this.recalculateAutoRowHeights();
+            }
+            this.refreshAllVisibleCells();
+            this.updateFontSizeInput();
+            this.log(`Applied font size ${fontSize}px to ${scope.type === 'rows' ? 'row' : 'column'} selection${finalize ? ' (finalized)' : ''}`);
+            return scope.type;
+        }
         
         // Update data model
         this.selectedCellCoords.forEach(coord => {
@@ -7128,11 +7522,15 @@ class SpreadsheetApp {
                     delete data.fontSize;
                 }
             });
+            const meta = this.getCellStyleMeta(coord, true);
+            meta.fontSize = this.nextStyleSequence();
         });
 
         // Update DOM
         this.selectedCells.forEach(cell => {
-            cell.style.fontSize = fontSize ? `${fontSize}px` : '';
+            const coord = this.getCoord(cell);
+            const cellData = this.cellData.get(coord) || {};
+            this.updateCellDisplay(cell, cellData);
         });
 
         this.updateFontSizeInput();
@@ -7185,15 +7583,12 @@ class SpreadsheetApp {
         // Get the primary cell's font size or default
         if (this.primaryCellCoord) {
             const cellData = this.cellData.get(this.primaryCellCoord);
-            let fontSize = cellData?.fontSize;
+            let fontSize = this.getEffectiveCellProperty(this.primaryCellCoord, 'fontSize');
             if (fontSize === undefined || fontSize === null) {
                 fontSize = this.getUniformRichTextFontSize(cellData?.richText);
             }
             if (fontSize === undefined || fontSize === null) {
                 fontSize = this.currentEditingCell ? this.lastInlineFontSize : null;
-            }
-            if (fontSize === undefined || fontSize === null) {
-                fontSize = this.defaultCellStyle.fontSize;
             }
             
             if (fontSize) {
@@ -8350,8 +8745,9 @@ class SpreadsheetApp {
         this.currentEditingCell = cell;
         const cellKey = this.getCoord(cell);
         const cellData = this.cellData.get(cellKey);
+        const { row, col } = this.getCellPos(cell);
         const currentText = cellData ? (cellData.value || '') : '';
-        const effectiveStyle = { ...this.defaultCellStyle, ...(cellData || {}) };
+        const effectiveStyle = this.getEffectiveStyle(row, col, cellData);
         const textAlign = effectiveStyle.textAlign || 'left';
         const verticalAlign = effectiveStyle.verticalAlign || 'bottom';
         
@@ -10507,6 +10903,54 @@ class SpreadsheetApp {
         }
     }
 
+    pickStyleValue(row, col, prop, baseData = null) {
+        const coordKey = `${row},${col}`;
+        const cellData = baseData || this.cellData.get(coordKey) || {};
+        const cellMeta = this.getCellStyleMeta(coordKey, false) || {};
+        const rowEntry = this.getDimensionStyle('row', row, false);
+        const colEntry = this.getDimensionStyle('column', col, false);
+        const candidates = [];
+        const addCandidate = (value, seq, priority) => {
+            if (value === undefined) return;
+            const numSeq = Number(seq);
+            candidates.push({
+                value,
+                seq: Number.isFinite(numSeq) ? numSeq : 0,
+                priority
+            });
+        };
+
+        addCandidate(cellData[prop], cellMeta[prop], 3);
+        addCandidate(rowEntry?.[prop], rowEntry?._meta?.[prop], 2);
+        addCandidate(colEntry?.[prop], colEntry?._meta?.[prop], 1);
+        addCandidate(this.defaultCellStyle[prop], this.defaultStyleMeta?.[prop], 0);
+
+        if (!candidates.length) return undefined;
+        candidates.sort((a, b) => {
+            if (a.seq !== b.seq) return b.seq - a.seq;
+            return b.priority - a.priority;
+        });
+        const top = candidates[0];
+        if (top.value === null || top.value === undefined) return undefined;
+        return top.value;
+    }
+
+    getEffectiveStyle(row, col, baseData = null) {
+        const effective = {};
+        STYLE_PROPS.forEach(prop => {
+            const val = this.pickStyleValue(row, col, prop, baseData);
+            if (val !== undefined) {
+                effective[prop] = val;
+            }
+        });
+        return effective;
+    }
+
+    getEffectiveCellProperty(coord, prop) {
+        const { row, col } = this.getCoordPos(coord);
+        return this.pickStyleValue(row, col, prop);
+    }
+
     updateCellDisplay(cell, d = {}) {
         if (cell.classList.contains('editing')) {
             return;
@@ -10567,7 +11011,7 @@ class SpreadsheetApp {
         // Handle text overflow into adjacent cells
         this.handleCellOverflow(cell, displayText, baseData, canUseRichText ? richText : null);
         
-        const effective = { ...this.defaultCellStyle, ...(baseData || {}) };
+        const effective = this.getEffectiveStyle(row, col, baseData);
 
         // If we now have real data, clear any stale ghost markers
         if (hasData && cell.dataset.cutGhost) {
@@ -11630,35 +12074,63 @@ class SpreadsheetApp {
     
     clearCellFormatting() {
         // Save state before clearing
+        const scope = this.getSelectionScope();
         this.saveState(`Clear formatting from ${this.selectedCellCoords.size} cells`);
-        
-        this.selectedCellCoords.forEach(coordKey => {
-            this.updateCellDataEntry(coordKey, data => {
-                delete data.backgroundColor;
-                delete data.bold;
-                delete data.italic;
-                delete data.underline;
-                delete data.strikethrough;
-                delete data.fontSize;
-                delete data.fontColor;
-                delete data.textAlign;
-                delete data.verticalAlign;
+
+        if (scope.type === 'all') {
+            STYLE_PROPS.forEach(prop => this.setDefaultCellProperty(prop, null));
+            this.rowStyles.clear();
+            this.columnStyles.clear();
+            this.cellStyleMeta = new Map();
+            const keysToDelete = [];
+            this.cellData.forEach((data, coord) => {
+                STYLE_PROPS.forEach(prop => delete data[prop]);
                 delete data.borders;
                 delete data.richText;
+                if (this.isCellEffectivelyEmpty(data)) {
+                    keysToDelete.push(coord);
+                }
+            });
+            keysToDelete.forEach(coord => this.cellData.delete(coord));
+            this.refreshAllVisibleCells();
+            this.recalculateAutoRowHeights();
+            this.updateUI();
+            this.refreshPalettes();
+            this.log('Cleared formatting from entire sheet');
+            return;
+        }
+
+        if (scope.type === 'rows' || scope.type === 'columns') {
+            const targets = scope.type === 'rows' ? scope.rows : scope.cols;
+            const map = scope.type === 'rows' ? this.rowStyles : this.columnStyles;
+            targets.forEach(idx => map.delete(idx));
+            this.refreshAllVisibleCells();
+            const affectedRows = scope.type === 'rows' ? new Set(targets) : null;
+            this.recalculateAutoRowHeights(affectedRows);
+            this.updateUI();
+            this.refreshPalettes();
+            this.log(`Cleared formatting from ${scope.type === 'rows' ? 'row' : 'column'} selection`);
+            return;
+        }
+
+        this.selectedCellCoords.forEach(coordKey => {
+            this.updateCellDataEntry(coordKey, data => {
+                STYLE_PROPS.forEach(prop => {
+                    data[prop] = null;
+                });
+                delete data.borders;
+                delete data.richText;
+            });
+            const meta = this.getCellStyleMeta(coordKey, true);
+            STYLE_PROPS.forEach(prop => {
+                meta[prop] = this.nextStyleSequence();
             });
         });
 
         this.selectedCells.forEach(cell => {
-            cell.style.backgroundColor = '';
-            cell.style.fontSize = '';
-            cell.style.color = '';
-            cell.style.borderTop = '';
-            cell.style.borderRight = '';
-            cell.style.borderBottom = '';
-            cell.style.borderLeft = '';
-            cell.classList.remove('bold', 'italic', 'underline', 'strikethrough');
-            cell.classList.remove('align-left', 'align-center', 'align-right',
-                    'align-top', 'align-middle', 'align-bottom');
+            const cellKey = this.getCoord(cell);
+            const cellData = this.cellData.get(cellKey) || {};
+            this.updateCellDisplay(cell, cellData);
         });
 
         this._updateCellsAndAdjacent(this.selectedCells);
@@ -11766,9 +12238,7 @@ class SpreadsheetApp {
         
         for (const coordKey of this.selectedCellCoords) {
             const cellData = this.cellData.get(coordKey);
-            let value = (cellData && Object.prototype.hasOwnProperty.call(cellData, format))
-                ? cellData[format]
-                : this.defaultCellStyle[format];
+            let value = this.getEffectiveCellProperty(coordKey, format);
 
             // If no explicit cell-level flag, only treat as formatted when the entire rich text carries it
             if (!value && cellData && cellData.richText && ['bold', 'italic', 'underline', 'strikethrough'].includes(format)) {
@@ -12783,6 +13253,18 @@ class SpreadsheetApp {
                 summary.colors.forEach(c => colors.add(c.toUpperCase()));
             }
         }
+        if (prop === 'backgroundColor' || prop === 'fontColor') {
+            const collectFromMap = (map) => {
+                if (!(map instanceof Map)) return;
+                map.forEach(entry => {
+                    if (entry && typeof entry === 'object' && entry[prop]) {
+                        colors.add(String(entry[prop]).toUpperCase());
+                    }
+                });
+            };
+            collectFromMap(this.rowStyles);
+            collectFromMap(this.columnStyles);
+        }
         const defaultValue = this.defaultCellStyle[prop];
         if (defaultValue) {
             colors.add(String(defaultValue).toUpperCase());
@@ -12871,8 +13353,15 @@ class SpreadsheetApp {
             this.isToolbarFormattingInteraction = true;
         }
         const cleanRichText = prop === 'fontColor';
-        const applyToAll = this.isFullGridSelection();
-        this.saveState(`Apply ${prop}${applyToAll ? ' (all cells)' : ''}`);
+        const scope = this.getSelectionScope();
+        const applyToAll = scope.type === 'all';
+        const scopeLabel = (() => {
+            if (applyToAll) return ' (all cells)';
+            if (scope.type === 'rows') return ` (${scope.rows.length} row${scope.rows.length === 1 ? '' : 's'})`;
+            if (scope.type === 'columns') return ` (${scope.cols.length} column${scope.cols.length === 1 ? '' : 's'})`;
+            return '';
+        })();
+        this.saveState(`Apply ${prop}${scopeLabel}`);
 
         if (applyToAll) {
             this.setDefaultCellProperty(prop, color || null);
@@ -12900,15 +13389,32 @@ class SpreadsheetApp {
             return;
         }
 
+        if (scope.type === 'rows' || scope.type === 'columns') {
+            const indices = scope.type === 'rows' ? scope.rows : scope.cols;
+            const map = scope.type === 'rows' ? this.rowStyles : this.columnStyles;
+            indices.forEach(idx => {
+                const entry = this.getDimensionStyle(scope.type === 'rows' ? 'row' : 'column', idx, true);
+                this.setStyleValue(entry, prop, color || null);
+                if (this.isStyleEntryEmpty(entry) && (!entry._meta || Object.keys(entry._meta).length === 0)) {
+                    map.delete(idx);
+                }
+            });
+            if (scope.type === 'rows') {
+                this.recalculateAutoRowHeights(new Set(indices));
+            } else {
+                this.recalculateAutoRowHeights();
+            }
+            this.refreshAllVisibleCells();
+            updateFn.call(this);
+            this.resumeEditingAfterToolbar();
+            return;
+        }
+
         const coordsNeedingRefresh = new Set();
 
         this.selectedCellCoords.forEach(c => {
             this.updateCellDataEntry(c, data => {
-                if (color) {
-                    data[prop] = color;
-                } else {
-                    delete data[prop];
-                }
+                data[prop] = color || null;
                 if (cleanRichText && data.richText) {
                     const cleaned = this.stripInlineFontColorFromHtml(data.richText);
                     if (cleaned !== data.richText) {
@@ -12921,17 +13427,17 @@ class SpreadsheetApp {
                     }
                 }
             });
+            const meta = this.getCellStyleMeta(c, true);
+            meta[prop] = this.nextStyleSequence();
         });
         
         this.selectedCells.forEach(el => {
-            el.style[styleProp] = color || '';
-            if (cleanRichText) {
-                const coord = this.getCoord(el);
-                if (coordsNeedingRefresh.has(coord) && !el.classList.contains('editing')) {
-                    const cellData = this.cellData.get(coord) || {};
-                    this.updateCellDisplay(el, cellData);
-                }
+            const coord = this.getCoord(el);
+            if (cleanRichText && coordsNeedingRefresh.has(coord) && el.classList.contains('editing')) {
+                return;
             }
+            const cellData = this.cellData.get(coord) || {};
+            this.updateCellDisplay(el, cellData);
         });
         updateFn.call(this);
 
@@ -12973,15 +13479,7 @@ class SpreadsheetApp {
         let allSame = true;
         
         for (const coord of this.selectedCellCoords) {
-            const data = this.cellData.get(coord);
-            let value;
-            if (data && Object.prototype.hasOwnProperty.call(data, property)) {
-                value = data[property];
-            } else if (Object.prototype.hasOwnProperty.call(this.defaultCellStyle, property)) {
-                value = this.defaultCellStyle[property];
-            } else {
-                value = null;
-            }
+            const value = this.getEffectiveCellProperty(coord, property);
             if (!initialized) {
                 commonValue = value;
                 initialized = true;
@@ -12992,7 +13490,8 @@ class SpreadsheetApp {
         }
         
         if (!initialized) return { hasValue: false, value: null, allSame: false };
-        return { hasValue: true, value: commonValue, allSame };
+        const hasValue = commonValue !== undefined && commonValue !== null;
+        return { hasValue, value: commonValue, allSame };
     }
 
     _resolveSharedBorder(ownBorder, neighborBorder, neighborActive, preferNeighbor) {
@@ -15887,6 +16386,19 @@ class SpreadsheetApp {
             });
         }
 
+        if (this.rowStyles instanceof Map) {
+            this.rowStyles.forEach((_, key) => {
+                const row = Number(key);
+                if (Number.isInteger(row) && row > maxRow) maxRow = row;
+            });
+        }
+        if (this.columnStyles instanceof Map) {
+            this.columnStyles.forEach((_, key) => {
+                const col = Number(key);
+                if (Number.isInteger(col) && col > maxCol) maxCol = col;
+            });
+        }
+
         if (maxRow < minRow) maxRow = minRow;
         if (maxCol < minCol) maxCol = minCol;
 
@@ -15984,6 +16496,7 @@ class SpreadsheetApp {
                 const coordKey = `${row},${col}`;
                 if (this.cellToMergeParent.has(coordKey)) continue;
                 const cellData = this.cellData.get(coordKey) || {};
+                const effectiveStyle = this.getEffectiveStyle(row, col, cellData);
                 const datasets = [`data-col="${col}"`];
                 const styles = [];
                 const extraAttributes = [];
@@ -16061,41 +16574,48 @@ class SpreadsheetApp {
                 const richHtml = canUseRich ? this.sanitizeRichTextHTML(cellData.richText) : '';
                 if (cellData.backgroundColor) {
                     datasets.push(`data-bg="${escapeAttribute(cellData.backgroundColor)}"`);
-                    styles.push(`background-color:${cellData.backgroundColor}`);
+                }
+                if (effectiveStyle.backgroundColor) {
+                    styles.push(`background-color:${effectiveStyle.backgroundColor}`);
                 }
                 if (cellData.fontColor) {
                     datasets.push(`data-font="${escapeAttribute(cellData.fontColor)}"`);
-                    styles.push(`color:${cellData.fontColor}`);
+                }
+                if (effectiveStyle.fontColor) {
+                    styles.push(`color:${effectiveStyle.fontColor}`);
                 }
                 if (cellData.fontSize) {
                     datasets.push(`data-size="${escapeAttribute(String(cellData.fontSize))}"`);
-                    styles.push(`font-size:${cellData.fontSize}px`);
+                }
+                if (effectiveStyle.fontSize) {
+                    styles.push(`font-size:${effectiveStyle.fontSize}px`);
                 }
                 const textDecorations = [];
 
-                if (cellData.bold) {
-                    datasets.push('data-bold="true"');
-                    styles.push('font-weight:bold');
-                }
-                if (cellData.italic) {
-                    datasets.push('data-italic="true"');
-                    styles.push('font-style:italic');
-                }
-                if (cellData.underline) {
-                    datasets.push('data-underline="true"');
-                    textDecorations.push('underline');
-                }
-                if (cellData.strikethrough) {
-                    datasets.push('data-strikethrough="true"');
-                    textDecorations.push('line-through');
-                }
+                if (cellData.bold) datasets.push('data-bold="true"');
+                if (effectiveStyle.bold) styles.push('font-weight:bold');
+
+                if (cellData.italic) datasets.push('data-italic="true"');
+                if (effectiveStyle.italic) styles.push('font-style:italic');
+
+                if (cellData.underline) datasets.push('data-underline="true"');
+                if (effectiveStyle.underline) textDecorations.push('underline');
+
+                if (cellData.strikethrough) datasets.push('data-strikethrough="true"');
+                if (effectiveStyle.strikethrough) textDecorations.push('line-through');
+
                 if (cellData.textAlign) {
                     datasets.push(`data-align="${escapeAttribute(cellData.textAlign)}"`);
-                    styles.push(`text-align:${cellData.textAlign}`);
                 }
+                if (effectiveStyle.textAlign) {
+                    styles.push(`text-align:${effectiveStyle.textAlign}`);
+                }
+
                 if (cellData.verticalAlign) {
                     datasets.push(`data-valign="${escapeAttribute(cellData.verticalAlign)}"`);
-                    styles.push(`vertical-align:${cellData.verticalAlign}`);
+                }
+                if (effectiveStyle.verticalAlign) {
+                    styles.push(`vertical-align:${effectiveStyle.verticalAlign}`);
                 }
                 if (displayText.includes('\n')) {
                     styles.push('white-space:pre-wrap');
@@ -16179,6 +16699,18 @@ class SpreadsheetApp {
 
         rows.push('                        </tbody>');
         rows.push('                    </table>');
+        const styleMeta = {
+            defaultCellStyle: this.cloneDefaultCellStyle(this.defaultCellStyle),
+            defaultStyleMeta: this.cloneStyleMeta(this.defaultStyleMeta),
+            rowStyles: this.serializeMap(this.rowStyles),
+            columnStyles: this.serializeMap(this.columnStyles),
+            cellStyleMeta: this.serializeMap(this.cellStyleMeta),
+            styleSequence: this.styleSequence
+        };
+        const serializedMeta = JSON.stringify(styleMeta)
+            .replace(/</g, '\\u003c')
+            .replace(/<\/script/gi, '<\\/script');
+        rows.push(`                    <script type="application/json" data-spreadsheet-style-meta="true">${serializedMeta}</script>`);
         if (commentEntries.length) {
             const sortedComments = commentEntries.sort((a, b) => {
                 const [rowA, colA] = this.parseCoord(a.coord);
