@@ -8325,6 +8325,9 @@ class SpreadsheetApp {
         const plural = effectiveCount > 1 ? 's' : '';
         this.saveState(`Delete ${isRow ? 'row' : 'column'}${plural} at ${referenceLabel}`);
 
+        const mergeParentDataSnapshot = this.snapshotMergeParentData();
+        const mergeAdjustment = this.adjustMergedCellsForDeletion(axis, startIndex, effectiveCount);
+
         this.shiftCellDataForDeletion(axis, startIndex, effectiveCount);
 
             if (isRow) {
@@ -8338,6 +8341,10 @@ class SpreadsheetApp {
                 this.columnStyles = this.shiftIndexedMap(this.columnStyles, startIndex, -effectiveCount, limit, effectiveCount);
             }
             this.shiftCellStyleMetaForDeletion(axis, startIndex, effectiveCount);
+
+        if (mergeAdjustment) {
+            this.applyMergedCellAdjustment(mergeAdjustment, mergeParentDataSnapshot);
+        }
 
         if (this.clipboard?.sourceCells instanceof Set) {
             this.shiftCoordSetForStructureChange(this.clipboard.sourceCells, axis, startIndex, effectiveCount, 'delete');
@@ -8443,6 +8450,122 @@ class SpreadsheetApp {
             }
         });
         this.cellStyleMeta = updated;
+    }
+
+    snapshotMergeParentData() {
+        const snapshot = new Map();
+        if (!(this.mergedCells instanceof Map) || this.mergedCells.size === 0) {
+            return snapshot;
+        }
+        this.mergedCells.forEach((_, coordKey) => {
+            if (this.cellData.has(coordKey)) {
+                snapshot.set(coordKey, this.cloneCellRecord(this.cellData.get(coordKey)));
+            }
+        });
+        return snapshot;
+    }
+
+    adjustMergedCellsForDeletion(axis, startIndex, count) {
+        if (!(this.mergedCells instanceof Map) || this.mergedCells.size === 0) {
+            return null;
+        }
+
+        const isRow = axis === 'row';
+        const removalEnd = startIndex + count - 1;
+        const newMergedCells = new Map();
+        const newCellToMergeParent = new Map();
+        const mappings = [];
+
+        const transformIndex = (idx) => {
+            if (idx < startIndex) return idx;
+            if (idx > removalEnd) return idx - count;
+            return null;
+        };
+
+        this.mergedCells.forEach((info, coordKey) => {
+            const { row, col } = this.parseCoord(coordKey);
+            if (!Number.isInteger(row) || !Number.isInteger(col) || !info) return;
+
+            const rowIndices = [];
+            const colIndices = [];
+            for (let r = 0; r < info.rows; r++) rowIndices.push(row + r);
+            for (let c = 0; c < info.cols; c++) colIndices.push(col + c);
+
+            const adjustedRows = rowIndices
+                .map(idx => (isRow ? transformIndex(idx) : idx))
+                .filter(idx => idx !== null);
+            const adjustedCols = colIndices
+                .map(idx => (!isRow ? transformIndex(idx) : idx))
+                .filter(idx => idx !== null);
+
+            if (!adjustedRows.length || !adjustedCols.length) {
+                return; // Merge removed entirely
+            }
+
+            const minRow = Math.min(...adjustedRows);
+            const maxRow = Math.max(...adjustedRows);
+            const minCol = Math.min(...adjustedCols);
+            const maxCol = Math.max(...adjustedCols);
+            const rows = maxRow - minRow + 1;
+            const cols = maxCol - minCol + 1;
+
+            // A 1x1 result no longer represents a merge; drop the merge but keep data mapping info.
+            if (rows === 1 && cols === 1) {
+                mappings.push({
+                    from: coordKey,
+                    to: `${minRow},${minCol}`,
+                    parentRemoved: isRow ? (row >= startIndex && row <= removalEnd) : (col >= startIndex && col <= removalEnd)
+                });
+                return;
+            }
+
+            const parentCoord = `${minRow},${minCol}`;
+            const childCells = new Set();
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const childCoord = `${minRow + r},${minCol + c}`;
+                    if (r === 0 && c === 0) continue;
+                    childCells.add(childCoord);
+                    newCellToMergeParent.set(childCoord, parentCoord);
+                }
+            }
+
+            newMergedCells.set(parentCoord, { rows, cols, childCells });
+            mappings.push({
+                from: coordKey,
+                to: parentCoord,
+                parentRemoved: isRow ? (row >= startIndex && row <= removalEnd) : (col >= startIndex && col <= removalEnd)
+            });
+        });
+
+        return {
+            mergedCells: newMergedCells,
+            cellToMergeParent: newCellToMergeParent,
+            mappings
+        };
+    }
+
+    applyMergedCellAdjustment(adjustment, mergeParentDataSnapshot = new Map()) {
+        if (!adjustment) return;
+        const { mergedCells, cellToMergeParent, mappings } = adjustment;
+
+        if (mergedCells instanceof Map) {
+            this.mergedCells = mergedCells;
+        }
+        if (cellToMergeParent instanceof Map) {
+            this.cellToMergeParent = cellToMergeParent;
+        }
+
+        if (Array.isArray(mappings) && mappings.length && mergeParentDataSnapshot instanceof Map) {
+            mappings.forEach(({ from, to, parentRemoved }) => {
+                if (!to || !mergeParentDataSnapshot.has(from)) return;
+                const existing = this.cellData.get(to);
+                if (!existing && parentRemoved) {
+                    this.cellData.set(to, this.cloneCellRecord(mergeParentDataSnapshot.get(from)));
+                }
+            });
+        }
     }
 
     shiftIndexedMap(map, startIndex, delta, limit, removeCount = 0) {
