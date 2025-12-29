@@ -9650,9 +9650,12 @@ class SpreadsheetApp {
         // Save state before clearing
         this.saveState(`Clear content of ${this.selectedCellCoords.size} cells`);
         
+        const affectedRows = new Set();
         this.selectedCellCoords.forEach(coordKey => {
+            affectedRows.add(this.getCoordPos(coordKey).row);
             this.updateCellDataEntry(coordKey, data => {
                 delete data.value;
+                delete data.richText;
                 delete data.linkUrl;
             });
         });
@@ -9666,6 +9669,7 @@ class SpreadsheetApp {
         this._updateCellsAndAdjacent(this.selectedCells);
 
         this.updateFormulaBar();
+        this.recalculateAutoRowHeights(affectedRows);
         this.log(`Cleared content of ${this.selectedCellCoords.size} cells`);
     }
 
