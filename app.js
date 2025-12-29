@@ -6529,6 +6529,31 @@ class SpreadsheetApp {
         }
     }
 
+    attachEditorSelectionListener(editor) {
+        this.detachEditorSelectionListener();
+        if (!editor) return;
+        const handler = () => {
+            if (!this.currentEditingCell) return;
+            const activeEditor = this.currentEditingCell.querySelector('.cell-editor');
+            if (!activeEditor || activeEditor !== editor) return;
+            const selection = window.getSelection();
+            if (!selection || !selection.rangeCount) return;
+            const range = selection.getRangeAt(0);
+            if (!activeEditor.contains(range.commonAncestorContainer)) return;
+            this.saveEditorSelection(activeEditor);
+            this.updateFormattingButtons();
+        };
+        this.editorSelectionListener = handler;
+        document.addEventListener('selectionchange', handler);
+    }
+
+    detachEditorSelectionListener() {
+        if (this.editorSelectionListener) {
+            document.removeEventListener('selectionchange', this.editorSelectionListener);
+            this.editorSelectionListener = null;
+        }
+    }
+
     syncEditorToFormulaBar(editor) {
         if (!editor || !this.formulaInput) return;
         this.formulaInput.value = editor.textContent || '';
@@ -9067,6 +9092,10 @@ class SpreadsheetApp {
             this.placeCaretAtEnd(input);
         }
         this.saveEditorSelection(input);
+        // Immediately reflect inline formatting (e.g., bold, color) when editing begins
+        // so the toolbar updates without requiring an extra click.
+        this.updateFormattingButtons();
+        this.attachEditorSelectionListener(input);
 
         this.formulaInput.value = currentText;
 
@@ -9259,6 +9288,7 @@ class SpreadsheetApp {
         const cell = this.currentEditingCell;
         if (!cell) return;
 
+        this.detachEditorSelectionListener();
         this.lastInlineFontSize = null;
         this.isToolbarFormattingInteraction = false;
         const input = cell.querySelector('.cell-editor');
