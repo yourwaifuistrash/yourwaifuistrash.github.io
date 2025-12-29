@@ -563,6 +563,7 @@ class SpreadsheetApp {
         this.isPaletteInteraction = false;
         this.isFontSizeEditing = false;
         this.isPaletteFieldEditing = false;
+        this.skipNextFontSizeChange = false;
         this.lastInlineFontSize = null;
         this.pendingEditorRefocus = false;
         this.editorBlurTimeout = null;
@@ -5555,7 +5556,14 @@ class SpreadsheetApp {
             ['#fontSizeInput', 'keydown', e => {
                 if (e.key === 'Enter') { 
                     e.preventDefault(); 
-                    this.handleFontSizeChange(e, { finalize: true }); 
+                    this.handleFontSizeChange(e, { finalize: true });
+                    this.skipNextFontSizeChange = true;
+                    if (e.target && typeof e.target.blur === 'function') {
+                        e.target.blur();
+                    }
+                    setTimeout(() => {
+                        this.skipNextFontSizeChange = false;
+                    }, 0);
                 }
             }],
             [this.commentPopoverReplyBtn, 'click', () => this.handleCommentReply()],
@@ -6542,6 +6550,7 @@ class SpreadsheetApp {
             if (!activeEditor.contains(range.commonAncestorContainer)) return;
             this.saveEditorSelection(activeEditor);
             this.updateFormattingButtons();
+            this.updateFontSizeInput();
         };
         this.editorSelectionListener = handler;
         document.addEventListener('selectionchange', handler);
@@ -7466,11 +7475,17 @@ class SpreadsheetApp {
     }
     
     handleFontSizeChange(event, { finalize = false } = {}) {
+        if (this.skipNextFontSizeChange) {
+            // Avoid reapplying the size when the blur-triggered change fires after an Enter commit.
+            this.skipNextFontSizeChange = false;
+            return;
+        }
         if (this.currentEditingCell && finalize) {
             this.pendingEditorRefocus = true;
             this.isToolbarFormattingInteraction = true;
         }
         const input = document.getElementById('fontSizeInput');
+        if (!input) return;
         const raw = input.value.trim();
         if (!raw.length) return;
         const size = parseInt(raw, 10);
@@ -9095,6 +9110,7 @@ class SpreadsheetApp {
         // Immediately reflect inline formatting (e.g., bold, color) when editing begins
         // so the toolbar updates without requiring an extra click.
         this.updateFormattingButtons();
+        this.updateFontSizeInput();
         this.attachEditorSelectionListener(input);
 
         this.formulaInput.value = currentText;
@@ -9124,10 +9140,12 @@ class SpreadsheetApp {
             this.syncEditorToFormulaBar(input);
             captureSelection();
             this.updateFormattingButtons();
+            this.updateFontSizeInput();
         });
         ['select', 'keyup', 'mouseup'].forEach(evt => input.addEventListener(evt, () => {
             captureSelection();
             this.updateFormattingButtons();
+            this.updateFontSizeInput();
         }));
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
