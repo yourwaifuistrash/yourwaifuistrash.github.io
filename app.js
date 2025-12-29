@@ -1882,8 +1882,8 @@ class SpreadsheetApp {
             const before = initial.get(coord);
             const after = current.get(coord);
 
-            const beforeEmpty = this.isCellEffectivelyEmpty(before);
-            const afterEmpty = this.isCellEffectivelyEmpty(after);
+            const beforeEmpty = this.isCellEffectivelyEmpty(before, { ignoreClearedStyles: true });
+            const afterEmpty = this.isCellEffectivelyEmpty(after, { ignoreClearedStyles: true });
             if (beforeEmpty && afterEmpty) return;
 
             const { row, col } = this.getCoordPos(coord);
@@ -1970,29 +1970,106 @@ class SpreadsheetApp {
             return rowA === rowB ? colA - colB : rowA - rowB;
         });
 
+        const getSnapshotEntry = (map, idx) => {
+            if (!(map instanceof Map)) return null;
+            if (map.has(idx)) return map.get(idx);
+            const str = String(idx);
+            return map.has(str) ? map.get(str) : null;
+        };
+
+        const makeSnapshot = (cellDataMap, rowStyles, columnStyles, defaultStyle, cellStyleMeta, defaultStyleMeta) => ({
+            cellDataMap,
+            rowStyles,
+            columnStyles,
+            defaultStyle: defaultStyle || {},
+            cellStyleMeta,
+            defaultStyleMeta: defaultStyleMeta || {}
+        });
+
+        const beforeSnapshot = makeSnapshot(
+            initial,
+            this.initialRowStyles,
+            this.initialColumnStyles,
+            this.initialDefaultCellStyle,
+            this.initialCellStyleMeta,
+            this.initialDefaultStyleMeta
+        );
+        const afterSnapshot = makeSnapshot(
+            current,
+            this.rowStyles,
+            this.columnStyles,
+            this.defaultCellStyle,
+            this.cellStyleMeta,
+            this.defaultStyleMeta
+        );
+
+        const resolveEffectiveStyle = (snapshot, row, col, baseRecord = {}) => {
+            const resolved = { ...(baseRecord || {}) };
+            const coordKey = `${row},${col}`;
+            const cellData = snapshot.cellDataMap?.get(coordKey) || {};
+            const cellMeta = snapshot.cellStyleMeta instanceof Map ? snapshot.cellStyleMeta.get(coordKey) || {} : {};
+            const rowEntry = getSnapshotEntry(snapshot.rowStyles, row);
+            const colEntry = getSnapshotEntry(snapshot.columnStyles, col);
+            const addCandidate = (list, value, seq, priority) => {
+                if (value === undefined) return;
+                const numSeq = Number(seq);
+                list.push({
+                    value,
+                    seq: Number.isFinite(numSeq) ? numSeq : 0,
+                    priority
+                });
+            };
+
+            STYLE_PROPS.forEach(prop => {
+                const candidates = [];
+                addCandidate(candidates, cellData[prop], cellMeta[prop], 3);
+                addCandidate(candidates, rowEntry?.[prop], rowEntry?._meta?.[prop], 2);
+                addCandidate(candidates, colEntry?.[prop], colEntry?._meta?.[prop], 1);
+                addCandidate(candidates, snapshot.defaultStyle?.[prop], snapshot.defaultStyleMeta?.[prop], 0);
+                if (!candidates.length) {
+                    delete resolved[prop];
+                    return;
+                }
+                candidates.sort((a, b) => {
+                    if (a.seq !== b.seq) return b.seq - a.seq;
+                    return b.priority - a.priority;
+                });
+                const top = candidates[0];
+                if (top.value === null || top.value === undefined) {
+                    delete resolved[prop];
+                    return;
+                }
+                resolved[prop] = top.value;
+            });
+
+            return resolved;
+        };
+
         const entries = [];
         let total = 0;
         let truncated = false;
 
         sortedCoords.forEach(coord => {
-            const before = initial.get(coord);
-            const after = current.get(coord);
-            const beforeEmpty = this.isCellEffectivelyEmpty(before);
-            const afterEmpty = this.isCellEffectivelyEmpty(after);
+            const beforeRaw = initial.get(coord);
+            const afterRaw = current.get(coord);
+            const { row, col } = this.getCoordPos(coord);
+            const before = resolveEffectiveStyle(beforeSnapshot, row, col, beforeRaw ? { ...beforeRaw } : {});
+            const after = resolveEffectiveStyle(afterSnapshot, row, col, afterRaw ? { ...afterRaw } : {});
+            const beforeEmpty = this.isCellEffectivelyEmpty(before, { ignoreClearedStyles: true });
+            const afterEmpty = this.isCellEffectivelyEmpty(after, { ignoreClearedStyles: true });
             if (beforeEmpty && afterEmpty) {
                 return;
             }
 
-            const { row, col } = this.getCoordPos(coord);
             const changeType = beforeEmpty ? 'added' : afterEmpty ? 'removed' : 'modified';
             const beforeSize = {
                 width: this.getSnapshotColumnWidth(this.initialColumnWidths, col),
-            height: this.getSnapshotRowHeight(this.initialRowHeights, row, this.initialAutoRowHeights, this.initialDefaultRowHeight, this.initialRowDefaultHeightOverrides)
-        };
-        const afterSize = {
-            width: this.getColumnWidth(col),
-            height: this.getRowHeight(row)
-        };
+                height: this.getSnapshotRowHeight(this.initialRowHeights, row, this.initialAutoRowHeights, this.initialDefaultRowHeight, this.initialRowDefaultHeightOverrides)
+            };
+            const afterSize = {
+                width: this.getColumnWidth(col),
+                height: this.getRowHeight(row)
+            };
             const beforeMode = this.getRowHeightMode(this.initialRowHeightModes, row, 'implicit');
             const afterMode = this.getRowHeightMode(this.rowHeightModes, row, 'implicit');
             let baseChanges = [];
@@ -2010,7 +2087,7 @@ class SpreadsheetApp {
             });
             const combinedChanges = baseChanges.concat(sizeChanges);
 
-            const includeEntry = changeType !== 'modified' || combinedChanges.length > 0;
+            const includeEntry = combinedChanges.length > 0;
             if (!includeEntry) {
                 return;
             }
@@ -4148,8 +4225,11 @@ class SpreadsheetApp {
     }
 
     normalizeField(value, key) {
+        // Treat "cleared" styles as falling back to the current default value so diffs
+        // reflect the effective state instead of a noisy "cleared" marker.
         if (STYLE_PROPS.includes(key) && value === null) {
-            return 'cleared';
+            const fallback = this.defaultCellStyle?.[key];
+            value = fallback !== undefined ? fallback : undefined;
         }
 
         if (key === 'bold' || key === 'italic' || key === 'underline' || key === 'strikethrough') {
@@ -4768,11 +4848,23 @@ class SpreadsheetApp {
         };
     }
 
-    isCellEffectivelyEmpty(data) {
+    isCellEffectivelyEmpty(data, { ignoreClearedStyles = false } = {}) {
         if (!data || typeof data !== 'object') return true;
 
         if (data.value !== undefined && data.value !== null && data.value !== '') return false;
-        if (STYLE_PROPS.some(prop => Object.prototype.hasOwnProperty.call(data, prop))) return false;
+        const hasStyleProp = STYLE_PROPS.some(prop => Object.prototype.hasOwnProperty.call(data, prop));
+        if (hasStyleProp) {
+            if (ignoreClearedStyles) {
+                const hasRealStyle = STYLE_PROPS.some(prop => {
+                    if (!Object.prototype.hasOwnProperty.call(data, prop)) return false;
+                    const val = data[prop];
+                    return val !== null && val !== undefined;
+                });
+                if (hasRealStyle) return false;
+            } else {
+                return false;
+            }
+        }
         if (data.linkUrl) return false;
         const normalizedComment = this.normalizeCommentData(data.comment);
         if (normalizedComment?.text) return false;
@@ -12408,6 +12500,50 @@ class SpreadsheetApp {
         // Save state before clearing
         const scope = this.getSelectionScope();
         this.saveState(`Clear formatting from ${this.selectedCellCoords.size} cells`);
+        const clearFormattingForCoords = (coordSet) => {
+            const affectedRows = new Set();
+            coordSet.forEach(coordKey => {
+                const { row, col } = this.getCoordPos(coordKey);
+                const beforeData = this.cellData.get(coordKey) || {};
+                const rowEntry = this.getDimensionStyle('row', row, false);
+                const colEntry = this.getDimensionStyle('column', col, false);
+                const inheritedProps = STYLE_PROPS.filter(prop =>
+                    (rowEntry && rowEntry[prop] !== undefined) ||
+                    (colEntry && colEntry[prop] !== undefined)
+                );
+                const hadOwnStyle = STYLE_PROPS.some(prop => beforeData[prop] !== undefined);
+                const hadOtherFormatting = (beforeData.borders && Object.values(beforeData.borders).some(Boolean)) || Boolean(beforeData.richText);
+                const needsOverride = inheritedProps.length > 0;
+
+                // If there's nothing to clear or override, skip this coord
+                if (!needsOverride && !hadOwnStyle && !hadOtherFormatting) {
+                    return;
+                }
+
+                affectedRows.add(row);
+                this.updateCellDataEntry(coordKey, data => {
+                    STYLE_PROPS.forEach(prop => {
+                        const inherited = inheritedProps.includes(prop);
+                        if (inherited) {
+                            data[prop] = null;
+                        } else {
+                            delete data[prop];
+                        }
+                    });
+                    delete data.borders;
+                    delete data.richText;
+                });
+                const meta = this.getCellStyleMeta(coordKey, true);
+                STYLE_PROPS.forEach(prop => {
+                    if (inheritedProps.includes(prop)) {
+                        meta[prop] = this.nextStyleSequence();
+                    } else if (meta && Object.prototype.hasOwnProperty.call(meta, prop)) {
+                        delete meta[prop];
+                    }
+                });
+            });
+            return affectedRows;
+        };
 
         if (scope.type === 'all') {
             STYLE_PROPS.forEach(prop => this.setDefaultCellProperty(prop, null));
@@ -12436,8 +12572,8 @@ class SpreadsheetApp {
             const targets = scope.type === 'rows' ? scope.rows : scope.cols;
             const map = scope.type === 'rows' ? this.rowStyles : this.columnStyles;
             targets.forEach(idx => map.delete(idx));
+            const affectedRows = clearFormattingForCoords(this.selectedCellCoords);
             this.refreshAllVisibleCells();
-            const affectedRows = scope.type === 'rows' ? new Set(targets) : null;
             this.recalculateAutoRowHeights(affectedRows);
             this.updateUI();
             this.refreshPalettes();
@@ -12445,19 +12581,7 @@ class SpreadsheetApp {
             return;
         }
 
-        this.selectedCellCoords.forEach(coordKey => {
-            this.updateCellDataEntry(coordKey, data => {
-                STYLE_PROPS.forEach(prop => {
-                    data[prop] = null;
-                });
-                delete data.borders;
-                delete data.richText;
-            });
-            const meta = this.getCellStyleMeta(coordKey, true);
-            STYLE_PROPS.forEach(prop => {
-                meta[prop] = this.nextStyleSequence();
-            });
-        });
+        const affectedRows = clearFormattingForCoords(this.selectedCellCoords);
 
         this.selectedCells.forEach(cell => {
             const cellKey = this.getCoord(cell);
@@ -12467,7 +12591,6 @@ class SpreadsheetApp {
 
         this._updateCellsAndAdjacent(this.selectedCells);
 
-        const affectedRows = new Set(Array.from(this.selectedCellCoords, coord => this.getCoordPos(coord).row));
         this.recalculateAutoRowHeights(affectedRows);
 
         this.updateUI();
