@@ -2211,6 +2211,41 @@ class SpreadsheetApp {
                 return map.has(str) ? map.get(str) : null;
             };
 
+            const describeOverrides = (styleSnapshot, index) => {
+                if (!styleSnapshot || typeof styleSnapshot !== 'object') return null;
+                const hasValue = STYLE_PROPS.some(prop => styleSnapshot[prop] !== undefined && styleSnapshot[prop] !== null);
+                if (!hasValue) return null;
+                const overridesByAddr = new Map();
+                this.cellData.forEach((data, coord) => {
+                    const pos = this.getCoordPos(coord);
+                    if (kind === 'row' && pos.row !== index) return;
+                    if (kind === 'column' && pos.col !== index) return;
+                    STYLE_PROPS.forEach(prop => {
+                        const styleVal = styleSnapshot[prop];
+                        if (styleVal === undefined || styleVal === null) return;
+                        if (!Object.prototype.hasOwnProperty.call(data, prop)) return;
+                        const cellVal = data[prop];
+                        if (cellVal === styleVal) return;
+                        const addr = this.getCellAddress(pos.row, pos.col);
+                        const list = overridesByAddr.get(addr) || [];
+                        const reason = cellVal === null || cellVal === undefined
+                            ? 'cleared'
+                            : this.normalizeField(cellVal, prop);
+                        list.push(`${this.getStyleLabel(prop)} ${reason}`);
+                        overridesByAddr.set(addr, list);
+                    });
+                });
+                if (!overridesByAddr.size) return null;
+                const entries = Array.from(overridesByAddr.entries()).map(([addr, props]) => {
+                    return `${addr} (${props.join(', ')})`;
+                });
+                const maxEntries = 6;
+                const visible = entries.slice(0, maxEntries);
+                const remaining = entries.length - visible.length;
+                const suffix = remaining > 0 ? ` (+${remaining} more)` : '';
+                return `exceptions: ${visible.join('; ')}${suffix}`;
+            };
+
             indices.forEach(rawIndex => {
                 const index = Number(rawIndex);
                 if (!Number.isInteger(index)) return;
@@ -2218,6 +2253,8 @@ class SpreadsheetApp {
                 const after = this.extractStyleSnapshot(getEntry(currentMap, index) || {});
                 const styleChanges = this.describeStyleDifferences(before, after);
                 if (!styleChanges.length) return;
+                const overridesNote = describeOverrides(after, index);
+                const changes = overridesNote ? styleChanges.concat([overridesNote]) : styleChanges;
 
                 const coordKey = `${kind}Style:${index}`;
                 total += 1;
@@ -2234,7 +2271,7 @@ class SpreadsheetApp {
                         after,
                         beforeSize: null,
                         afterSize: null,
-                        changes: styleChanges,
+                        changes,
                         meta: { kind: `${kind}Style`, index }
                     };
                     extraEntries.push(entry);
