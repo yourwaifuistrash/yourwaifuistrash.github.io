@@ -7628,9 +7628,11 @@ class SpreadsheetApp {
         const clamped = finalize ? Math.max(6, Math.min(200, size)) : Math.min(200, size);
         if (finalize) input.value = clamped;
         this.applyFontSize(clamped, { finalize });
-        if (finalize && this.currentEditingCell) {
+        if (finalize) {
             this.isFontSizeEditing = false;
-            setTimeout(() => this.resumeEditingAfterToolbar(), 0);
+            if (this.currentEditingCell) {
+                setTimeout(() => this.resumeEditingAfterToolbar(), 0);
+            }
         }
     }
 
@@ -7752,9 +7754,9 @@ class SpreadsheetApp {
     updateFontSizeInput() {
         const fontSizeInput = document.getElementById('fontSizeInput');
         if (!fontSizeInput) return;
-        
+
         // Do not override while the user is actively typing a size.
-        if (document.activeElement === fontSizeInput) {
+        if (document.activeElement === fontSizeInput && this.isFontSizeEditing) {
             return;
         }
 
@@ -7793,6 +7795,14 @@ class SpreadsheetApp {
         } else {
             fontSizeInput.value = '';
         }
+    }
+
+    blurFontSizeInputIfFocused(event) {
+        const fontSizeInput = document.getElementById('fontSizeInput');
+        if (!fontSizeInput) return;
+        if (document.activeElement !== fontSizeInput) return;
+        if (event && fontSizeInput.contains(event.target)) return;
+        fontSizeInput.blur();
     }
     
     selectRange(type, index, addToSelection = false) {
@@ -7840,6 +7850,9 @@ class SpreadsheetApp {
         const header = event.target.closest(`.${type}-header`);
         if (!header) return;
         
+        this.blurFontSizeInputIfFocused(event);
+        this.isFontSizeEditing = false;
+
         const index = parseInt(header.dataset[type === 'column' ? 'col' : 'row']);
         const isCtrlPressed = event.ctrlKey || event.metaKey;
         
@@ -7914,6 +7927,8 @@ class SpreadsheetApp {
 
     handleCornerCellClick(event) {
         // Select all cells in the spreadsheet
+        this.blurFontSizeInputIfFocused(event);
+        this.isFontSizeEditing = false;
         this.selectAllCells();
     }
     
@@ -7993,6 +8008,9 @@ class SpreadsheetApp {
         if (event.target.classList.contains('cell-editor')) return;
         const cell = this.resolveCellFromEvent(event);
         if (!cell) return;
+
+        this.blurFontSizeInputIfFocused(event);
+        this.isFontSizeEditing = false;
 
         // Handle format painter - start selection mode
         if (this.formatPainter.active) {
