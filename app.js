@@ -12771,7 +12771,34 @@ class SpreadsheetApp {
         if (scope.type === 'rows' || scope.type === 'columns') {
             const targets = scope.type === 'rows' ? scope.rows : scope.cols;
             const map = scope.type === 'rows' ? this.rowStyles : this.columnStyles;
-            targets.forEach(idx => map.delete(idx));
+            const defaultProps = new Set(
+                STYLE_PROPS.filter(prop => Object.prototype.hasOwnProperty.call(this.defaultCellStyle || {}, prop))
+            );
+            const columnProps = new Set();
+            if (this.columnStyles instanceof Map) {
+                this.columnStyles.forEach(entry => {
+                    STYLE_PROPS.forEach(prop => {
+                        if (entry && Object.prototype.hasOwnProperty.call(entry, prop)) {
+                            columnProps.add(prop);
+                        }
+                    });
+                });
+            }
+
+            targets.forEach(idx => {
+                const entry = this.getDimensionStyle(scope.type === 'rows' ? 'row' : 'column', idx, true);
+                if (!entry) return;
+                const propsToClear = new Set(defaultProps);
+                STYLE_PROPS.forEach(prop => {
+                    if (Object.prototype.hasOwnProperty.call(entry, prop)) {
+                        propsToClear.add(prop);
+                    }
+                });
+                if (scope.type === 'rows') {
+                    columnProps.forEach(prop => propsToClear.add(prop));
+                }
+                propsToClear.forEach(prop => this.setStyleValue(entry, prop, null));
+            });
             const affectedRows = clearFormattingForCoords(this.selectedCellCoords);
             this.refreshAllVisibleCells();
             this.recalculateAutoRowHeights(affectedRows);
