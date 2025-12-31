@@ -563,6 +563,8 @@ class SpreadsheetApp {
         this.isPaletteInteraction = false;
         this.isFontSizeEditing = false;
         this.isPaletteFieldEditing = false;
+        this.fontSizeBlurAllowed = false;
+        this.fontSizeBlurReason = null;
         this.skipNextFontSizeChange = false;
         this.lastInlineFontSize = null;
         this.pendingEditorRefocus = false;
@@ -5685,6 +5687,8 @@ class SpreadsheetApp {
             ['#fontSizeInput', 'keydown', e => {
                 if (e.key === 'Enter') { 
                     e.preventDefault(); 
+                    this.fontSizeBlurAllowed = true;
+                    this.fontSizeBlurReason = 'enter-key';
                     this.handleFontSizeChange(e, { finalize: true });
                     this.skipNextFontSizeChange = true;
                     if (e.target && typeof e.target.blur === 'function') {
@@ -5741,15 +5745,34 @@ class SpreadsheetApp {
         const fontSizeInput = document.getElementById('fontSizeInput');
         if (fontSizeInput && !fontSizeInput.dataset.guardAttached) {
             fontSizeInput.addEventListener('pointerdown', () => {
+                this.fontSizeBlurAllowed = false;
+                this.fontSizeBlurReason = null;
                 this.isFontSizeEditing = true;
                 if (this.currentEditingCell) {
                     this.saveEditorSelection(this.currentEditingCell.querySelector('.cell-editor'));
                 }
             }, { capture: true });
             fontSizeInput.addEventListener('focus', () => {
+                this.fontSizeBlurAllowed = false;
+                this.fontSizeBlurReason = null;
                 this.isFontSizeEditing = true;
+                this.log('Font size input focus');
             });
             fontSizeInput.addEventListener('blur', () => {
+                const digitCount = (fontSizeInput.value || '').replace(/\D/g, '').length;
+                if (!this.fontSizeBlurAllowed && this.isFontSizeEditing) {
+                    this.log(`Font size blur blocked (digits=${digitCount})`);
+                    setTimeout(() => {
+                        if (typeof fontSizeInput.focus === 'function') {
+                            fontSizeInput.focus({ preventScroll: true });
+                        }
+                    }, 0);
+                    this.isFontSizeEditing = true;
+                    return;
+                }
+                this.log(`Font size input blur -> resume editor (digits=${digitCount}, reason=${this.fontSizeBlurReason || 'unknown'})`);
+                this.fontSizeBlurAllowed = false;
+                this.fontSizeBlurReason = null;
                 if (this.currentEditingCell) {
                     this.isFontSizeEditing = false;
                     this.resumeEditingAfterToolbar();
@@ -6350,6 +6373,13 @@ class SpreadsheetApp {
         elements.forEach(el => {
             if (!el || el.dataset.formatGuardAttached) return;
             const stopImmediate = (e) => e.stopPropagation();
+            const shouldHoldFocus = () => {
+                const minDigits = parseInt(el.dataset.minFocusDigits || '0', 10);
+                if (!minDigits) return false;
+                const raw = typeof el.value === 'string' ? el.value : '';
+                const digitCount = (raw.match(/[0-9A-Fa-f]/g) || []).length;
+                return digitCount < minDigits;
+            };
             el.addEventListener('pointerdown', (e) => {
                 if (this.currentEditingCell) {
                     this.isPaletteFieldEditing = true;
@@ -6373,11 +6403,20 @@ class SpreadsheetApp {
                 stopImmediate(e);
             });
             el.addEventListener('blur', (e) => {
+                stopImmediate(e);
+                if (this.currentEditingCell && shouldHoldFocus()) {
+                    this.isPaletteFieldEditing = true;
+                    setTimeout(() => {
+                        if (typeof el.focus === 'function') {
+                            el.focus({ preventScroll: true });
+                        }
+                    }, 0);
+                    return;
+                }
                 if (this.currentEditingCell) {
                     this.isPaletteFieldEditing = false;
                     this.resumeEditingAfterToolbar();
                 }
-                stopImmediate(e);
             });
             el.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && this.currentEditingCell) {
@@ -7609,6 +7648,8 @@ class SpreadsheetApp {
             this.skipNextFontSizeChange = false;
             return;
         }
+        // Keep the input marked as active while the user is typing.
+        this.isFontSizeEditing = true;
         if (this.currentEditingCell && finalize) {
             this.pendingEditorRefocus = true;
             this.isToolbarFormattingInteraction = true;
@@ -7627,12 +7668,10 @@ class SpreadsheetApp {
 
         const clamped = finalize ? Math.max(6, Math.min(200, size)) : Math.min(200, size);
         if (finalize) input.value = clamped;
+        this.log(`Font size input change (raw="${raw}", size=${size}, clamped=${clamped}, finalize=${finalize})`);
         this.applyFontSize(clamped, { finalize });
-        if (finalize) {
-            this.isFontSizeEditing = false;
-            if (this.currentEditingCell) {
-                setTimeout(() => this.resumeEditingAfterToolbar(), 0);
-            }
+        if (finalize && this.currentEditingCell) {
+            setTimeout(() => this.resumeEditingAfterToolbar(), 0);
         }
     }
 
@@ -7802,6 +7841,8 @@ class SpreadsheetApp {
         if (!fontSizeInput) return;
         if (document.activeElement !== fontSizeInput) return;
         if (event && fontSizeInput.contains(event.target)) return;
+        this.fontSizeBlurAllowed = true;
+        this.fontSizeBlurReason = 'external-blur';
         fontSizeInput.blur();
     }
     
@@ -12979,6 +13020,7 @@ class SpreadsheetApp {
         hexInput.style.fontSize = 'var(--font-size-sm)';
         hexInput.style.fontFamily = 'var(--font-family-mono)';
         hexInput.maxLength = 6;
+        hexInput.dataset.minFocusDigits = '3';
 
         const addBtn = document.createElement('button');
         addBtn.className = 'btn btn--sm';
@@ -13231,6 +13273,10 @@ class SpreadsheetApp {
         const rInput = picker.querySelector('#customColorR');
         const gInput = picker.querySelector('#customColorG');
         const bInput = picker.querySelector('#customColorB');
+        
+        [rInput, gInput, bInput].forEach(input => {
+            if (input) input.dataset.minFocusDigits = '3';
+        });
         
         // Get references to existing inputs in the palette
         const getExistingInputs = () => {
@@ -14113,6 +14159,9 @@ class SpreadsheetApp {
         const borderColorSections = document.getElementById('borderColorSections');
         const borderPreview = document.getElementById('borderPreview');
         let currentPreviewAction = 'clear';
+        if (borderColorHex) {
+            borderColorHex.dataset.minFocusDigits = '3';
+        }
         this.attachFormattingFieldGuards([borderStyleSelect, borderWidthSelect, borderColorPicker, borderColorHex]);
 
         const previewColumns = 3;
