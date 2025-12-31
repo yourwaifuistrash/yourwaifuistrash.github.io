@@ -1931,6 +1931,48 @@ class SpreadsheetApp {
             }
         });
 
+        const defaultStyleChanges = this.describeStyleDifferences(this.initialDefaultCellStyle, this.defaultCellStyle);
+        if (defaultStyleChanges.length) {
+            allLines.push(`~ Default style ${defaultStyleChanges.join('; ')}`);
+            const overrides = this.describeDefaultOverrides(this.defaultCellStyle);
+            if (overrides) {
+                allLines.push(`~ Default style ${overrides}`);
+            }
+        }
+
+        const appendDimensionStyleDiffs = (kind, initialMap, currentMap) => {
+            const indices = new Set();
+            const collectKeys = (source) => {
+                if (!(source instanceof Map)) return;
+                source.forEach((_, key) => indices.add(key));
+            };
+            collectKeys(initialMap);
+            collectKeys(currentMap);
+
+            const getEntry = (map, idx) => {
+                if (!(map instanceof Map)) return null;
+                if (map.has(idx)) return map.get(idx);
+                const str = String(idx);
+                return map.has(str) ? map.get(str) : null;
+            };
+
+            indices.forEach(rawIndex => {
+                const index = Number(rawIndex);
+                if (!Number.isInteger(index)) return;
+                const before = this.extractStyleSnapshot(getEntry(initialMap, index) || {});
+                const after = this.extractStyleSnapshot(getEntry(currentMap, index) || {});
+                const changes = this.describeStyleDifferences(before, after);
+                if (!changes.length) return;
+                const label = kind === 'row'
+                    ? `Row ${index + 1} style`
+                    : `Column ${this.getColumnName(index)} style`;
+                allLines.push(`~ ${label} ${changes.join('; ')}`);
+            });
+        };
+
+        appendDimensionStyleDiffs('row', this.initialRowStyles, this.rowStyles);
+        appendDimensionStyleDiffs('column', this.initialColumnStyles, this.columnStyles);
+
         if (!allLines.length) {
             return { text: '', truncated: false };
         }
@@ -2175,6 +2217,8 @@ class SpreadsheetApp {
 
         const defaultStyleChanges = this.describeDefaultStyleDifferences(this.initialDefaultCellStyle, this.defaultCellStyle);
         if (defaultStyleChanges.length) {
+            const defaultOverrides = this.describeDefaultOverrides(this.defaultCellStyle);
+            const changes = defaultOverrides ? defaultStyleChanges.concat([defaultOverrides]) : defaultStyleChanges;
             total += 1;
             if (entries.length + extraEntries.length < maxEntries) {
                 const entry = {
@@ -2187,7 +2231,7 @@ class SpreadsheetApp {
                     after: this.cloneDefaultCellStyle(this.defaultCellStyle),
                     beforeSize: null,
                     afterSize: null,
-                    changes: defaultStyleChanges,
+                    changes,
                     meta: { kind: 'defaultStyle' }
                 };
                 extraEntries.push(entry);
@@ -3227,6 +3271,61 @@ class SpreadsheetApp {
 
     describeDefaultStyleDifferences(before = {}, after = {}) {
         return this.describeStyleDifferences(before, after);
+    }
+
+    describeDefaultOverrides(after = {}) {
+        if (!after || typeof after !== 'object') return null;
+        const rows = [];
+
+        const addEntry = (label, propValues) => {
+            if (!propValues.length) return;
+            rows.push(`${label} (${propValues.join(', ')})`);
+        };
+
+        const appendDifferences = (label, entry) => {
+            if (!entry || typeof entry !== 'object') return;
+            const propValues = [];
+            STYLE_PROPS.forEach(prop => {
+                if (!Object.prototype.hasOwnProperty.call(entry, prop)) return;
+                const val = entry[prop];
+                const defaultVal = after[prop];
+                if (val === undefined || val === null) return;
+                if (defaultVal === undefined || this.normalizeField(val, prop) === this.normalizeField(defaultVal, prop)) return;
+                propValues.push(`${this.getStyleLabel(prop)} ${this.normalizeField(val, prop)}`);
+            });
+            addEntry(label, propValues);
+        };
+
+        // Row-level overrides
+        if (this.rowStyles instanceof Map) {
+            this.rowStyles.forEach((entry, key) => {
+                const idx = Number(key);
+                if (!Number.isInteger(idx)) return;
+                appendDifferences(`Row ${idx + 1}`, entry);
+            });
+        }
+
+        // Column-level overrides
+        if (this.columnStyles instanceof Map) {
+            this.columnStyles.forEach((entry, key) => {
+                const idx = Number(key);
+                if (!Number.isInteger(idx)) return;
+                appendDifferences(`Column ${this.getColumnName(idx)}`, entry);
+            });
+        }
+
+        // Cell-level overrides
+        this.cellData.forEach((entry, coord) => {
+            const { row, col } = this.getCoordPos(coord);
+            appendDifferences(this.getCellAddress(row, col), entry);
+        });
+
+        if (!rows.length) return null;
+        const maxEntries = 6;
+        const visible = rows.slice(0, maxEntries);
+        const remaining = rows.length - visible.length;
+        const suffix = remaining > 0 ? ` (+${remaining} more)` : '';
+        return `exceptions: ${visible.join('; ')}${suffix}`;
     }
 
     extractStyleSnapshot(entry = {}) {
@@ -12596,6 +12695,10 @@ class SpreadsheetApp {
         // Save state before clearing
         const scope = this.getSelectionScope();
         this.saveState(`Clear formatting from ${this.selectedCellCoords.size} cells`);
+        const tableWideProps = new Set(
+            STYLE_PROPS.filter(prop => Object.prototype.hasOwnProperty.call(this.defaultCellStyle || {}, prop))
+        );
+
         const clearFormattingForCoords = (coordSet) => {
             const affectedRows = new Set();
             coordSet.forEach(coordKey => {
@@ -12605,7 +12708,8 @@ class SpreadsheetApp {
                 const colEntry = this.getDimensionStyle('column', col, false);
                 const inheritedProps = STYLE_PROPS.filter(prop =>
                     (rowEntry && rowEntry[prop] !== undefined) ||
-                    (colEntry && colEntry[prop] !== undefined)
+                    (colEntry && colEntry[prop] !== undefined) ||
+                    tableWideProps.has(prop)
                 );
                 const hadOwnStyle = STYLE_PROPS.some(prop => beforeData[prop] !== undefined);
                 const hadOtherFormatting = (beforeData.borders && Object.values(beforeData.borders).some(Boolean)) || Boolean(beforeData.richText);
