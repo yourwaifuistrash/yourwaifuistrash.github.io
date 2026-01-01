@@ -17030,6 +17030,12 @@ class SpreadsheetApp {
         // Build stylesheet link if we have the necessary config
         let stylesheetLink = '';
         let runtimeConfig = '';
+        const inlineStaticStyles = `    <style>
+        /* Hide exported comment list when popovers are supported (modern graphical browsers) */
+        @supports selector(:popover-open) {
+            .comment-export { display: none; }
+        }
+    </style>`;
         
         if (codeBranch && owner && repo) {
             const stylesheetUrl = `https://${encodeURIComponent(owner)}.codeberg.page/${encodeURIComponent(repo)}/@${encodeURIComponent(codeBranch)}/style.css`;
@@ -17079,7 +17085,7 @@ class SpreadsheetApp {
     </html>
     `;
         
-        return htmlStart + stylesheetLink + '\n' + runtimeConfig + '\n' + htmlMiddle + tableMarkup + htmlEnd;
+        return htmlStart + stylesheetLink + '\n' + runtimeConfig + '\n' + inlineStaticStyles + '\n' + htmlMiddle + tableMarkup + htmlEnd;
     }
 
     getUsedRange() {
