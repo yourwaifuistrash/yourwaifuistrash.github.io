@@ -5358,6 +5358,12 @@ class SpreadsheetApp {
             action,
             cellData: this.cloneCellData(this.cellData),
             mergedCells: this.cloneMergedCellsState(),
+            rowHeights: new Map(this.rowHeights),
+            autoRowHeights: new Map(this.autoRowHeights),
+            rowHeightModes: new Map(this.rowHeightModes),
+            rowDefaultHeightOverrides: new Map(this.rowDefaultHeightOverrides),
+            defaultAutoRowHeight: this.defaultAutoRowHeight,
+            columnWidths: new Map(this.columnWidths),
             timestamp: Date.now()
         });
         if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
@@ -5375,6 +5381,12 @@ class SpreadsheetApp {
             target.push({
                 cellData: this.cloneCellData(this.cellData),
                 mergedCells: this.cloneMergedCellsState(),
+                rowHeights: new Map(this.rowHeights),
+                autoRowHeights: new Map(this.autoRowHeights),
+                rowHeightModes: new Map(this.rowHeightModes),
+                rowDefaultHeightOverrides: new Map(this.rowDefaultHeightOverrides),
+                defaultAutoRowHeight: this.defaultAutoRowHeight,
+                columnWidths: new Map(this.columnWidths),
                 timestamp: Date.now()
             });
         }
@@ -5384,7 +5396,24 @@ class SpreadsheetApp {
 
         this.cellData = this.cloneCellData(snapshot.cellData);
         this.applyMergedCellsSnapshot(snapshot.mergedCells);
-        this.recalculateAutoRowHeights();
+        if (snapshot.rowHeights) this.rowHeights = new Map(snapshot.rowHeights);
+        if (snapshot.autoRowHeights) this.autoRowHeights = new Map(snapshot.autoRowHeights);
+        if (snapshot.rowHeightModes) this.rowHeightModes = new Map(snapshot.rowHeightModes);
+        if (snapshot.rowDefaultHeightOverrides) this.rowDefaultHeightOverrides = new Map(snapshot.rowDefaultHeightOverrides);
+        if (snapshot.columnWidths) this.columnWidths = new Map(snapshot.columnWidths);
+        if (Number.isFinite(snapshot.defaultAutoRowHeight)) {
+            this.defaultAutoRowHeight = snapshot.defaultAutoRowHeight;
+        }
+        if (snapshot.rowHeights || snapshot.autoRowHeights || snapshot.rowHeightModes || snapshot.rowDefaultHeightOverrides) {
+            this.refreshLayoutAfterRowHeightChange();
+        } else {
+            this.recalculateAutoRowHeights();
+            this.updateGridSize();
+            this.repositionCells();
+            this.updateHeaderPositions();
+            this.renderSelectionOverlays();
+            this.renderBorderOverlays();
+        }
         this.refreshAllVisibleCells();
         this.updateUndoRedoButtons();
         this.refreshPalettes();
