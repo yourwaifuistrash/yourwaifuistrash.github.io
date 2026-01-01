@@ -17195,7 +17195,7 @@ class SpreadsheetApp {
         const { minRow, maxRow, minCol, maxCol } = range;
         const rows = [];
         const commentEntries = [];
-        rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback">');
+        rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback" border="1" cellspacing="0" cellpadding="6" rules="all">');
         rows.push('                        <thead>');
         rows.push('                            <tr>');
         rows.push('                                <th scope="col"></th>');
