@@ -17412,8 +17412,10 @@ class SpreadsheetApp {
                         repliesHtml ? `<div class="comment-popover__thread">${repliesHtml}</div>` : ''
                     ].filter(Boolean).join('');
                     cellContent += [
+                        `<span class="comment-flag-wrapper">`,
                         `<button id="${anchorId}" type="button" class="comment-flag" popovertarget="${popoverId}" popovertargetaction="toggle" aria-label="View comment" title="${escapeAttribute(summaryParts)}">💬</button>`,
-                        `<div id="${popoverId}" class="comment-popover comment-popover--static" popover="auto" anchor="${anchorId}">${popoverContent}</div>`
+                        `<div id="${popoverId}" class="comment-popover comment-popover--static" popover="auto" anchor="${anchorId}" hidden>${popoverContent}</div>`,
+                        `</span>`
                     ].join('');
                 }
 

@@ -1427,6 +1427,13 @@ body { margin: 0; padding: 0; }
   position: absolute;
   inset: auto;
   max-width: 280px;
+  display: none;
+  top: calc(100% + 4px);
+  left: 0;
+}
+
+.comment-popover--static:popover-open {
+  display: block;
 }
 
 .comment-editor {
@@ -1963,6 +1970,11 @@ body { margin: 0; padding: 0; }
     outline: 2px solid var(--color-primary, #21808d);
     outline-offset: 2px;
     border-radius: var(--radius-sm, 6px);
+}
+
+.comment-flag-wrapper {
+  position: relative;
+  display: inline-block;
 }
 
 .comment-export {
