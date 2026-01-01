@@ -3185,6 +3185,8 @@ class SpreadsheetApp {
             const { row, col } = this.getCoordPos(coordKey);
             if (targetRows && !targetRows.has(row)) return;
             if (this.rowHeightModes.get(row) === 'explicit') return;
+            // Skip styling-only cells so empty merged parts don't inflate row heights after unmerge
+            if (!this.cellHasText(data)) return;
             // Ignore merged children so hidden content doesn't keep rows tall
             if (this.cellToMergeParent.has(coordKey)) return;
             // Also ignore merged parents that span multiple rows; their height is shared across the merge
