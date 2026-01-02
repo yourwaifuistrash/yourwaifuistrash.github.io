@@ -17238,11 +17238,12 @@ class SpreadsheetApp {
             colWidths.push(this.getColumnWidth(col));
         }
 
-        rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback" border="1" cellspacing="0" cellpadding="6" rules="all">');
+        const totalWidth = 50 + colWidths.reduce((sum, w) => sum + w, 0);
+        rows.push(`                    <table data-spreadsheet-export="true" class="spreadsheet-fallback" border="1" cellspacing="0" cellpadding="6" rules="all" style="width:${totalWidth}px;min-width:${totalWidth}px">`);
         rows.push('                        <colgroup>');
-        rows.push('                            <col style="width:50px">');
+        rows.push('                            <col style="width:50px;min-width:50px;max-width:50px">');
         colWidths.forEach(width => {
-            rows.push(`                            <col style="width:${width}px">`);
+            rows.push(`                            <col style="width:${width}px;min-width:${width}px;max-width:${width}px">`);
         });
         rows.push('                        </colgroup>');
         rows.push('                        <thead>');
