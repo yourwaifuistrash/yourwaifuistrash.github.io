@@ -4622,6 +4622,36 @@ class SpreadsheetApp {
         }
     }
 
+    buildCommentTooltip(commentInfo) {
+        if (!commentInfo) return '';
+        const authorLabel = commentInfo.author || (commentInfo.anonymous ? 'Anonymous' : '');
+        const mainMeta = [
+            authorLabel ? `by ${authorLabel}` : '',
+            this.formatCommentTimestamp(commentInfo.at)
+        ].filter(Boolean).join(' • ');
+        const mainLine = [mainMeta, commentInfo.text || ''].filter(Boolean).join(mainMeta && commentInfo.text ? ' • ' : '');
+
+        const replyLines = Array.isArray(commentInfo.replies)
+            ? commentInfo.replies
+                .filter(reply => reply && reply.text)
+                .map(reply => {
+                    const replyAuthorLabel = reply.author || (reply.anonymous ? 'Anonymous' : '');
+                    const replyMeta = [
+                        replyAuthorLabel ? `Reply by ${replyAuthorLabel}` : 'Reply',
+                        this.formatCommentTimestamp(reply.at)
+                    ].filter(Boolean).join(' • ');
+                    const replyText = `${reply.text || ''}`;
+                    return [replyMeta, replyText].filter(Boolean).join(replyMeta && replyText ? ': ' : '');
+                })
+            : [];
+
+        if (replyLines.length) {
+            return [mainLine, ...replyLines].filter(Boolean).join('\n');
+        }
+
+        return mainLine;
+    }
+
     generateCommentId(coord, suffix = 'c') {
         const rand = Math.floor(Math.random() * 1e6);
         return `${coord || 'cell'}-${suffix}-${Date.now().toString(36)}-${rand.toString(36)}`;
@@ -11627,6 +11657,7 @@ class SpreadsheetApp {
         const commentText = commentInfo?.text || '';
         const commentAuthor = commentInfo?.author || '';
         const commentTime = this.formatCommentTimestamp(commentInfo?.at);
+        const commentTooltip = this.buildCommentTooltip(commentInfo) || commentText;
         
         // Handle display text based on value type
         let displayText = '';
@@ -11771,12 +11802,12 @@ class SpreadsheetApp {
             if (commentTime) cell.dataset.commentTime = commentTime;
             else delete cell.dataset.commentTime;
             if (existingIndicator) {
-                existingIndicator.title = [commentAuthor ? `by ${commentAuthor}` : '', commentTime, commentText].filter(Boolean).join(' • ') || commentText;
+                existingIndicator.title = commentTooltip;
             } else {
                 const indicator = document.createElement('span');
                 indicator.className = 'cell-comment-indicator';
                 indicator.textContent = '💬';
-                indicator.title = [commentAuthor ? `by ${commentAuthor}` : '', commentTime, commentText].filter(Boolean).join(' • ') || commentText;
+                indicator.title = commentTooltip;
                 indicator.setAttribute('aria-hidden', 'true');
                 cell.appendChild(indicator);
             }
@@ -17384,14 +17415,11 @@ class SpreadsheetApp {
                     const authorLabel = escapeHTML(commentInfo.author || 'Anonymous');
                     const timestampLabel = commentInfo.at ? escapeHTML(this.formatCommentTimestamp(commentInfo.at)) : '';
                     const avatarSrc = escapeAttribute(this.getCommentAvatarSrc(commentInfo));
-                    const summaryPartsArr = [
+                    const summaryParts = this.buildCommentTooltip(commentInfo) || [
                         commentInfo.author ? `by ${commentInfo.author}` : '',
                         timestampLabel,
                         commentInfo.text
-                    ];
-                    const replyCount = Array.isArray(commentInfo.replies) ? commentInfo.replies.filter(entry => entry?.text).length : 0;
-                    if (replyCount) summaryPartsArr.push(`${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}`);
-                    const summaryParts = summaryPartsArr.filter(Boolean).join(' • ');
+                    ].filter(Boolean).join(' • ');
                     const authorMarkup = commentInfo.profileUrl
                         ? `<a href="${escapeAttribute(commentInfo.profileUrl)}">${authorLabel}</a>`
                         : authorLabel;
