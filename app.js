@@ -17232,14 +17232,26 @@ class SpreadsheetApp {
         const { minRow, maxRow, minCol, maxCol } = range;
         const rows = [];
         const commentEntries = [];
-        rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback" border="1" cellspacing="0" cellpadding="6" rules="all">');
-        rows.push('                        <thead>');
-        rows.push('                            <tr>');
-        rows.push('                                <th scope="col">🗻</th>');
+        const colWidths = [];
+
         for (let col = minCol; col <= maxCol; col++) {
-            const colWidth = this.getColumnWidth(col);
-            rows.push(`                                <th scope="col" data-col="${col}" data-width="${colWidth}">${this.getColumnName(col)}</th>`);
+            colWidths.push(this.getColumnWidth(col));
         }
+
+        rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback" border="1" cellspacing="0" cellpadding="6" rules="all">');
+        rows.push('                        <colgroup>');
+        rows.push('                            <col style="width:50px">');
+        colWidths.forEach(width => {
+            rows.push(`                            <col style="width:${width}px">`);
+        });
+        rows.push('                        </colgroup>');
+        rows.push('                        <thead>');
+        rows.push('                            <tr style="height:32px">');
+        rows.push('                                <th scope="col">🗻</th>');
+        colWidths.forEach((colWidth, index) => {
+            const col = minCol + index;
+            rows.push(`                                <th scope="col" data-col="${col}" data-width="${colWidth}">${this.getColumnName(col)}</th>`);
+        });
         rows.push('                            </tr>');
         rows.push('                        </thead>');
         rows.push('                        <tbody>');
@@ -17248,7 +17260,8 @@ class SpreadsheetApp {
             const rowHeight = this.getRowHeight(row);
             const rowHeightMode = this.getRowHeightMode(this.rowHeightModes, row, null);
             const rowHeightModeAttr = rowHeightMode ? ` data-height-mode="${rowHeightMode}"` : '';
-            rows.push(`                            <tr data-row="${row}" data-height="${rowHeight}"${rowHeightModeAttr}>`);
+            const rowStyleAttr = Number.isFinite(rowHeight) && rowHeight > 0 ? ` style="height:${rowHeight}px"` : '';
+            rows.push(`                            <tr data-row="${row}" data-height="${rowHeight}"${rowHeightModeAttr}${rowStyleAttr}>`);
             rows.push(`                                <th scope="row">${row + 1}</th>`);
             for (let col = minCol; col <= maxCol; col++) {
                 const coordKey = `${row},${col}`;
