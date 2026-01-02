@@ -17235,7 +17235,7 @@ class SpreadsheetApp {
         rows.push('                    <table data-spreadsheet-export="true" class="spreadsheet-fallback" border="1" cellspacing="0" cellpadding="6" rules="all">');
         rows.push('                        <thead>');
         rows.push('                            <tr>');
-        rows.push('                                <th scope="col"></th>');
+        rows.push('                                <th scope="col">🗻</th>');
         for (let col = minCol; col <= maxCol; col++) {
             const colWidth = this.getColumnWidth(col);
             rows.push(`                                <th scope="col" data-col="${col}" data-width="${colWidth}">${this.getColumnName(col)}</th>`);
