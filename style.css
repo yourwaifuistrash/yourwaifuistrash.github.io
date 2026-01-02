@@ -1428,12 +1428,27 @@ body { margin: 0; padding: 0; }
   inset: auto;
   max-width: 280px;
   display: none;
-  top: calc(100% + 4px);
-  left: 0;
+  left: 12px;
+  right: auto;
+  bottom: calc(100% + 6px);
+  top: auto;
 }
 
 .comment-popover--static:popover-open {
   display: block;
+}
+
+@supports (position-anchor: --comment-flag-anchor) {
+  .comment-popover--static {
+    position: fixed;
+    position-anchor: --comment-flag-anchor;
+    inset: auto;
+    top: anchor(top);
+    left: anchor(left);
+    right: auto;
+    bottom: auto;
+    transform: translate(12px, -8px);
+  }
 }
 
 .comment-editor {
@@ -1964,6 +1979,7 @@ body { margin: 0; padding: 0; }
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    anchor-name: --comment-flag-anchor;
 }
 
 .comment-flag:focus-visible {
@@ -1975,6 +1991,7 @@ body { margin: 0; padding: 0; }
 .comment-flag-wrapper {
   position: relative;
   display: inline-block;
+  anchor-scope: :scope;
 }
 
 .comment-export {
