@@ -59,6 +59,11 @@
   --space-12: 12px;
   --space-16: 16px;
 
+  /* Layout */
+  --toolbar-height: 48px;
+  --formula-bar-height: 48px;
+  --chrome-offset: calc(var(--toolbar-height) + var(--formula-bar-height));
+
   /* Border & Effects */
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.04);
   --duration-fast: 150ms;
@@ -2225,9 +2230,11 @@ body { margin: 0; padding: 0; }
     max-width: none;
     display: inline-table;
     border-collapse: collapse;
-    font-family: var(--font-family, sans-serif);
+    border: none;
+    font-family: var(--font-family-base, sans-serif);
     font-size: var(--font-size-sm, 12px);
     table-layout: fixed;
+    border-left: 0;
 }
 
 .spreadsheet-fallback th,
@@ -2238,18 +2245,53 @@ body { margin: 0; padding: 0; }
 }
 
 .spreadsheet-fallback th {
-    padding: var(--space-6, 6px) var(--space-8, 8px);
+    padding: 0;
     white-space: nowrap;
-}
-
-.spreadsheet-fallback thead th:first-child {
+    background: var(--color-bg-1, #f0f4ff);
+    font-weight: var(--font-weight-medium, 500);
+    font-size: var(--font-size-xs, 11px);
     text-align: center;
+    vertical-align: middle;
+    color: var(--color-text, #13343b);
+    line-height: 1.2;
+    transition: background var(--duration-fast, 150ms);
 }
 
 .spreadsheet-fallback td {
     vertical-align: bottom;
     position: relative;
     padding: 0;
+}
+
+.spreadsheet-fallback thead th {
+    height: 32px;
+}
+
+.spreadsheet-fallback tbody th {
+    width: 50px;
+    min-width: 50px;
+    max-width: 50px;
+}
+
+.spreadsheet-fallback thead th:first-child {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.spreadsheet-fallback thead th:hover,
+.spreadsheet-fallback tbody th:hover {
+    background: var(--color-bg-2, rgba(245, 158, 11, 0.08));
+}
+
+.spreadsheet-fallback tr > *:first-child {
+    border-left: none;
+}
+
+:root[data-theme='dark'] .spreadsheet-fallback th,
+:root[data-theme='dark'] .spreadsheet-fallback tbody th,
+:root[data-theme='dark'] .spreadsheet-fallback thead th {
+    background: var(--color-surface-alt, #050505);
+    color: var(--color-text, #f8f9fa);
 }
 
 .spreadsheet-fallback .fallback-cell-content {
@@ -2333,6 +2375,10 @@ body { margin: 0; padding: 0; }
     padding: 0;
     line-height: 1;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.spreadsheet-container:has(table[data-spreadsheet-export]) {
+    padding-top: calc(var(--chrome-offset, 96px) + 1px);
 }
 
 /* Hide JS-only chrome and tighten layout when the fallback table is present (JS disabled) */
