@@ -2251,7 +2251,10 @@ body { margin: 0; padding: 0; }
 
 /* Hide JS-only chrome and tighten layout when the fallback table is present (JS disabled) */
 .grid-container:has(table[data-spreadsheet-export]) {
-    display: block;
+    display: grid;
+    grid-template-columns: 0 1fr;
+    grid-template-rows: 0 1fr;
+    height: 100%;
 }
 
 .grid-container:has(table[data-spreadsheet-export]) .corner-cell,
@@ -2263,6 +2266,8 @@ body { margin: 0; padding: 0; }
 .grid-container:has(table[data-spreadsheet-export]) .main-grid {
     position: relative;
     overflow: auto;
+    grid-column: 1 / span 2;
+    grid-row: 1 / span 2;
 }
 
 .grid-container:has(table[data-spreadsheet-export]) .grid-content {
