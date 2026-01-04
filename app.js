@@ -17415,6 +17415,10 @@ class SpreadsheetApp {
                 }
 
                 let cellContent = canUseRich && richHtml ? richHtml : escapeHTML(displayText);
+                const tooltipText = (displayText || rawValue || '').toString().replace(/\s+/g, ' ').trim();
+                if (tooltipText) {
+                    extraAttributes.push(`title="${escapeAttribute(tooltipText)}"`);
+                }
                 const safeCoordId = coordKey.replace(/,/g, '-');
                 if (!cellContent && cellData.linkUrl) {
                     cellContent = escapeHTML(cellData.linkUrl);
