@@ -17274,11 +17274,12 @@ class SpreadsheetApp {
                 const extraAttributes = [];
 
                 const rawValue = cellData.value ?? '';
-        const commentInfo = this.ensureCommentIds(coordKey, this.normalizeCommentData(cellData.comment));
-        const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
-        if (hasRawValue) {
-            datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
-        }
+                const commentInfo = this.ensureCommentIds(coordKey, this.normalizeCommentData(cellData.comment));
+                let commentFlagMarkup = '';
+                const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
+                if (hasRawValue) {
+                    datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
+                }
 
                 if (cellData.linkUrl) {
                     datasets.push(`data-link="${escapeAttribute(cellData.linkUrl)}"`);
@@ -17419,6 +17420,7 @@ class SpreadsheetApp {
                 if (tooltipText) {
                     extraAttributes.push(`title="${escapeAttribute(tooltipText)}"`);
                 }
+                const hasVisibleContent = Boolean(tooltipText || cellData.linkUrl || commentInfo?.text || (canUseRich && richHtml));
                 const safeCoordId = coordKey.replace(/,/g, '-');
                 if (!cellContent && cellData.linkUrl) {
                     cellContent = escapeHTML(cellData.linkUrl);
@@ -17457,7 +17459,7 @@ class SpreadsheetApp {
                         reactionsHtml ? `<div class="comment-reactions">${reactionsHtml}</div>` : '',
                         repliesHtml ? `<div class="comment-popover__thread">${repliesHtml}</div>` : ''
                     ].filter(Boolean).join('');
-                    cellContent += [
+                    commentFlagMarkup = [
                         `<span class="comment-flag-wrapper">`,
                         `<button id="${anchorId}" type="button" class="comment-flag" popovertarget="${popoverId}" popovertargetaction="toggle" aria-label="View comment" title="${escapeAttribute(summaryParts)}">💬</button>`,
                         `<div id="${popoverId}" class="comment-popover comment-popover--static" popover="auto" anchor="${anchorId}" hidden>${popoverContent}</div>`,
@@ -17465,9 +17467,15 @@ class SpreadsheetApp {
                     ].join('');
                 }
 
+                if (!hasVisibleContent) {
+                    extraAttributes.push('data-empty="true"');
+                }
+
+                cellContent = cellContent || '&nbsp;';
+                const fallbackContent = `<span class="fallback-cell-content">${cellContent}</span>`;
                 const styleAttr = styles.filter(Boolean).length ? ` style="${styles.join(';')}"` : '';
                 const extras = extraAttributes.length ? ` ${extraAttributes.join(' ')}` : '';
-                rows.push(`                                <td ${datasets.join(' ')}${extras}${styleAttr}>${cellContent}</td>`);
+                rows.push(`                                <td ${datasets.join(' ')}${extras}${styleAttr}>${fallbackContent}${commentFlagMarkup}</td>`);
             }
             rows.push('                            </tr>');
         }
