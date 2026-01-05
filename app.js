@@ -9645,6 +9645,18 @@ class SpreadsheetApp {
         }
 
         input.style.width = targetWidth + 'px';
+        // Leave a consistent 1 CSS px gap (scaled with zoom/DPR) before the next grid line when spilling right.
+        if (needsOverflow && overflowOffset >= 0 && (overflowOffset + overflowWidth > cellWidth)) {
+            const zoom = this.zoomLevel || 1;
+            const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+            const scale = zoom * dpr;
+            const deviceWidth = overflowWidth * scale;
+            const minDeviceWidth = cellWidth * scale;
+            // Subtract 1 CSS pixel worth of device pixels so the inset scales with zoom/DPR.
+            const gapDevicePx = scale;
+            const trimmedDeviceWidth = Math.max(minDeviceWidth, deviceWidth - gapDevicePx);
+            overflowWidth = trimmedDeviceWidth / scale;
+        }
         cell.style.setProperty('--editor-overflow-width', `${overflowWidth}px`);
         cell.style.setProperty('--editor-overflow-offset', `${overflowOffset}px`);
     }
