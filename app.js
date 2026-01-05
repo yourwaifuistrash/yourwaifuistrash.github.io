@@ -7,6 +7,9 @@ const TOOLBAR_AND_FORMULA_HTML = `
                         <span class="save-indicator-badge hidden" id="saveBtnBadge" aria-hidden="true"></span>
                     </span>
                 </button>
+                <button class="btn btn--sm toolbar-btn" id="revisionHistoryBtn" title="View revision history">
+                    <span class="toolbar-btn__icon">🕑</span>
+                </button>
                 <button class="btn btn--sm toolbar-btn" id="undoBtn" title="Undo">
                     <span>↶</span>
                 </button>
@@ -406,6 +409,31 @@ const renderContextMenuHtml = () => `
     </div>
 `;
 
+const REVISION_HISTORY_HTML = `
+    <div id="revisionHistoryDrawer" class="revision-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="revisionHistoryTitle">
+        <div class="revision-drawer__backdrop" data-revision-close></div>
+        <aside class="revision-drawer__panel">
+            <header class="revision-drawer__header">
+                <div class="revision-drawer__titles">
+                    <div class="revision-drawer__title" id="revisionHistoryTitle">Revision history</div>
+                    <div class="revision-drawer__subtitle" id="revisionHistorySubtitle"></div>
+                </div>
+                <div class="revision-drawer__header-actions">
+                    <button class="btn btn--sm toolbar-btn" id="revisionHistoryRefreshBtn" title="Refresh revisions">
+                        <span class="toolbar-btn__icon">↻</span>
+                    </button>
+                    <button class="btn btn--sm toolbar-btn revision-drawer__close" data-revision-close aria-label="Close revision history">×</button>
+                </div>
+            </header>
+            <div class="revision-drawer__body">
+                <div class="revision-drawer__summary" id="revisionHistorySummary"></div>
+                <div class="revision-drawer__status" id="revisionHistoryStatus"></div>
+                <div class="revision-drawer__list" id="revisionHistoryList" role="list"></div>
+            </div>
+        </aside>
+    </div>
+`;
+
 const COMMENT_POPOVER_HTML = `
     <command id="commentPopoverCommand" label="Toggle cell comment" type="command" commandfor="cellCommentPopover"></command>
     <section id="cellCommentPopover" class="comment-popover hidden" popover="auto" role="note" aria-live="polite" aria-label="Cell comment">
@@ -705,7 +733,12 @@ class SpreadsheetApp {
             codebergOrgAvatarInitials: $('codebergOrgAvatarInitials'),
             codebergProfileName: $('codebergProfileName'),
             codebergProfileHint: $('codebergProfileHint'),
-            codebergProfileMeta: $('codebergProfileMeta')
+            codebergProfileMeta: $('codebergProfileMeta'),
+            revisionHistoryDrawer: $('revisionHistoryDrawer'),
+            revisionHistoryList: $('revisionHistoryList'),
+            revisionHistoryStatus: $('revisionHistoryStatus'),
+            revisionHistorySubtitle: $('revisionHistorySubtitle'),
+            revisionHistorySummary: $('revisionHistorySummary')
         });
         this.commentMainAuthorState = {
             author: this.getLocalAuthorPlaceholder(),
@@ -740,6 +773,14 @@ class SpreadsheetApp {
         this.branchCommitSnapshot = null;
         this.branchCommitLatest = null;
         this.branchCommitLoadPromise = null;
+        this.revisionHistoryEntries = [];
+        this.revisionMetadata = new Map();
+        this.revisionWorkingSnapshot = null;
+        this.revisionActiveRef = 'local';
+        this.revisionActiveLabel = 'Current view';
+        this.revisionBranch = null;
+        this.isApplyingRevision = false;
+        this.revisionHistoryLoading = false;
         this.loadInitialDataFromDOM();
         this.initializeStyleMetadataFromData();
         this.recomputeColorUsageFromData();
@@ -760,6 +801,8 @@ class SpreadsheetApp {
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialStyleSequence = this.styleSequence;
+        this.revisionMetadata.set(this.revisionActiveRef, this.buildRevisionMetaFromState());
+        this.renderRevisionHistorySummary();
         
         // Select cell A1 by default
         setTimeout(() => {
@@ -2850,6 +2893,178 @@ class SpreadsheetApp {
         this.markChangesPersisted();
     }
 
+    buildSnapshotFromState() {
+        return {
+            cellData: this.cloneCellData(this.cellData),
+            rowStyles: this.cloneStyleMap(this.rowStyles),
+            columnStyles: this.cloneStyleMap(this.columnStyles),
+            cellStyleMeta: this.cloneStyleMap(this.cellStyleMeta),
+            defaultStyleMeta: this.cloneStyleMeta(this.defaultStyleMeta),
+            defaultCellStyle: this.cloneDefaultCellStyle(this.defaultCellStyle),
+            rowHeights: new Map(this.rowHeights),
+            autoRowHeights: new Map(this.autoRowHeights),
+            rowHeightModes: new Map(this.rowHeightModes),
+            rowDefaultHeightOverrides: new Map(this.rowDefaultHeightOverrides),
+            columnWidths: new Map(this.columnWidths),
+            mergedCells: this.cloneMergedCellsState(),
+            persistedRange: { ...this.persistedRange },
+            styleSequence: this.styleSequence,
+            defaultAutoRowHeight: this.defaultAutoRowHeight,
+            colorUsage: this.cloneColorUsage(this.colorUsage),
+            initialCellData: this.cloneCellData(this.initialCellData),
+            initialRowStyles: this.cloneStyleMap(this.initialRowStyles),
+            initialColumnStyles: this.cloneStyleMap(this.initialColumnStyles),
+            initialCellStyleMeta: this.cloneStyleMap(this.initialCellStyleMeta),
+            initialDefaultStyleMeta: this.cloneStyleMeta(this.initialDefaultStyleMeta),
+            initialRowHeights: new Map(this.initialRowHeights || []),
+            initialAutoRowHeights: new Map(this.initialAutoRowHeights || []),
+            initialDefaultRowHeight: this.initialDefaultRowHeight,
+            initialRowHeightModes: new Map(this.initialRowHeightModes || []),
+            initialColumnWidths: new Map(this.initialColumnWidths || []),
+            initialRowDefaultHeightOverrides: new Map(this.initialRowDefaultHeightOverrides || []),
+            initialPersistedRange: { ...(this.initialPersistedRange || {}) },
+            initialMergedCells: this.cloneMergedCellsState(this.initialMergedCells),
+            initialStyleSequence: this.initialStyleSequence,
+            initialDefaultCellStyle: this.cloneDefaultCellStyle(this.initialDefaultCellStyle),
+            initialColorUsage: this.cloneColorUsage(this.initialColorUsage),
+            unsavedChanges: this.unsavedChanges,
+            hasAutoPersistedBaseline: this.hasAutoPersistedBaseline,
+            hasRestoredDraft: this.hasRestoredDraft,
+            userMadeChanges: this.userMadeChanges
+        };
+    }
+
+    resetStateForImport() {
+        this.cellData = new Map();
+        this.rowStyles = new Map();
+        this.columnStyles = new Map();
+        this.cellStyleMeta = new Map();
+        this.defaultStyleMeta = {};
+        this.defaultCellStyle = {};
+        this.rowHeights = new Map();
+        this.autoRowHeights = new Map();
+        this.rowHeightModes = new Map();
+        this.rowDefaultHeightOverrides = new Map();
+        this.columnWidths = new Map();
+        this.mergedCells = new Map();
+        this.cellToMergeParent = new Map();
+        this.persistedRange = { maxRow: 19, maxCol: 9 };
+        this.styleSequence = 1;
+        this.defaultAutoRowHeight = this.computeRowHeightForFontSize(this.getDefaultFontSizeForAutoHeight());
+        this.colorUsage = { background: [], font: [], border: [] };
+    }
+
+    applySnapshotData(snapshot, { markPersisted = false, revisionRef = null, revisionLabel = null, skipDirtyUpdate = false } = {}) {
+        if (!snapshot) return;
+        this.cellData = this.cloneCellData(snapshot.cellData || new Map());
+        this.rowStyles = this.cloneStyleMap(snapshot.rowStyles || new Map());
+        this.columnStyles = this.cloneStyleMap(snapshot.columnStyles || new Map());
+        this.cellStyleMeta = this.cloneStyleMap(snapshot.cellStyleMeta || new Map());
+        this.defaultStyleMeta = this.cloneStyleMeta(snapshot.defaultStyleMeta || {});
+        this.defaultCellStyle = this.cloneDefaultCellStyle(snapshot.defaultCellStyle || {});
+        this.rowHeights = new Map(snapshot.rowHeights || []);
+        this.autoRowHeights = new Map(snapshot.autoRowHeights || []);
+        this.rowHeightModes = new Map(snapshot.rowHeightModes || []);
+        this.rowDefaultHeightOverrides = new Map(snapshot.rowDefaultHeightOverrides || []);
+        this.columnWidths = new Map(snapshot.columnWidths || []);
+        this.persistedRange = { maxRow: 19, maxCol: 9, ...(snapshot.persistedRange || {}) };
+        this.styleSequence = snapshot.styleSequence || this.styleSequence || 1;
+        this.defaultAutoRowHeight = snapshot.defaultAutoRowHeight || this.defaultAutoRowHeight;
+        this.colorUsage = this.cloneColorUsage(snapshot.colorUsage || this.colorUsage);
+        this.mergedCells = new Map();
+        this.cellToMergeParent = new Map();
+        this.applyMergedCellsSnapshot(snapshot.mergedCells || []);
+
+        this.initialCellData = this.cloneCellData(snapshot.initialCellData || this.initialCellData);
+        this.initialRowStyles = this.cloneStyleMap(snapshot.initialRowStyles || this.initialRowStyles);
+        this.initialColumnStyles = this.cloneStyleMap(snapshot.initialColumnStyles || this.initialColumnStyles);
+        this.initialCellStyleMeta = this.cloneStyleMap(snapshot.initialCellStyleMeta || this.initialCellStyleMeta);
+        this.initialDefaultStyleMeta = this.cloneStyleMeta(snapshot.initialDefaultStyleMeta || this.initialDefaultStyleMeta);
+        this.initialRowHeights = new Map(snapshot.initialRowHeights || this.initialRowHeights || []);
+        this.initialAutoRowHeights = new Map(snapshot.initialAutoRowHeights || this.initialAutoRowHeights || []);
+        this.initialDefaultRowHeight = snapshot.initialDefaultRowHeight ?? this.initialDefaultRowHeight;
+        this.initialRowHeightModes = new Map(snapshot.initialRowHeightModes || this.initialRowHeightModes || []);
+        this.initialColumnWidths = new Map(snapshot.initialColumnWidths || this.initialColumnWidths || []);
+        this.initialRowDefaultHeightOverrides = new Map(snapshot.initialRowDefaultHeightOverrides || this.initialRowDefaultHeightOverrides || []);
+        this.initialPersistedRange = { ...(snapshot.initialPersistedRange || this.initialPersistedRange || {}) };
+        this.initialMergedCells = this.cloneMergedCellsState(snapshot.initialMergedCells || this.initialMergedCells);
+        this.initialStyleSequence = snapshot.initialStyleSequence || this.initialStyleSequence;
+        this.initialDefaultCellStyle = this.cloneDefaultCellStyle(snapshot.initialDefaultCellStyle || this.initialDefaultCellStyle);
+        this.initialColorUsage = this.cloneColorUsage(snapshot.initialColorUsage || this.initialColorUsage);
+        this.unsavedChanges = Boolean(snapshot.unsavedChanges);
+        this.hasAutoPersistedBaseline = Boolean(snapshot.hasAutoPersistedBaseline);
+        this.hasRestoredDraft = Boolean(snapshot.hasRestoredDraft);
+        this.userMadeChanges = Boolean(snapshot.userMadeChanges);
+
+        this.finalizeRevisionSwitch({ markPersisted, revisionRef, revisionLabel, skipDirtyUpdate });
+    }
+
+    finalizeRevisionSwitch({ markPersisted = false, revisionRef = null, revisionLabel = null, skipDirtyUpdate = false } = {}) {
+        this.initializeStyleMetadataFromData();
+        this.recomputeColorUsageFromData();
+        this.initializeDynamicDimensions();
+        this.refreshLayoutAfterMergeChange({ recalcAutoHeights: true });
+        this.refreshAllVisibleCells();
+        this.refreshPalettes();
+        this.clearAllSelections();
+        const firstCell = this.getCellAt(0, 0) || this.createCell(0, 0);
+        if (firstCell) {
+            this.selectCells([firstCell], true);
+        }
+        this.undoStack = [];
+        this.redoStack = [];
+        this.updateUndoRedoButtons();
+
+        if (markPersisted) {
+            this.markChangesPersisted();
+        } else if (!skipDirtyUpdate) {
+            this.updateDirtyState({ persist: false });
+        } else {
+            this.updateSaveIndicator(this.unsavedChanges);
+        }
+
+        if (revisionRef) this.revisionActiveRef = revisionRef;
+        if (revisionLabel) this.revisionActiveLabel = revisionLabel;
+        const metaKey = revisionRef || this.revisionActiveRef || 'local';
+        this.revisionMetadata.set(metaKey, this.buildRevisionMetaFromState());
+        this.renderRevisionHistorySummary();
+        this.renderRevisionHistoryList();
+    }
+
+    buildRevisionMetaFromState(snapshot = null) {
+        const range = snapshot?.persistedRange || this.persistedRange || {};
+        const maxRow = Number(range.maxRow ?? -1);
+        const maxCol = Number(range.maxCol ?? -1);
+        const hasRange = Number.isInteger(maxRow) && maxRow >= 0 && Number.isInteger(maxCol) && maxCol >= 0;
+        const rows = hasRange ? maxRow + 1 : null;
+        const cols = hasRange ? maxCol + 1 : null;
+        const lastCell = hasRange ? this.getCellAddress(maxRow, maxCol) : '';
+        const rangeLabel = hasRange
+            ? `${rows} row${rows === 1 ? '' : 's'} · ${cols} col${cols === 1 ? '' : 's'}${lastCell ? ` · last ${lastCell}` : ''}`
+            : 'Range unknown';
+        return {
+            maxRow: hasRange ? maxRow : null,
+            maxCol: hasRange ? maxCol : null,
+            rows,
+            cols,
+            rangeLabel,
+            capturedAt: Date.now()
+        };
+    }
+
+    ensureWorkingCopySnapshot() {
+        if (this.revisionActiveRef !== 'local') return this.revisionWorkingSnapshot;
+        const snapshot = this.buildSnapshotFromState();
+        this.revisionWorkingSnapshot = {
+            snapshot,
+            label: 'Current view',
+            savedAt: Date.now(),
+            dirty: this.unsavedChanges
+        };
+        this.revisionMetadata.set('local', this.buildRevisionMetaFromState(snapshot));
+        return this.revisionWorkingSnapshot;
+    }
+
     renderSaveModalDiff() {
         const container = document.getElementById('saveModalDiff');
         if (!container) return;
@@ -3841,6 +4056,323 @@ class SpreadsheetApp {
         return lines.join('<br>');
     }
 
+    setRevisionStatus(message, isError = false) {
+        if (!this.revisionHistoryStatus) return;
+        this.revisionHistoryStatus.textContent = message || '';
+        this.revisionHistoryStatus.classList.toggle('revision-drawer__status--error', Boolean(isError));
+    }
+
+    renderRevisionHistorySummary() {
+        if (!this.revisionHistorySummary) return;
+        const meta = this.revisionMetadata.get(this.revisionActiveRef) || this.revisionMetadata.get('local');
+        const refLabel = this.revisionActiveRef && this.revisionActiveRef !== 'local'
+            ? `#${this.shortenSha(this.revisionActiveRef)}`
+            : 'Local';
+        const label = this.revisionActiveLabel || 'Current view';
+        const rangeLabel = meta?.rangeLabel || 'Range unknown';
+        const branchLabel = this.revisionBranch ? `Branch ${this.revisionBranch}` : 'Branch not detected';
+        this.revisionHistorySummary.textContent = `${label} (${refLabel}) • ${rangeLabel} • ${branchLabel}`;
+    }
+
+    formatRevisionDate(value) {
+        if (!value) return '';
+        const ts = typeof value === 'number' ? value : Date.parse(value);
+        if (!Number.isFinite(ts)) return '';
+        const diffMs = Date.now() - ts;
+        const diffMinutes = Math.max(0, Math.floor(diffMs / 60000));
+        if (diffMinutes < 1) return 'just now';
+        if (diffMinutes < 60) return `${diffMinutes} min${diffMinutes === 1 ? '' : 's'} ago`;
+        const diffHours = Math.floor(diffMinutes / 60);
+        if (diffHours < 24) return `${diffHours} hr${diffHours === 1 ? '' : 's'} ago`;
+        const diffDays = Math.floor(diffHours / 24);
+        if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+        const date = new Date(ts);
+        try {
+            return date.toLocaleDateString();
+        } catch {
+            return date.toUTCString();
+        }
+    }
+
+    renderRevisionListItem(entry) {
+        const ref = entry.ref || entry.sha || entry.id || 'local';
+        const isLocal = entry.type === 'local' || ref === 'local';
+        const isActive = this.revisionActiveRef === ref || (isLocal && this.revisionActiveRef === 'local');
+        const meta = this.revisionMetadata.get(ref) || entry.rangeMeta;
+        const rangeLabel = meta?.rangeLabel || 'Range unknown';
+        const badge = isLocal
+            ? '<span class="revision-item__pill">Local</span>'
+            : `<span class="revision-item__pill">${escapeHTML(entry.shortSha || this.shortenSha(ref) || 'rev')}</span>`;
+        const subtitleParts = [];
+        if (!isLocal) {
+            const shortSha = entry.shortSha || this.shortenSha(ref);
+            if (shortSha) subtitleParts.push(`#${shortSha}`);
+        }
+        if (entry.author) subtitleParts.push(entry.author);
+        const when = this.formatRevisionDate(entry.date || entry.savedAt);
+        if (when) subtitleParts.push(when);
+        const subtitle = subtitleParts.join(' · ');
+        const primaryLabel = entry.message || entry.label || (isLocal ? 'Current view' : 'Revision');
+        const actionLabel = isLocal ? 'Restore' : (isActive ? 'Loaded' : 'Load');
+        const disableAction = isActive && !isLocal;
+
+        return `
+            <article class="revision-item${isActive ? ' revision-item--active' : ''}" data-revision-ref="${escapeAttribute(ref)}" data-revision-type="${isLocal ? 'local' : 'commit'}">
+                <div class="revision-item__header">
+                    <div class="revision-item__title">${escapeHTML(primaryLabel)}</div>
+                    ${badge}
+                </div>
+                <div class="revision-item__meta">${escapeHTML(subtitle)}</div>
+                <div class="revision-item__range">${escapeHTML(rangeLabel)}</div>
+                <div class="revision-item__actions">
+                    <button class="btn btn--sm toolbar-btn revision-item__load" data-revision-load data-revision-ref="${escapeAttribute(ref)}" data-revision-type="${isLocal ? 'local' : 'commit'}" ${disableAction ? 'disabled' : ''}>${actionLabel}</button>
+                </div>
+            </article>
+        `;
+    }
+
+    renderRevisionHistoryList() {
+        if (!this.revisionHistoryList) return;
+        if (this.revisionHistoryLoading) {
+            this.revisionHistoryList.innerHTML = '<div class="revision-drawer__hint">Loading revisions…</div>';
+            return;
+        }
+
+        const items = [];
+        if (this.revisionWorkingSnapshot?.snapshot) {
+            items.push({
+                type: 'local',
+                ref: 'local',
+                shortSha: 'local',
+                message: this.revisionWorkingSnapshot.label || 'Current view',
+                author: 'You',
+                date: this.revisionWorkingSnapshot.savedAt,
+                rangeMeta: this.revisionMetadata.get('local')
+            });
+        }
+        (this.revisionHistoryEntries || []).forEach(entry => items.push(entry));
+
+        if (!items.length) {
+            this.revisionHistoryList.innerHTML = '<div class="revision-drawer__empty">No revisions found for index.html.</div>';
+            return;
+        }
+
+        this.revisionHistoryList.innerHTML = items.map(entry => this.renderRevisionListItem(entry)).join('');
+    }
+
+    hideRevisionDrawer() {
+        if (!this.revisionHistoryDrawer) return;
+        this.revisionHistoryDrawer.classList.add('hidden');
+    }
+
+    async toggleRevisionDrawer(forceOpen = false) {
+        if (!this.revisionHistoryDrawer) return;
+        const isHidden = this.revisionHistoryDrawer.classList.contains('hidden');
+        if (!isHidden && !forceOpen) {
+            this.hideRevisionDrawer();
+            return;
+        }
+        this.revisionHistoryDrawer.classList.remove('hidden');
+        this.renderRevisionHistorySummary();
+        await this.refreshRevisionHistory({ force: true });
+    }
+
+    handleRevisionDrawerClick(event) {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+
+        if (target.closest('[data-revision-close]')) {
+            this.hideRevisionDrawer();
+            return;
+        }
+
+        const loadBtn = target.closest('[data-revision-load]');
+        if (loadBtn) {
+            const ref = loadBtn.dataset.revisionRef || loadBtn.closest('[data-revision-ref]')?.dataset.revisionRef || '';
+            const type = loadBtn.dataset.revisionType || loadBtn.closest('[data-revision-ref]')?.dataset.revisionType || 'commit';
+            this.handleRevisionSelection(ref, type);
+        }
+    }
+
+    async refreshRevisionHistory({ force = false } = {}) {
+        if (this.revisionHistoryLoading && !force) return;
+        if (!this.revisionHistoryDrawer) return;
+        this.revisionHistoryLoading = true;
+        this.setRevisionStatus('Loading revisions…');
+        this.renderRevisionHistoryList();
+        try {
+            this.ensureWorkingCopySnapshot();
+            const repoConfig = await this.loadRepoConfig();
+            const repo = await this.resolveCodebergRepo();
+            if (!repo || !repoConfig) {
+                throw new Error('Repository could not be detected from this page.');
+            }
+            const branch = repoConfig.page_branch || repoConfig.branch || 'pages';
+            this.revisionBranch = branch;
+            if (this.revisionHistorySubtitle) {
+                this.revisionHistorySubtitle.textContent = `${repo.owner}/${repo.repo} · ${branch}`;
+            }
+            const commits = await this.fetchRevisionCommits(repo, branch, 30);
+            this.revisionHistoryEntries = commits;
+            this.renderRevisionHistoryList();
+            this.renderRevisionHistorySummary();
+            if (!commits.length) {
+                this.setRevisionStatus('No revisions found for index.html on this branch.');
+            } else {
+                this.setRevisionStatus('');
+            }
+        } catch (error) {
+            console.error('Failed to refresh revision history', error);
+            this.setRevisionStatus(error.message || 'Unable to load revisions.', true);
+        } finally {
+            this.revisionHistoryLoading = false;
+            this.renderRevisionHistoryList();
+        }
+    }
+
+    async fetchRevisionCommits(repo, branch, limit = 30) {
+        const attempt = async (params) => {
+            const qs = new URLSearchParams(params);
+            const path = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/commits?${qs.toString()}`;
+            const data = await this.callCodebergApi(path, null);
+            if (!Array.isArray(data)) return [];
+            return data.map(entry => this.normalizeCommitEntry(entry)).filter(Boolean);
+        };
+
+        const baseParams = { sha: branch, limit: `${limit}` };
+        try {
+            return await attempt({ ...baseParams, path: 'index.html' });
+        } catch (error) {
+            console.warn('Path-filtered commit fetch failed, retrying without path', error);
+            return attempt(baseParams);
+        }
+    }
+
+    normalizeCommitEntry(entry) {
+        if (!entry) return null;
+        const sha = entry.sha || entry.id || entry.commit?.id || entry.commit?.sha || null;
+        if (!sha) return null;
+        const commit = entry.commit || entry;
+        const message = (commit?.message || '').split('\n')[0].trim() || '(no message)';
+        const author = commit?.author?.name || commit?.committer?.name || entry.author?.login || entry.author?.username || '';
+        const date = commit?.author?.date || commit?.committer?.date || entry.created || entry.timestamp || null;
+        return {
+            type: 'commit',
+            sha,
+            ref: sha,
+            shortSha: this.shortenSha(sha),
+            message,
+            author: author || 'Unknown',
+            date
+        };
+    }
+
+    async handleRevisionSelection(ref, type = 'commit') {
+        if (!ref) return;
+        if (type === 'local') {
+            const local = this.ensureWorkingCopySnapshot();
+            if (local?.snapshot) {
+                this.applySnapshotData(local.snapshot, { markPersisted: false, revisionRef: 'local', revisionLabel: local.label || 'Current view' });
+                this.setRevisionStatus('Restored your working copy.');
+                this.renderRevisionHistoryList();
+            }
+            return;
+        }
+
+        const entry = (this.revisionHistoryEntries || []).find(item => (item.sha || item.ref) === ref);
+        if (!entry) {
+            this.setRevisionStatus('Revision not found.', true);
+            return;
+        }
+
+        if (this.isApplyingRevision) return;
+        if (this.revisionActiveRef === 'local') {
+            this.ensureWorkingCopySnapshot();
+        }
+        if (this.unsavedChanges) {
+            let confirmed = true;
+            if (typeof window !== 'undefined' && window.confirm) {
+                confirmed = window.confirm('Loading a revision will replace your current edits. Your current view is saved under "Current view". Continue?');
+            }
+            if (!confirmed) return;
+        }
+
+        await this.applyRevisionFromEntry(entry);
+    }
+
+    async applyRevisionFromEntry(entry) {
+        const ref = entry?.sha || entry?.ref;
+        if (!ref) {
+            this.setRevisionStatus('Revision reference is missing.', true);
+            return;
+        }
+        const previousSnapshot = this.buildSnapshotFromState();
+        this.isApplyingRevision = true;
+        try {
+            this.setRevisionStatus(`Loading ${entry.shortSha || this.shortenSha(ref) || 'revision'}…`);
+            const html = await this.fetchRevisionHtml(ref);
+            await this.applyRevisionHtml(html, { ref, label: entry.message || `Revision ${entry.shortSha || this.shortenSha(ref)}`, markPersisted: true });
+            this.revisionActiveRef = ref;
+            this.revisionActiveLabel = entry.message || `Revision ${entry.shortSha || this.shortenSha(ref)}`;
+            this.revisionMetadata.set(ref, this.buildRevisionMetaFromState());
+            this.renderRevisionHistoryList();
+            this.renderRevisionHistorySummary();
+            this.setRevisionStatus(`Loaded ${entry.shortSha || this.shortenSha(ref)}.`);
+        } catch (error) {
+            console.error('Failed to load revision', error);
+            this.applySnapshotData(previousSnapshot, { markPersisted: false, revisionRef: this.revisionActiveRef, revisionLabel: this.revisionActiveLabel, skipDirtyUpdate: true });
+            this.setRevisionStatus(error.message || 'Failed to load revision.', true);
+        } finally {
+            this.isApplyingRevision = false;
+        }
+    }
+
+    async fetchRevisionHtml(ref) {
+        const repo = await this.resolveCodebergRepo();
+        if (!repo) {
+            throw new Error('Repository could not be detected.');
+        }
+        const path = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/contents/index.html?ref=${encodeURIComponent(ref)}`;
+        const data = await this.callCodebergApi(path, null);
+        if (!data?.content) {
+            throw new Error('Revision does not contain index.html content.');
+        }
+        const encoding = (data.encoding || '').toLowerCase();
+        if (encoding && encoding !== 'base64') {
+            throw new Error(`Unsupported encoding ${encoding}`);
+        }
+        return this.decodeBase64Content(data.content);
+    }
+
+    async applyRevisionHtml(html, { ref = null, label = null, markPersisted = true } = {}) {
+        if (!html) throw new Error('Revision content is empty.');
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const newGridContent = doc.getElementById('gridContent');
+        if (!newGridContent) {
+            throw new Error('Revision did not include grid content.');
+        }
+        const fallbackTable = newGridContent.querySelector('table[data-spreadsheet-export]');
+        if (!fallbackTable) {
+            throw new Error('Revision does not contain a saved table.');
+        }
+
+        const originalGridContent = this.gridContent;
+        try {
+            this.resetStateForImport();
+            this.gridContent = newGridContent;
+            this.loadInitialDataFromDOM();
+        } finally {
+            this.gridContent = originalGridContent;
+        }
+
+        this.finalizeRevisionSwitch({
+            markPersisted,
+            revisionRef: ref || this.revisionActiveRef,
+            revisionLabel: label || this.revisionActiveLabel
+        });
+    }
+
     handleDownloadOption() {
         this.setSaveModalBusy(true);
         (async () => {
@@ -4164,6 +4696,17 @@ class SpreadsheetApp {
             binary += String.fromCharCode(...chunk);
         }
         return btoa(binary);
+    }
+
+    decodeBase64Content(content) {
+        if (!content) return '';
+        try {
+            const normalized = `${content}`.replace(/\s+/g, '');
+            return atob(normalized);
+        } catch (error) {
+            console.error('Unable to decode base64 content', error);
+            throw new Error('Failed to decode revision content.');
+        }
     }
 
     async callCodebergApi(path, token, options = {}) {
@@ -5112,6 +5655,10 @@ class SpreadsheetApp {
         if (!document.getElementById('borderMenu')) {
             document.body.insertAdjacentHTML('beforeend', BORDER_MENU_HTML);
         }
+
+        if (!document.getElementById('revisionHistoryDrawer')) {
+            document.body.insertAdjacentHTML('beforeend', REVISION_HISTORY_HTML);
+        }
         
         if (!document.getElementById('keyboardShortcutsModal')) {
             document.body.insertAdjacentHTML('beforeend', renderKeyboardShortcutsModal());
@@ -5819,6 +6366,7 @@ class SpreadsheetApp {
     setupEventListeners() {
         const events = [
             ['#saveBtn', 'click', () => this.showSaveOptionsModal()],
+            ['#revisionHistoryBtn', 'click', () => this.toggleRevisionDrawer(true)],
             ['#undoBtn', 'click', () => this.undo()],
             ['#redoBtn', 'click', () => this.redo()],
             [this.mainGrid, 'mousedown', e => this.handleMouseDown(e)],
@@ -5886,6 +6434,8 @@ class SpreadsheetApp {
                 }
             }],
             ['#themeToggleBtn', 'click', () => this.toggleTheme()],
+            ['#revisionHistoryRefreshBtn', 'click', () => this.refreshRevisionHistory({ force: true })],
+            [this.revisionHistoryDrawer, 'click', e => this.handleRevisionDrawerClick(e)],
             [this.codebergProfileContainer, 'click', e => this.handleProfileSignInClick(e)]
         ];
         
