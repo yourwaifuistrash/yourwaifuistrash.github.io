@@ -9386,6 +9386,7 @@ class SpreadsheetApp {
         const effectiveStyle = this.getEffectiveStyle(row, col, cellData);
         const textAlign = effectiveStyle.textAlign || 'left';
         const verticalAlign = effectiveStyle.verticalAlign || 'bottom';
+        const editBackground = this.getEditingBackdropColor(cell, effectiveStyle);
         
         // Strip cell-level formatting classes while editing; we'll apply inline equivalents instead
         const formattingClasses = ['bold', 'italic', 'underline', 'strikethrough'];
@@ -9393,6 +9394,9 @@ class SpreadsheetApp {
         
         cell.dataset.originalValue = currentText;
         cell.classList.add('editing');
+        cell.dataset.editBackground = editBackground;
+        cell.style.setProperty('--cell-edit-background', editBackground);
+        cell.style.backgroundColor = editBackground;
         
         // Reset overflow styles for editing
         cell.style.pointerEvents = 'auto';
@@ -9513,6 +9517,42 @@ class SpreadsheetApp {
         this.log(`Started editing cell ${cell.dataset.address}`);
     }
 
+    getEditingBackdropColor(cell, effectiveStyle = null) {
+        const rootSurface = (getComputedStyle(document.documentElement).getPropertyValue('--color-surface') || '#ffffff').trim() || '#ffffff';
+        const candidates = [
+            effectiveStyle?.backgroundColor,
+            cell?.style?.backgroundColor,
+            rootSurface
+        ];
+        const chosen = candidates.find(value =>
+            value &&
+            value !== 'transparent' &&
+            value !== 'rgba(0, 0, 0, 0)'
+        ) || rootSurface;
+        return this.toOpaqueColor(chosen, rootSurface);
+    }
+
+    toOpaqueColor(color, fallback = '#ffffff') {
+        if (!color) return fallback;
+        const rgbaMatch = color.match(/rgba?\(([^)]+)\)/i);
+        if (rgbaMatch) {
+            const parts = rgbaMatch[1].split(',').map(p => p.trim()).filter(Boolean);
+            if (parts.length >= 3) {
+                const [r, g, b] = parts;
+                return `rgb(${r}, ${g}, ${b})`;
+            }
+        }
+        const hslaMatch = color.match(/hsla?\(([^)]+)\)/i);
+        if (hslaMatch) {
+            const parts = hslaMatch[1].split(',').map(p => p.trim()).filter(Boolean);
+            if (parts.length >= 3) {
+                const [h, s, l] = parts;
+                return `hsl(${h}, ${s}, ${l})`;
+            }
+        }
+        return color || fallback;
+    }
+
     updateEditorOverflow(cell, input) {
         const { row, col } = this.getCellPos(cell);
         const mergedCols = Math.max(parseInt(cell?.dataset?.mergedCols || '1', 10), 1);
@@ -9525,8 +9565,10 @@ class SpreadsheetApp {
         const maxOverflowCells = 10;
 
         // Keep the editing backdrop in sync with the cell's background
-        const computedBg = window.getComputedStyle(cell).backgroundColor;
-        cell.style.setProperty('--cell-edit-background', computedBg || 'transparent');
+        const editBackground = cell.dataset.editBackground || this.getEditingBackdropColor(cell);
+        cell.dataset.editBackground = editBackground;
+        cell.style.setProperty('--cell-edit-background', editBackground);
+        cell.style.backgroundColor = editBackground;
         
         // Always set cell to allow overflow during editing
         cell.style.overflow = 'visible';
