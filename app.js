@@ -3054,12 +3054,12 @@ class SpreadsheetApp {
     }
 
     extractRangeMetaFromHtml(html) {
-        if (!html) return null;
+        if (!html) return { meta: null, hasTable: false };
         try {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
             const table = doc.querySelector('table[data-spreadsheet-export]');
-            if (!table) return null;
+            if (!table) return { meta: null, hasTable: false };
 
             let maxRow = -1;
             let maxCol = -1;
@@ -3093,11 +3093,16 @@ class SpreadsheetApp {
                 maxRow = bodyRows.length - 1;
             }
 
-            if (maxRow < 0 || maxCol < 0) return null;
-            return this.buildRevisionMetaFromState({ persistedRange: { maxRow, maxCol } });
+            if (maxRow < 0 || maxCol < 0) return { meta: null, hasTable: true };
+            const meta = this.buildRevisionMetaFromState({ persistedRange: { maxRow, maxCol } });
+            meta.hasTable = true;
+            return {
+                meta,
+                hasTable: true
+            };
         } catch (error) {
             console.warn('Unable to parse revision range from HTML', error);
-            return null;
+            return { meta: null, hasTable: false };
         }
     }
 
@@ -4149,6 +4154,8 @@ class SpreadsheetApp {
         const isActive = this.revisionActiveRef === ref || (isLocal && this.revisionActiveRef === 'local');
         const meta = this.revisionMetadata.get(ref) || entry.rangeMeta;
         const rangeLabel = meta?.rangeLabel || 'Range unknown';
+        const metaHasTable = meta && Object.prototype.hasOwnProperty.call(meta, 'hasTable') ? meta.hasTable !== false : null;
+        const hasTable = entry.hasTable !== false && metaHasTable !== false;
         const badge = isLocal
             ? '<span class="revision-item__pill">Local</span>'
             : `<span class="revision-item__pill">${escapeHTML(entry.shortSha || this.shortenSha(ref) || 'rev')}</span>`;
@@ -4163,7 +4170,10 @@ class SpreadsheetApp {
         const subtitle = subtitleParts.join(' · ');
         const primaryLabel = entry.message || entry.label || (isLocal ? 'Current view' : 'Revision');
         const actionLabel = isLocal ? 'Restore' : (isActive ? 'Loaded' : 'Load');
-        const disableAction = isActive && !isLocal;
+        const disableAction = (isActive && !isLocal) || !hasTable;
+        const actionsHtml = hasTable
+            ? `<button class="btn btn--sm toolbar-btn revision-item__load" data-revision-load data-revision-ref="${escapeAttribute(ref)}" data-revision-type="${isLocal ? 'local' : 'commit'}" ${disableAction ? 'disabled' : ''}>${actionLabel}</button>`
+            : '<div class="revision-item__no-table" title="This commit does not contain a saved table.">No table to load</div>';
         const titleMarkup = entry.hasMoreMessage && entry.fullMessage
             ? `<details class="revision-item__details revision-item__details--inline">
                     <summary class="revision-item__details-summary">
@@ -4183,7 +4193,7 @@ class SpreadsheetApp {
                 <div class="revision-item__meta">${escapeHTML(subtitle)}</div>
                 <div class="revision-item__range">${escapeHTML(rangeLabel)}</div>
                 <div class="revision-item__actions">
-                    <button class="btn btn--sm toolbar-btn revision-item__load" data-revision-load data-revision-ref="${escapeAttribute(ref)}" data-revision-type="${isLocal ? 'local' : 'commit'}" ${disableAction ? 'disabled' : ''}>${actionLabel}</button>
+                    ${actionsHtml}
                 </div>
             </article>
         `;
@@ -4325,9 +4335,12 @@ class SpreadsheetApp {
         const worker = async () => {
             while (queue.length) {
                 const ref = queue.shift();
-                const meta = await this.fetchRevisionRange(ref);
+                const result = await this.fetchRevisionRange(ref);
+                const meta = result?.meta || null;
+                const hasTable = result?.hasTable;
+                results.push({ ref, meta, hasTable });
                 if (meta) {
-                    results.push({ ref, meta });
+                    this.revisionMetadata.set(ref, meta);
                 }
             }
         };
@@ -4336,12 +4349,27 @@ class SpreadsheetApp {
 
         if (!results.length) return;
         let updated = false;
-        results.forEach(({ ref, meta }) => {
-            this.revisionMetadata.set(ref, meta);
+        results.forEach(({ ref, meta, hasTable }) => {
             const entry = (this.revisionHistoryEntries || []).find(item => (item.sha || item.ref) === ref);
             if (entry) {
-                entry.rangeMeta = meta;
-                updated = true;
+                if (meta) {
+                    entry.rangeMeta = meta;
+                } else if (hasTable === false) {
+                    entry.rangeMeta = {
+                        maxRow: null,
+                        maxCol: null,
+                        rows: null,
+                        cols: null,
+                        rangeLabel: 'No table found',
+                        capturedAt: Date.now()
+                    };
+                }
+                if (hasTable === false) {
+                    entry.hasTable = false;
+                }
+                if (meta || hasTable === false) {
+                    updated = true;
+                }
             }
         });
 
@@ -4393,6 +4421,11 @@ class SpreadsheetApp {
             return;
         }
 
+        if (entry.hasTable === false) {
+            this.setRevisionStatus('This commit does not contain a saved table.', true);
+            return;
+        }
+
         if (this.isApplyingRevision) return;
         if (this.revisionActiveRef === 'local') {
             this.ensureWorkingCopySnapshot();
@@ -4412,6 +4445,11 @@ class SpreadsheetApp {
         const ref = entry?.sha || entry?.ref;
         if (!ref) {
             this.setRevisionStatus('Revision reference is missing.', true);
+            return;
+        }
+        const cachedRange = this.revisionRangeCache.get(ref);
+        if (cachedRange && typeof cachedRange.then !== 'function' && cachedRange.hasTable === false) {
+            this.setRevisionStatus('This commit does not contain a saved table.', true);
             return;
         }
         const previousSnapshot = this.buildSnapshotFromState();
@@ -4455,11 +4493,10 @@ class SpreadsheetApp {
             throw new Error(`Unsupported encoding ${encoding}`);
         }
         const html = this.decodeBase64Content(data.content);
-        if (!cached || typeof cached.then === 'function') {
-            this.revisionRangeCache.set(ref, { html, meta: cached?.meta || null });
-        } else {
-            this.revisionRangeCache.set(ref, { ...cached, html });
-        }
+        const payload = (!cached || typeof cached.then === 'function')
+            ? { html, meta: cached?.meta || null, hasTable: cached?.hasTable ?? null }
+            : { ...cached, html };
+        this.revisionRangeCache.set(ref, payload);
         return html;
     }
 
@@ -4470,20 +4507,30 @@ class SpreadsheetApp {
             if (typeof cached.then === 'function') {
                 try {
                     const resolved = await cached;
-                    return resolved?.meta || null;
+                    return resolved || null;
                 } catch (error) {
                     console.warn('Cached revision range promise failed', error);
                 }
-            } else if (cached.meta) {
-                return cached.meta;
+            } else {
+                return cached;
             }
         }
 
         const task = (async () => {
             try {
                 const html = await this.fetchRevisionHtml(ref);
-                const meta = this.extractRangeMetaFromHtml(html);
-                const payload = { html, meta };
+                const parsed = this.extractRangeMetaFromHtml(html);
+                const fallbackMeta = parsed?.hasTable === false ? {
+                    maxRow: null,
+                    maxCol: null,
+                    rows: null,
+                    cols: null,
+                    rangeLabel: 'No table found',
+                    capturedAt: Date.now(),
+                    hasTable: false
+                } : null;
+                const meta = parsed?.meta || fallbackMeta;
+                const payload = { html, meta, hasTable: parsed?.hasTable !== false ? true : false };
                 this.revisionRangeCache.set(ref, payload);
                 if (meta) {
                     this.revisionMetadata.set(ref, meta);
@@ -4491,7 +4538,7 @@ class SpreadsheetApp {
                 return payload;
             } catch (error) {
                 console.warn('Failed to fetch revision range', error);
-                const payload = { html: null, meta: null };
+                const payload = { html: null, meta: null, hasTable: null };
                 this.revisionRangeCache.set(ref, payload);
                 return payload;
             }
@@ -4499,7 +4546,7 @@ class SpreadsheetApp {
 
         this.revisionRangeCache.set(ref, task);
         const result = await task;
-        return result?.meta || null;
+        return result || null;
     }
 
     async applyRevisionHtml(html, { ref = null, label = null, markPersisted = true } = {}) {

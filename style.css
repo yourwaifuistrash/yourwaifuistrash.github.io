@@ -2922,6 +2922,12 @@ body { margin: 0; padding: 0; }
   min-width: 96px;
 }
 
+.revision-item__no-table {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
 .revision-item__details {
   margin-top: 6px;
   border: 1px dashed var(--color-border);
