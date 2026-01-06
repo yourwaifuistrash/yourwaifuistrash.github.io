@@ -4115,11 +4115,20 @@ class SpreadsheetApp {
         const primaryLabel = entry.message || entry.label || (isLocal ? 'Current view' : 'Revision');
         const actionLabel = isLocal ? 'Restore' : (isActive ? 'Loaded' : 'Load');
         const disableAction = isActive && !isLocal;
+        const titleMarkup = entry.hasMoreMessage && entry.fullMessage
+            ? `<details class="revision-item__details revision-item__details--inline">
+                    <summary class="revision-item__details-summary">
+                        <span class="revision-item__title">${escapeHTML(primaryLabel)}</span>
+                        <span class="revision-item__details-caret" aria-hidden="true">▾</span>
+                    </summary>
+                    <pre>${escapeHTML(entry.fullMessage)}</pre>
+               </details>`
+            : `<div class="revision-item__title">${escapeHTML(primaryLabel)}</div>`;
 
         return `
             <article class="revision-item${isActive ? ' revision-item--active' : ''}" data-revision-ref="${escapeAttribute(ref)}" data-revision-type="${isLocal ? 'local' : 'commit'}">
                 <div class="revision-item__header">
-                    <div class="revision-item__title">${escapeHTML(primaryLabel)}</div>
+                    ${titleMarkup}
                     ${badge}
                 </div>
                 <div class="revision-item__meta">${escapeHTML(subtitle)}</div>
@@ -4253,7 +4262,10 @@ class SpreadsheetApp {
         const sha = entry.sha || entry.id || entry.commit?.id || entry.commit?.sha || null;
         if (!sha) return null;
         const commit = entry.commit || entry;
-        const message = (commit?.message || '').split('\n')[0].trim() || '(no message)';
+        const fullMessage = (commit?.message || '').toString();
+        const [firstLine, ...restLines] = fullMessage.split('\n');
+        const message = (firstLine || '').trim() || '(no message)';
+        const hasMoreMessage = restLines.some(line => line.trim().length);
         const author = commit?.author?.name || commit?.committer?.name || entry.author?.login || entry.author?.username || '';
         const date = commit?.author?.date || commit?.committer?.date || entry.created || entry.timestamp || null;
         return {
@@ -4262,6 +4274,8 @@ class SpreadsheetApp {
             ref: sha,
             shortSha: this.shortenSha(sha),
             message,
+            fullMessage,
+            hasMoreMessage,
             author: author || 'Unknown',
             date
         };

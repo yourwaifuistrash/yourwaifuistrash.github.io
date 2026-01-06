@@ -2922,6 +2922,59 @@ body { margin: 0; padding: 0; }
   min-width: 96px;
 }
 
+.revision-item__details {
+  margin-top: 6px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-8);
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+}
+
+.revision-item__details--inline {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.revision-item__details summary {
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+  font-weight: var(--font-weight-bold);
+  outline: none;
+  list-style: none;
+}
+
+.revision-item__details summary::-webkit-details-marker {
+  display: none;
+}
+
+.revision-item__details-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+
+.revision-item__details-caret {
+  font-size: 0.9em;
+  opacity: 0.7;
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.revision-item__details[open] .revision-item__details-caret {
+  transform: rotate(180deg);
+}
+
+.revision-item__details pre {
+  margin: var(--space-8) 0 0 0;
+  white-space: pre-wrap;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
 .shortcuts-modal {
     position: fixed;
     inset: 0;
