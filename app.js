@@ -4723,6 +4723,13 @@ class SpreadsheetApp {
         }
     }
 
+    normalizeWhitespaceValue(value) {
+        if (value === null || value === undefined) return '';
+        const text = `${value}`;
+        const collapsed = text.replace(/\u00a0/g, ' ').trim();
+        return collapsed.length ? text : '';
+    }
+
     async callCodebergApi(path, token, options = {}) {
         const url = `${CODEBERG_API_BASE}${path}`;
         const headers = Object.assign({
@@ -5780,9 +5787,15 @@ class SpreadsheetApp {
                 const raw = ds.raw;
                 const hasRaw = Object.prototype.hasOwnProperty.call(ds, 'raw');
                 if (hasRaw) {
-                    data.value = raw;
-                } else if (value && value.length) {
-                    data.value = value;
+                    const normalized = this.normalizeWhitespaceValue(raw);
+                    if (normalized) {
+                        data.value = raw;
+                    }
+                } else {
+                    const normalized = this.normalizeWhitespaceValue(value);
+                    if (normalized) {
+                        data.value = value;
+                    }
                 }
                 if (ds.rich) {
                     data.richText = this.sanitizeRichTextHTML(ds.rich);
@@ -17893,10 +17906,14 @@ class SpreadsheetApp {
                 const styles = [];
                 const extraAttributes = [];
 
-                const rawValue = cellData.value ?? '';
+                let rawValue = cellData.value ?? '';
+                const normalizedRawValue = this.normalizeWhitespaceValue(rawValue);
+                if (!normalizedRawValue) {
+                    rawValue = '';
+                }
                 const commentInfo = this.ensureCommentIds(coordKey, this.normalizeCommentData(cellData.comment));
                 let commentFlagMarkup = '';
-                const hasRawValue = Object.prototype.hasOwnProperty.call(cellData, 'value') || Boolean(commentInfo?.text);
+                const hasRawValue = (Object.prototype.hasOwnProperty.call(cellData, 'value') && Boolean(normalizedRawValue)) || Boolean(commentInfo?.text);
                 if (hasRawValue) {
                     datasets.push(`data-raw="${escapeAttribute(rawValue)}"`);
                 }
