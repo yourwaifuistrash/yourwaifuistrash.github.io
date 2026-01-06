@@ -5938,7 +5938,9 @@ class SpreadsheetApp {
         });
 
         const maxSeq = this.computeMaxStyleSequence();
-        this.styleSequence = Math.max(maxSeq + 1, this.styleSequence || 1);
+        // Preserve the persisted sequence counter so loading/exporting an unchanged sheet
+        // does not introduce diff-only bumps; nextStyleSequence will advance when needed.
+        this.styleSequence = Math.max(maxSeq, this.styleSequence || 1);
     }
 
     // Undo/Redo Methods
