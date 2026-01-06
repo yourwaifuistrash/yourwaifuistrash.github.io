@@ -781,6 +781,7 @@ class SpreadsheetApp {
         this.revisionBranch = null;
         this.isApplyingRevision = false;
         this.revisionHistoryLoading = false;
+        this.revisionRangeCache = new Map();
         this.loadInitialDataFromDOM();
         this.initializeStyleMetadataFromData();
         this.recomputeColorUsageFromData();
@@ -3052,6 +3053,54 @@ class SpreadsheetApp {
         };
     }
 
+    extractRangeMetaFromHtml(html) {
+        if (!html) return null;
+        try {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const table = doc.querySelector('table[data-spreadsheet-export]');
+            if (!table) return null;
+
+            let maxRow = -1;
+            let maxCol = -1;
+            const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+            bodyRows.forEach((tr, rowIndex) => {
+                const rowAttr = parseInt(tr.getAttribute('data-row'), 10);
+                const row = Number.isInteger(rowAttr) ? rowAttr : rowIndex;
+                const cells = Array.from(tr.querySelectorAll('td'));
+                if (!cells.length) {
+                    maxRow = Math.max(maxRow, row);
+                }
+                cells.forEach((td, colIndex) => {
+                    const colAttr = parseInt(td.getAttribute('data-col'), 10);
+                    const col = Number.isInteger(colAttr) ? colAttr : colIndex;
+                    const colspan = parseInt(td.getAttribute('colspan'), 10);
+                    const rowspan = parseInt(td.getAttribute('rowspan'), 10);
+                    const effectiveCol = Number.isInteger(colspan) && colspan > 1 ? col + colspan - 1 : col;
+                    const effectiveRow = Number.isInteger(rowspan) && rowspan > 1 ? row + rowspan - 1 : row;
+                    maxCol = Math.max(maxCol, effectiveCol);
+                    maxRow = Math.max(maxRow, effectiveRow);
+                });
+            });
+
+            if (maxCol < 0) {
+                const headerCols = table.querySelectorAll('thead th[data-col]');
+                if (headerCols.length) {
+                    maxCol = headerCols.length - 1;
+                }
+            }
+            if (maxRow < 0 && bodyRows.length) {
+                maxRow = bodyRows.length - 1;
+            }
+
+            if (maxRow < 0 || maxCol < 0) return null;
+            return this.buildRevisionMetaFromState({ persistedRange: { maxRow, maxCol } });
+        } catch (error) {
+            console.warn('Unable to parse revision range from HTML', error);
+            return null;
+        }
+    }
+
     ensureWorkingCopySnapshot() {
         if (this.revisionActiveRef !== 'local') return this.revisionWorkingSnapshot;
         const snapshot = this.buildSnapshotFromState();
@@ -4225,6 +4274,9 @@ class SpreadsheetApp {
             this.revisionHistoryEntries = commits;
             this.renderRevisionHistoryList();
             this.renderRevisionHistorySummary();
+            this.prefetchRevisionRanges(commits).catch(error => {
+                console.warn('Revision range prefetch failed', error);
+            });
             if (!commits.length) {
                 this.setRevisionStatus('No revisions found for index.html on this branch.');
             } else {
@@ -4254,6 +4306,48 @@ class SpreadsheetApp {
         } catch (error) {
             console.warn('Path-filtered commit fetch failed, retrying without path', error);
             return attempt(baseParams);
+        }
+    }
+
+    async prefetchRevisionRanges(entries = [], { batchSize = 4 } = {}) {
+        const refs = Array.from(new Set(entries.map(entry => entry?.ref || entry?.sha).filter(Boolean)));
+        const needsRange = refs.filter(ref => {
+            const cached = this.revisionRangeCache.get(ref);
+            const cachedMeta = cached && typeof cached.then !== 'function' ? cached.meta : null;
+            const existingMeta = this.revisionMetadata.get(ref) || cachedMeta;
+            return !(existingMeta && existingMeta.rangeLabel && existingMeta.rangeLabel !== 'Range unknown');
+        });
+        if (!needsRange.length) return;
+
+        const queue = [...needsRange];
+        const results = [];
+        const workerCount = Math.min(batchSize, queue.length) || 1;
+        const worker = async () => {
+            while (queue.length) {
+                const ref = queue.shift();
+                const meta = await this.fetchRevisionRange(ref);
+                if (meta) {
+                    results.push({ ref, meta });
+                }
+            }
+        };
+
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+        if (!results.length) return;
+        let updated = false;
+        results.forEach(({ ref, meta }) => {
+            this.revisionMetadata.set(ref, meta);
+            const entry = (this.revisionHistoryEntries || []).find(item => (item.sha || item.ref) === ref);
+            if (entry) {
+                entry.rangeMeta = meta;
+                updated = true;
+            }
+        });
+
+        if (updated) {
+            this.renderRevisionHistoryList();
+            this.renderRevisionHistorySummary();
         }
     }
 
@@ -4342,6 +4436,11 @@ class SpreadsheetApp {
     }
 
     async fetchRevisionHtml(ref) {
+        const cached = this.revisionRangeCache.get(ref);
+        if (cached && typeof cached.then !== 'function' && cached && cached.html) {
+            return cached.html;
+        }
+
         const repo = await this.resolveCodebergRepo();
         if (!repo) {
             throw new Error('Repository could not be detected.');
@@ -4355,7 +4454,52 @@ class SpreadsheetApp {
         if (encoding && encoding !== 'base64') {
             throw new Error(`Unsupported encoding ${encoding}`);
         }
-        return this.decodeBase64Content(data.content);
+        const html = this.decodeBase64Content(data.content);
+        if (!cached || typeof cached.then === 'function') {
+            this.revisionRangeCache.set(ref, { html, meta: cached?.meta || null });
+        } else {
+            this.revisionRangeCache.set(ref, { ...cached, html });
+        }
+        return html;
+    }
+
+    async fetchRevisionRange(ref) {
+        if (!ref) return null;
+        const cached = this.revisionRangeCache.get(ref);
+        if (cached) {
+            if (typeof cached.then === 'function') {
+                try {
+                    const resolved = await cached;
+                    return resolved?.meta || null;
+                } catch (error) {
+                    console.warn('Cached revision range promise failed', error);
+                }
+            } else if (cached.meta) {
+                return cached.meta;
+            }
+        }
+
+        const task = (async () => {
+            try {
+                const html = await this.fetchRevisionHtml(ref);
+                const meta = this.extractRangeMetaFromHtml(html);
+                const payload = { html, meta };
+                this.revisionRangeCache.set(ref, payload);
+                if (meta) {
+                    this.revisionMetadata.set(ref, meta);
+                }
+                return payload;
+            } catch (error) {
+                console.warn('Failed to fetch revision range', error);
+                const payload = { html: null, meta: null };
+                this.revisionRangeCache.set(ref, payload);
+                return payload;
+            }
+        })();
+
+        this.revisionRangeCache.set(ref, task);
+        const result = await task;
+        return result?.meta || null;
     }
 
     async applyRevisionHtml(html, { ref = null, label = null, markPersisted = true } = {}) {
