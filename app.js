@@ -4702,7 +4702,21 @@ class SpreadsheetApp {
         if (!content) return '';
         try {
             const normalized = `${content}`.replace(/\s+/g, '');
-            return atob(normalized);
+            const binary = atob(normalized);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            if (typeof TextDecoder !== 'undefined') {
+                const decoder = new TextDecoder('utf-8', { fatal: false });
+                return decoder.decode(bytes);
+            }
+            // Fallback: best-effort conversion without TextDecoder
+            let result = '';
+            for (let i = 0; i < bytes.length; i++) {
+                result += String.fromCharCode(bytes[i]);
+            }
+            return result;
         } catch (error) {
             console.error('Unable to decode base64 content', error);
             throw new Error('Failed to decode revision content.');
