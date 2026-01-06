@@ -864,6 +864,7 @@ class SpreadsheetApp {
             console.warn('Failed to load Codeberg profile avatar', error);
         });
         this.primeBranchCommitCache();
+        this.maybeLoadRevisionFromUrl();
     }
 
     init() {
@@ -3036,6 +3037,7 @@ class SpreadsheetApp {
         this.renderRevisionHistorySummary();
         this.renderRevisionHistoryList();
         this.updateRevisionLagBadge();
+        this.updateRevisionShareUrl(this.revisionActiveRef);
     }
 
     buildRevisionMetaFromState(snapshot = null) {
@@ -4122,6 +4124,61 @@ class SpreadsheetApp {
         this.revisionHistoryStatus.classList.toggle('revision-drawer__status--error', Boolean(isError));
     }
 
+    getRevisionRefFromUrl() {
+        if (typeof window === 'undefined' || !window.location) return null;
+        const params = new URLSearchParams(window.location.search);
+        const ref = params.get('rev') || params.get('revision') || params.get('commit');
+        return ref ? ref.trim() : null;
+    }
+
+    updateRevisionShareUrl(ref) {
+        if (typeof window === 'undefined' || !window.history?.replaceState || !window.location) return;
+        const params = new URLSearchParams(window.location.search);
+        const normalized = ref && ref !== 'local' ? ref : null;
+        if (normalized) {
+            params.set('rev', normalized);
+        } else {
+            params.delete('rev');
+            params.delete('revision');
+            params.delete('commit');
+        }
+        const query = params.toString();
+        const newUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
+        window.history.replaceState({}, document.title, newUrl);
+    }
+
+    async maybeLoadRevisionFromUrl() {
+        const ref = this.getRevisionRefFromUrl();
+        if (!ref) return;
+
+        // Avoid reloading the same revision if it is already active
+        if (this.revisionActiveRef && this.revisionActiveRef !== 'local' && this.revisionActiveRef === ref) {
+            this.updateRevisionShareUrl(ref);
+            return;
+        }
+
+        try {
+            this.setRevisionStatus('Loading revision from URL…');
+            let entry = (this.revisionHistoryEntries || []).find(item => (item.sha || item.ref) === ref);
+            if (!entry) {
+                entry = await this.fetchRevisionEntry(ref);
+            }
+            if (!entry) {
+                this.setRevisionStatus('Requested revision could not be found.', true);
+                this.updateRevisionShareUrl(null);
+                return;
+            }
+            if (!this.revisionBranch) {
+                const repoConfig = await this.loadRepoConfig();
+                this.revisionBranch = repoConfig?.page_branch || repoConfig?.branch || null;
+            }
+            await this.applyRevisionFromEntry(entry);
+        } catch (error) {
+            console.error('Failed to load revision from URL', error);
+            this.setRevisionStatus('Unable to load revision from URL.', true);
+        }
+    }
+
     renderRevisionHistorySummary() {
         if (!this.revisionHistorySummary) return;
         const meta = this.revisionMetadata.get(this.revisionActiveRef) || this.revisionMetadata.get('local');
@@ -4289,14 +4346,33 @@ class SpreadsheetApp {
                 this.revisionHistorySubtitle.textContent = `${repo.owner}/${repo.repo} · ${branch}`;
             }
             const commits = await this.fetchRevisionCommits(repo, branch, 30);
-            this.revisionHistoryEntries = commits;
+            const activeRef = this.revisionActiveRef;
+            let entries = commits;
+            const hasActive = activeRef && activeRef !== 'local'
+                ? commits.some(entry => (entry.sha || entry.ref) === activeRef)
+                : true;
+            if (!hasActive && activeRef) {
+                try {
+                    const activeEntry = await this.fetchRevisionEntry(activeRef);
+                    if (activeEntry) {
+                        entries = [...commits, activeEntry].sort((a, b) => {
+                            const aTs = Date.parse(a?.date || '') || 0;
+                            const bTs = Date.parse(b?.date || '') || 0;
+                            return bTs - aTs;
+                        });
+                    }
+                } catch (error) {
+                    console.warn('Unable to merge active revision into history list', error);
+                }
+            }
+            this.revisionHistoryEntries = entries;
             this.renderRevisionHistoryList();
             this.renderRevisionHistorySummary();
-            this.prefetchRevisionRanges(commits).catch(error => {
+            this.prefetchRevisionRanges(entries).catch(error => {
                 console.warn('Revision range prefetch failed', error);
             });
             this.updateRevisionLagBadge();
-            if (!commits.length) {
+            if (!entries.length) {
                 this.setRevisionStatus('No revisions found for index.html on this branch.');
             } else {
                 this.setRevisionStatus('');
@@ -4326,6 +4402,28 @@ class SpreadsheetApp {
             console.warn('Path-filtered commit fetch failed, retrying without path', error);
             return attempt(baseParams);
         }
+    }
+
+    async fetchRevisionEntry(ref) {
+        if (!ref) return null;
+        const repo = await this.resolveCodebergRepo();
+        if (!repo) return null;
+        const endpoints = [
+            `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/commits/${encodeURIComponent(ref)}`,
+            `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/git/commits/${encodeURIComponent(ref)}`
+        ];
+
+        for (const path of endpoints) {
+            try {
+                const data = await this.callCodebergApi(path, null);
+                const normalized = this.normalizeCommitEntry(data);
+                if (normalized) return normalized;
+            } catch (error) {
+                console.warn(`Commit lookup failed for ${ref}`, error);
+            }
+        }
+
+        return null;
     }
 
     async prefetchRevisionRanges(entries = [], { batchSize = 4 } = {}) {
@@ -4492,6 +4590,18 @@ class SpreadsheetApp {
         if (!ref) {
             this.setRevisionStatus('Revision reference is missing.', true);
             return;
+        }
+        const hasEntry = Array.isArray(this.revisionHistoryEntries)
+            && this.revisionHistoryEntries.some(item => (item.sha || item.ref) === ref);
+        if (!hasEntry) {
+            const entries = Array.isArray(this.revisionHistoryEntries) ? [...this.revisionHistoryEntries] : [];
+            entries.push(entry);
+            entries.sort((a, b) => {
+                const aTs = Date.parse(a?.date || '') || 0;
+                const bTs = Date.parse(b?.date || '') || 0;
+                return bTs - aTs;
+            });
+            this.revisionHistoryEntries = entries;
         }
         const cachedRange = this.revisionRangeCache.get(ref);
         if (cachedRange && typeof cachedRange.then !== 'function' && cachedRange.hasTable === false) {
