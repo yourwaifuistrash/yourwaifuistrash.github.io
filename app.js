@@ -8,7 +8,10 @@ const TOOLBAR_AND_FORMULA_HTML = `
                     </span>
                 </button>
                 <button class="btn btn--sm toolbar-btn" id="revisionHistoryBtn" title="View revision history">
-                    <span class="toolbar-btn__icon">🕑</span>
+                    <span class="toolbar-btn__icon" style="position: relative; display: inline-flex;">
+                        🕑
+                        <span class="revision-lag-badge hidden" id="revisionLagBadge" aria-hidden="true"></span>
+                    </span>
                 </button>
                 <button class="btn btn--sm toolbar-btn" id="undoBtn" title="Undo">
                     <span>↶</span>
@@ -738,7 +741,8 @@ class SpreadsheetApp {
             revisionHistoryList: $('revisionHistoryList'),
             revisionHistoryStatus: $('revisionHistoryStatus'),
             revisionHistorySubtitle: $('revisionHistorySubtitle'),
-            revisionHistorySummary: $('revisionHistorySummary')
+            revisionHistorySummary: $('revisionHistorySummary'),
+            revisionLagBadge: $('revisionLagBadge')
         });
         this.commentMainAuthorState = {
             author: this.getLocalAuthorPlaceholder(),
@@ -782,6 +786,7 @@ class SpreadsheetApp {
         this.isApplyingRevision = false;
         this.revisionHistoryLoading = false;
         this.revisionRangeCache = new Map();
+        this.revisionLagCount = null;
         this.loadInitialDataFromDOM();
         this.initializeStyleMetadataFromData();
         this.recomputeColorUsageFromData();
@@ -3030,6 +3035,7 @@ class SpreadsheetApp {
         this.revisionMetadata.set(metaKey, this.buildRevisionMetaFromState());
         this.renderRevisionHistorySummary();
         this.renderRevisionHistoryList();
+        this.updateRevisionLagBadge();
     }
 
     buildRevisionMetaFromState(snapshot = null) {
@@ -4126,6 +4132,7 @@ class SpreadsheetApp {
         const rangeLabel = meta?.rangeLabel || 'Range unknown';
         const branchLabel = this.revisionBranch ? `Branch ${this.revisionBranch}` : 'Branch not detected';
         this.revisionHistorySummary.textContent = `${label} (${refLabel}) • ${rangeLabel} • ${branchLabel}`;
+        this.updateRevisionLagBadge();
     }
 
     formatRevisionDate(value) {
@@ -4226,6 +4233,7 @@ class SpreadsheetApp {
         }
 
         this.revisionHistoryList.innerHTML = items.map(entry => this.renderRevisionListItem(entry)).join('');
+        this.updateRevisionLagBadge();
     }
 
     hideRevisionDrawer() {
@@ -4270,11 +4278,11 @@ class SpreadsheetApp {
         this.renderRevisionHistoryList();
         try {
             this.ensureWorkingCopySnapshot();
-            const repoConfig = await this.loadRepoConfig();
-            const repo = await this.resolveCodebergRepo();
-            if (!repo || !repoConfig) {
-                throw new Error('Repository could not be detected from this page.');
-            }
+        const repoConfig = await this.loadRepoConfig();
+        const repo = await this.resolveCodebergRepo();
+        if (!repo || !repoConfig) {
+            throw new Error('Repository could not be detected from this page.');
+        }
             const branch = repoConfig.page_branch || repoConfig.branch || 'pages';
             this.revisionBranch = branch;
             if (this.revisionHistorySubtitle) {
@@ -4287,6 +4295,7 @@ class SpreadsheetApp {
             this.prefetchRevisionRanges(commits).catch(error => {
                 console.warn('Revision range prefetch failed', error);
             });
+            this.updateRevisionLagBadge();
             if (!commits.length) {
                 this.setRevisionStatus('No revisions found for index.html on this branch.');
             } else {
@@ -4379,6 +4388,43 @@ class SpreadsheetApp {
         }
     }
 
+    async updateRevisionLagBadge() {
+        const badge = this.revisionLagBadge;
+        if (!badge) return;
+        badge.classList.add('hidden');
+        badge.textContent = '';
+
+        try {
+            const branchInfo = await this.ensureBranchCommits();
+            const headSha = branchInfo?.latest?.page?.sha || branchInfo?.loaded?.page?.sha || null;
+            if (!headSha) return;
+            const commits = this.revisionHistoryEntries || [];
+            if (!Array.isArray(commits) || !commits.length) return;
+
+            const headIndex = commits.findIndex(entry => (entry.sha || entry.ref) === headSha);
+            if (headIndex < 0) return;
+
+            const activeRef = this.revisionActiveRef;
+            if (!activeRef) return;
+            const activeIndex = commits.findIndex(entry => (entry.sha || entry.ref) === activeRef);
+            if (activeIndex < 0) {
+                badge.classList.add('hidden');
+                return;
+            }
+
+            const behind = Math.max(0, activeIndex - headIndex);
+            this.revisionLagCount = behind;
+            if (behind > 0) {
+                badge.textContent = `${behind}`;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        } catch (error) {
+            console.warn('Unable to update revision lag badge', error);
+        }
+    }
+
     normalizeCommitEntry(entry) {
         if (!entry) return null;
         const sha = entry.sha || entry.id || entry.commit?.id || entry.commit?.sha || null;
@@ -4455,16 +4501,17 @@ class SpreadsheetApp {
         const previousSnapshot = this.buildSnapshotFromState();
         this.isApplyingRevision = true;
         try {
-            this.setRevisionStatus(`Loading ${entry.shortSha || this.shortenSha(ref) || 'revision'}…`);
-            const html = await this.fetchRevisionHtml(ref);
-            await this.applyRevisionHtml(html, { ref, label: entry.message || `Revision ${entry.shortSha || this.shortenSha(ref)}`, markPersisted: true });
-            this.revisionActiveRef = ref;
-            this.revisionActiveLabel = entry.message || `Revision ${entry.shortSha || this.shortenSha(ref)}`;
-            this.revisionMetadata.set(ref, this.buildRevisionMetaFromState());
-            this.renderRevisionHistoryList();
-            this.renderRevisionHistorySummary();
-            this.setRevisionStatus(`Loaded ${entry.shortSha || this.shortenSha(ref)}.`);
-        } catch (error) {
+        this.setRevisionStatus(`Loading ${entry.shortSha || this.shortenSha(ref) || 'revision'}…`);
+        const html = await this.fetchRevisionHtml(ref);
+        await this.applyRevisionHtml(html, { ref, label: entry.message || `Revision ${entry.shortSha || this.shortenSha(ref)}`, markPersisted: true });
+        this.revisionActiveRef = ref;
+        this.revisionActiveLabel = entry.message || `Revision ${entry.shortSha || this.shortenSha(ref)}`;
+        this.revisionMetadata.set(ref, this.buildRevisionMetaFromState());
+        this.renderRevisionHistoryList();
+        this.renderRevisionHistorySummary();
+        this.updateRevisionLagBadge();
+        this.setRevisionStatus(`Loaded ${entry.shortSha || this.shortenSha(ref)}.`);
+    } catch (error) {
             console.error('Failed to load revision', error);
             this.applySnapshotData(previousSnapshot, { markPersisted: false, revisionRef: this.revisionActiveRef, revisionLabel: this.revisionActiveLabel, skipDirtyUpdate: true });
             this.setRevisionStatus(error.message || 'Failed to load revision.', true);
