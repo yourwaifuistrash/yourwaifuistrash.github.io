@@ -11027,6 +11027,17 @@ class SpreadsheetApp {
             return;
         }
 
+        const cornerCell = event.target.closest('.corner-cell');
+        if (cornerCell) {
+            event.preventDefault();
+            this.blurFontSizeInputIfFocused(event);
+            this.isFontSizeEditing = false;
+            this.selectAllCells();
+            this.showContextMenu(event.clientX, event.clientY, { type: 'corner', clientX: event.clientX, clientY: event.clientY });
+            this.log('Context menu opened for full sheet selection');
+            return;
+        }
+
         const rowHeader = event.target.closest('.row-header');
         if (rowHeader && !event.target.closest('.row-resize-handle')) {
             event.preventDefault();
@@ -11084,6 +11095,7 @@ class SpreadsheetApp {
         const hasLink = this.primaryCell && this.cellHasLink();
         const isRowContext = context && context.type === 'rowHeader';
         const isColContext = context && context.type === 'columnHeader';
+        const isCornerContext = context && context.type === 'corner';
         
         // Show/hide appropriate link menu items
         const openLinkItem = document.getElementById('openLinkItem');
@@ -11093,7 +11105,7 @@ class SpreadsheetApp {
         const colWidthItem = document.getElementById('colWidthMenuItem');
         
         if (openLinkItem && editLinkItem && insertLinkItem) {
-            if (isRowContext || isColContext) {
+            if (isRowContext || isColContext || isCornerContext) {
                 openLinkItem.style.display = 'none';
                 editLinkItem.style.display = 'none';
                 insertLinkItem.style.display = 'none';
@@ -11110,7 +11122,7 @@ class SpreadsheetApp {
 
         const commentItem = this.contextMenu.querySelector('[data-action="comment"]');
         if (commentItem) {
-            commentItem.style.display = (isRowContext || isColContext) ? 'none' : 'flex';
+            commentItem.style.display = (isRowContext || isColContext || isCornerContext) ? 'none' : 'flex';
         }
 
         if (rowHeightItem) {
@@ -11140,6 +11152,11 @@ class SpreadsheetApp {
             setMenuItemDisplay(deleteRowItem, false);
             setMenuItemDisplay(insertColItem, true);
             setMenuItemDisplay(deleteColItem, true);
+        } else if (isCornerContext) {
+            setMenuItemDisplay(insertRowItem, false);
+            setMenuItemDisplay(deleteRowItem, false);
+            setMenuItemDisplay(insertColItem, false);
+            setMenuItemDisplay(deleteColItem, false);
         } else {
             setMenuItemDisplay(insertRowItem, true);
             setMenuItemDisplay(deleteRowItem, true);
