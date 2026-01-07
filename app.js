@@ -3471,10 +3471,10 @@ class SpreadsheetApp {
             if (mergeInfo && mergeInfo.rows > 1) return;
             const existing = rowMaxFont.get(row);
             const currentMax = Number.isFinite(existing) ? existing : defaultFontSize;
-            const cellFont = Number(data?.fontSize);
+            const styleFont = Number(this.pickStyleValue(row, col, 'fontSize', data));
             const inlineMax = this.getMaxFontSizeInHTML(data?.richText);
             let effective = defaultFontSize;
-            if (Number.isFinite(cellFont) && cellFont > 0) effective = cellFont;
+            if (Number.isFinite(styleFont) && styleFont > 0) effective = styleFont;
             if (Number.isFinite(inlineMax) && inlineMax > 0) effective = Math.max(effective, inlineMax);
             rowMaxFont.set(row, Math.max(currentMax, effective));
         });
@@ -8821,6 +8821,7 @@ class SpreadsheetApp {
                 if (this.isCellEffectivelyEmpty(data)) keysToDelete.push(coord);
             });
             keysToDelete.forEach(coord => this.cellData.delete(coord));
+            this.recalculateAutoRowHeights();
             this.refreshAllVisibleCells();
             this.updateFontSizeInput();
             this.log(`Set default font size ${fontSize}px for entire grid${finalize ? ' (finalized)' : ''}`);
@@ -12694,17 +12695,21 @@ class SpreadsheetApp {
         
         isLink = !!(baseData.linkUrl || this.isHyperlink(displayText));
         const canUseRichText = richText && !(baseValue && String(baseValue).startsWith('='));
+        const effective = this.getEffectiveStyle(row, col, baseData);
 
         if (canUseRichText && displayText.trim() !== '') {
             cell.innerHTML = richText;
         } else {
             cell.textContent = displayText;
         }
+
+        // Apply effective styles before measuring overflow so sizing uses the right font
+        cell.style.backgroundColor = effective.backgroundColor || '';
+        cell.style.color = effective.fontColor || '';
+        cell.style.fontSize = effective.fontSize ? `${effective.fontSize}px` : '';
         
         // Handle text overflow into adjacent cells
-        this.handleCellOverflow(cell, displayText, baseData, canUseRichText ? richText : null);
-        
-        const effective = this.getEffectiveStyle(row, col, baseData);
+        this.handleCellOverflow(cell, displayText, baseData, canUseRichText ? richText : null, effective);
 
         // If we now have real data, clear any stale ghost markers
         if (hasData && cell.dataset.cutGhost) {
@@ -13488,10 +13493,10 @@ class SpreadsheetApp {
         };
     }
     
-    handleCellOverflow(cell, displayText, cellData, richText) {
+    handleCellOverflow(cell, displayText, cellData, richText, effectiveStyle = null) {
         const { row, col } = this.getCellPos(cell);
         const normalizedText = (displayText === undefined || displayText === null) ? '' : String(displayText);
-        const effective = { ...this.defaultCellStyle, ...cellData };
+        const effective = effectiveStyle || this.getEffectiveStyle(row, col, cellData);
         const isLink = !!(cellData.linkUrl || this.isHyperlink(normalizedText));
         
         // Remove any existing overflow styling and wrapper
