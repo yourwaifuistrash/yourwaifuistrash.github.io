@@ -314,6 +314,11 @@ const SAVE_OPTIONS_MODAL_HTML = `
             </div>
             <div class="save-modal__body">
                 <p>Select how you would like to deliver the updated <code>index.html</code>:</p>
+                <div class="save-modal__field">
+                    <label for="tableTitleInput">Table title</label>
+                    <input type="text" id="tableTitleInput" class="form-control" maxlength="120" placeholder="Untitled table" autocomplete="off">
+                    <div class="save-modal__field-hint">Shows on the floating badge and in the saved HTML title.</div>
+                </div>
                 <div class="save-modal__diff" id="saveModalDiff" aria-live="polite">
                     <div class="save-modal__diff-empty">No local changes detected.</div>
                 </div>
@@ -554,6 +559,7 @@ const STYLE_PROPS = [
 class SpreadsheetApp {
     constructor() {
         this.persistedRange = { maxRow: 19, maxCol: 9 };
+        this.tableTitle = this.getDefaultTableTitle();
         this.container = document.querySelector('.spreadsheet-container');
         if (!this.container) {
             throw new Error('Spreadsheet container not found');
@@ -742,7 +748,9 @@ class SpreadsheetApp {
             revisionHistoryStatus: $('revisionHistoryStatus'),
             revisionHistorySubtitle: $('revisionHistorySubtitle'),
             revisionHistorySummary: $('revisionHistorySummary'),
-            revisionLagBadge: $('revisionLagBadge')
+            revisionLagBadge: $('revisionLagBadge'),
+            tableTitleBadge: $('tableTitleBadge'),
+            tableTitleInput: $('tableTitleInput')
         });
         this.commentMainAuthorState = {
             author: this.getLocalAuthorPlaceholder(),
@@ -807,6 +815,9 @@ class SpreadsheetApp {
         this.initialColumnWidths = new Map(this.columnWidths);
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialStyleSequence = this.styleSequence;
+        this.initialTableTitle = this.tableTitle;
+        this.syncTableTitleBadge();
+        this.updateDocumentTitleFromTable();
         this.revisionMetadata.set(this.revisionActiveRef, this.buildRevisionMetaFromState());
         this.renderRevisionHistorySummary();
         
@@ -2023,6 +2034,12 @@ class SpreadsheetApp {
         appendDimensionStyleDiffs('row', this.initialRowStyles, this.rowStyles);
         appendDimensionStyleDiffs('column', this.initialColumnStyles, this.columnStyles);
 
+        const normalizedInitialTitle = this.normalizeTableTitle(this.initialTableTitle);
+        const normalizedCurrentTitle = this.normalizeTableTitle(this.tableTitle);
+        if (normalizedInitialTitle !== normalizedCurrentTitle) {
+            allLines.push(`~ Table title "${normalizedInitialTitle}" -> "${normalizedCurrentTitle}"`);
+        }
+
         if (!allLines.length) {
             return { text: '', truncated: false };
         }
@@ -2422,6 +2439,29 @@ class SpreadsheetApp {
             });
         });
 
+        const normalizedInitialTitle = this.normalizeTableTitle(this.initialTableTitle);
+        const normalizedCurrentTitle = this.normalizeTableTitle(this.tableTitle);
+        if (normalizedInitialTitle !== normalizedCurrentTitle) {
+            total += 1;
+            if (entries.length + extraEntries.length < maxEntries) {
+                extraEntries.push({
+                    coord: 'meta:title',
+                    row: 0,
+                    col: 0,
+                    address: 'Table title',
+                    changeType: 'modified',
+                    before: normalizedInitialTitle ? { value: normalizedInitialTitle } : null,
+                    after: normalizedCurrentTitle ? { value: normalizedCurrentTitle } : null,
+                    beforeSize: null,
+                    afterSize: null,
+                    changes: [`Title changed from "${normalizedInitialTitle}" to "${normalizedCurrentTitle}"`],
+                    meta: { kind: 'tableTitle' }
+                });
+            } else {
+                truncated = true;
+            }
+        }
+
         extraEntries.forEach(entry => {
             entries.push(entry);
         });
@@ -2449,6 +2489,7 @@ class SpreadsheetApp {
         this.columnWidths = new Map(this.initialColumnWidths || []);
         this.persistedRange = { ...(this.initialPersistedRange || { ...this.persistedRange }) };
         this.styleSequence = this.initialStyleSequence || this.styleSequence || 1;
+        this.setTableTitle(this.initialTableTitle, { skipDirtyUpdate: true });
         this.applyMergedCellsSnapshot(this.initialMergedCells);
     }
 
@@ -2630,7 +2671,9 @@ class SpreadsheetApp {
                 persistedRange: { ...this.persistedRange },
                 mergedCells: this.cloneMergedCellsState(),
                 defaultAutoRowHeight: this.defaultAutoRowHeight,
-                defaultCellStyle: this.cloneDefaultCellStyle()
+                defaultCellStyle: this.cloneDefaultCellStyle(),
+                tableTitle: this.tableTitle,
+                initialTableTitle: this.initialTableTitle
             };
             window.localStorage.setItem(this.localDraftKey, JSON.stringify(payload));
         } catch (error) {
@@ -2757,6 +2800,14 @@ class SpreadsheetApp {
                 restored = true;
                 needsRefresh = true;
             }
+            if (payload.tableTitle) {
+                this.tableTitle = this.normalizeTableTitle(payload.tableTitle);
+                restored = true;
+                needsRefresh = true;
+            }
+            if (payload.initialTableTitle) {
+                this.initialTableTitle = this.normalizeTableTitle(payload.initialTableTitle);
+            }
         } catch (error) {
             console.error('Unable to restore draft', error);
         } finally {
@@ -2780,6 +2831,8 @@ class SpreadsheetApp {
                 this.repositionCells();
                 this.updateHeaderPositions();
                 this.refreshAllVisibleCells();
+                this.syncTableTitleBadge();
+                this.updateDocumentTitleFromTable();
             }
         }
     }
@@ -2833,6 +2886,7 @@ class SpreadsheetApp {
         this.initialPersistedRange = { ...this.persistedRange };
         this.initialMergedCells = this.cloneMergedCellsState();
         this.initialStyleSequence = this.styleSequence;
+        this.initialTableTitle = this.tableTitle;
         this.latestDiffEntries = [];
         this.latestDiffTotal = 0;
         this.latestDiffTruncated = false;
@@ -2856,6 +2910,9 @@ class SpreadsheetApp {
         actionButtons.forEach(btn => {
             btn.disabled = Boolean(isBusy);
         });
+        if (this.tableTitleInput) {
+            this.tableTitleInput.disabled = Boolean(isBusy);
+        }
         const closeBtn = this.saveModal.querySelector('.save-modal__close');
         if (closeBtn) {
             closeBtn.disabled = Boolean(isBusy);
@@ -2934,6 +2991,8 @@ class SpreadsheetApp {
             initialStyleSequence: this.initialStyleSequence,
             initialDefaultCellStyle: this.cloneDefaultCellStyle(this.initialDefaultCellStyle),
             initialColorUsage: this.cloneColorUsage(this.initialColorUsage),
+            tableTitle: this.tableTitle,
+            initialTableTitle: this.initialTableTitle,
             unsavedChanges: this.unsavedChanges,
             hasAutoPersistedBaseline: this.hasAutoPersistedBaseline,
             hasRestoredDraft: this.hasRestoredDraft,
@@ -2959,6 +3018,10 @@ class SpreadsheetApp {
         this.styleSequence = 1;
         this.defaultAutoRowHeight = this.computeRowHeightForFontSize(this.getDefaultFontSizeForAutoHeight());
         this.colorUsage = { background: [], font: [], border: [] };
+        this.tableTitle = this.getDefaultTableTitle();
+        this.initialTableTitle = this.tableTitle;
+        this.syncTableTitleBadge();
+        this.updateDocumentTitleFromTable();
     }
 
     applySnapshotData(snapshot, { markPersisted = false, revisionRef = null, revisionLabel = null, skipDirtyUpdate = false } = {}) {
@@ -2981,6 +3044,11 @@ class SpreadsheetApp {
         this.mergedCells = new Map();
         this.cellToMergeParent = new Map();
         this.applyMergedCellsSnapshot(snapshot.mergedCells || []);
+        this.tableTitle = this.normalizeTableTitle(
+            Object.prototype.hasOwnProperty.call(snapshot, 'tableTitle')
+                ? snapshot.tableTitle
+                : this.tableTitle
+        );
 
         this.initialCellData = this.cloneCellData(snapshot.initialCellData || this.initialCellData);
         this.initialRowStyles = this.cloneStyleMap(snapshot.initialRowStyles || this.initialRowStyles);
@@ -2998,10 +3066,14 @@ class SpreadsheetApp {
         this.initialStyleSequence = snapshot.initialStyleSequence || this.initialStyleSequence;
         this.initialDefaultCellStyle = this.cloneDefaultCellStyle(snapshot.initialDefaultCellStyle || this.initialDefaultCellStyle);
         this.initialColorUsage = this.cloneColorUsage(snapshot.initialColorUsage || this.initialColorUsage);
+        this.initialTableTitle = this.normalizeTableTitle(snapshot.initialTableTitle || this.initialTableTitle || this.tableTitle);
         this.unsavedChanges = Boolean(snapshot.unsavedChanges);
         this.hasAutoPersistedBaseline = Boolean(snapshot.hasAutoPersistedBaseline);
         this.hasRestoredDraft = Boolean(snapshot.hasRestoredDraft);
         this.userMadeChanges = Boolean(snapshot.userMadeChanges);
+        this.syncTableTitleBadge();
+        this.updateDocumentTitleFromTable();
+        this.syncTableTitleInput();
 
         this.finalizeRevisionSwitch({ markPersisted, revisionRef, revisionLabel, skipDirtyUpdate });
     }
@@ -3155,7 +3227,7 @@ class SpreadsheetApp {
 
         if (showMore) {
             const remaining = total - entries.length;
-            html += `<div class="save-modal__diff-more">Showing first ${entries.length} cells. ${remaining} more cell${remaining === 1 ? '' : 's'} changed.</div>`;
+            html += `<div class="save-modal__diff-more">Showing first ${entries.length} changes. ${remaining} more change${remaining === 1 ? '' : 's'} not shown.</div>`;
         }
 
         container.innerHTML = html;
@@ -3183,6 +3255,8 @@ class SpreadsheetApp {
             heading = `Merge ${this.getCellAddress(entry.row, entry.col)}`;
         } else if (entry.meta?.kind === 'defaultStyle') {
             heading = 'Default cell style';
+        } else if (entry.meta?.kind === 'tableTitle') {
+            heading = 'Table title';
         }
 
         return [
@@ -3893,6 +3967,15 @@ class SpreadsheetApp {
         this.saveModal = document.getElementById('saveOptionsModal');
         this.saveModalStatus = document.getElementById('saveModalStatus');
         this.saveModalOAuth = document.getElementById('saveModalOAuthInfo');
+        this.tableTitleInput = document.getElementById('tableTitleInput');
+
+        if (this.tableTitleInput && !this.tableTitleInput.dataset.bound) {
+            this.tableTitleInput.addEventListener('input', (event) => {
+                this.setTableTitle(event.target.value);
+            });
+            this.tableTitleInput.dataset.bound = 'true';
+        }
+        this.syncTableTitleInput();
 
         this.saveModal?.addEventListener('click', (event) => {
             const target = event.target;
@@ -3952,6 +4035,7 @@ class SpreadsheetApp {
             this.renderSaveModalDiff();
             this.updateSaveModalStatus('');
             this.setSaveModalBusy(false);
+            this.syncTableTitleInput();
             this.saveModal?.classList.remove('hidden');
             this.refreshOAuthInfo();
         });
@@ -6008,6 +6092,59 @@ class SpreadsheetApp {
         return { coords, minRow, maxRow, minCol, maxCol };
     }
 
+    getDefaultTableTitle() {
+        return 'Untitled table';
+    }
+
+    normalizeTableTitle(title) {
+        const trimmed = (title ?? '').toString().replace(/\s+/g, ' ').trim();
+        if (!trimmed) return this.getDefaultTableTitle();
+        return trimmed.slice(0, 200);
+    }
+
+    setTableTitle(title, { skipDirtyUpdate = false } = {}) {
+        const normalized = this.normalizeTableTitle(title);
+        if (normalized === this.tableTitle) {
+            this.syncTableTitleInput();
+            this.syncTableTitleBadge();
+            this.updateDocumentTitleFromTable();
+            return;
+        }
+        this.tableTitle = normalized;
+        this.syncTableTitleInput();
+        this.syncTableTitleBadge();
+        this.updateDocumentTitleFromTable();
+        if (!skipDirtyUpdate) {
+            this.userMadeChanges = true;
+            this.hasAutoPersistedBaseline = false;
+            this.scheduleDirtyStateUpdate();
+        }
+    }
+
+    syncTableTitleBadge() {
+        if (this.gridContainer) {
+            this.gridContainer.setAttribute('data-table-title', this.tableTitle || '');
+        }
+        if (this.tableTitleBadge) {
+            this.tableTitleBadge.setAttribute('data-table-title', this.tableTitle || '');
+            this.tableTitleBadge.textContent = this.tableTitle || '';
+            this.tableTitleBadge.setAttribute('aria-label', `Table title: ${this.tableTitle || ''}`);
+        }
+    }
+
+    syncTableTitleInput() {
+        if (!this.tableTitleInput) return;
+        if (document.activeElement === this.tableTitleInput) return;
+        this.tableTitleInput.value = this.tableTitle || '';
+    }
+
+    updateDocumentTitleFromTable() {
+        if (typeof document === 'undefined') return;
+        const base = 'Spreadsheet Pro';
+        const normalized = this.normalizeTableTitle(this.tableTitle);
+        document.title = normalized ? `${normalized} · ${base}` : base;
+    }
+
     clearSelectionVisuals() {
         this.selectedCells.forEach(cell => cell.classList.remove('selected', 'primary-selected'));
         this.selectedCells.clear();
@@ -6066,10 +6203,34 @@ class SpreadsheetApp {
                 </div>
             `);
         }
+
+        if (!gridContainer.querySelector('#tableTitleBadge')) {
+            const badge = document.createElement('div');
+            badge.id = 'tableTitleBadge';
+            badge.className = 'table-title-badge';
+            badge.setAttribute('data-table-title', this.tableTitle || '');
+            badge.textContent = this.tableTitle || '';
+            gridContainer.appendChild(badge);
+        }
     }
 
     loadInitialDataFromDOM() {
         if (!this.gridContent) return;
+        const container = (typeof this.gridContent.closest === 'function'
+            ? this.gridContent.closest('.grid-container')
+            : null) || this.gridContainer || this.container?.querySelector('.grid-container');
+        if (container) {
+            const badge = container.querySelector('[data-table-title]');
+            const datasetTitle = container.getAttribute('data-table-title');
+            const badgeDatasetTitle = badge?.getAttribute('data-table-title');
+            const badgeText = badge?.textContent;
+            const detectedTitle = datasetTitle || badgeDatasetTitle || badgeText;
+            if (detectedTitle) {
+                this.tableTitle = this.normalizeTableTitle(detectedTitle);
+            }
+            container.setAttribute('data-table-title', this.tableTitle || '');
+        }
+
         const fallbackTable = this.gridContent.querySelector('table[data-spreadsheet-export]');
         if (!fallbackTable) return;
 
@@ -6273,6 +6434,7 @@ class SpreadsheetApp {
 
         const commentExport = this.gridContent.querySelector('.comment-export');
         if (commentExport) commentExport.remove();
+        this.syncTableTitleBadge();
     }
 
     initializeStyleMetadataFromData() {
@@ -18063,11 +18225,20 @@ class SpreadsheetApp {
         return `https://codeberg.org/${owner}/${repository}/issues/new?${params.toString()}`;
     }
 
+    renderTableTitleBadgeMarkup(title) {
+        const safeTitle = this.normalizeTableTitle(title || this.tableTitle);
+        const attr = escapeAttribute(safeTitle || '');
+        const text = escapeHTML(safeTitle || this.getDefaultTableTitle());
+        return `<div id="tableTitleBadge" class="table-title-badge" data-table-title="${attr}" aria-label="Table title: ${attr}">${text}</div>`;
+    }
+
     buildFullHTMLDocument(tableMarkup) {
         const config = this.repoConfig || {};
         const codeBranch = config.code_branch || config.codeBranch;
         const owner = config.owner;
         const repo = config.repo;
+        const tableTitle = this.normalizeTableTitle(this.tableTitle);
+        const pageTitle = tableTitle ? `${tableTitle} · Spreadsheet Pro` : 'Spreadsheet Pro';
         
         // Log configuration values
         console.log('[buildFullHTMLDocument] Configuration values:');
@@ -18126,13 +18297,16 @@ class SpreadsheetApp {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Spreadsheet Pro</title>
+        <title>${escapeHTML(pageTitle)}</title>
     `;
+
+        const gridAttrs = ` data-table-title="${escapeAttribute(tableTitle)}"`;
+        const titleBadgeMarkup = this.renderTableTitleBadgeMarkup(tableTitle);
 
         const htmlMiddle = `</head>
     <body>
         <div class="spreadsheet-container">
-            <div class="grid-container">
+            <div class="grid-container"${gridAttrs}>
                 <div class="corner-cell"></div>
                 <div class="column-headers">
                     <div class="header-content" id="columnHeaderContent"></div>
@@ -18147,6 +18321,7 @@ class SpreadsheetApp {
         const htmlEnd = `
                     </div>
                 </div>
+                ${titleBadgeMarkup}
             </div>
         </div>
 ${scriptTag}
