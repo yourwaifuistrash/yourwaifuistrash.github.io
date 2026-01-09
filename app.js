@@ -18078,6 +18078,20 @@ class SpreadsheetApp {
         // Build stylesheet link if we have the necessary config
         let stylesheetLink = '';
         let runtimeConfig = '';
+        const fallbackScriptLoader = `(function(){var s=document.createElement('script');s.src='app.js';s.defer=true;document.head.appendChild(s);}())`;
+        const buildLoaderBootstrap = (src) => `        <script>
+        (function() {
+            var params = new URLSearchParams(window.location.search);
+            var preferLocal = ['1','true','local'].includes((params.get('localAssets') || '').toLowerCase()) || window.location.protocol === 'file:';
+            var loaderSrc = preferLocal ? 'loader.js' : ${JSON.stringify(src)};
+            var script = document.createElement('script');
+            script.src = loaderSrc;
+            script.defer = true;
+            script.onerror = function() { ${fallbackScriptLoader}; };
+            document.head.appendChild(script);
+        }());
+    </script>`;
+        let scriptTag = buildLoaderBootstrap('loader.js');
         const inlineStaticStyles = `    <style>
         /* Hide exported comment list when popovers are supported (modern graphical browsers) */
         @supports selector(:popover-open) {
@@ -18086,8 +18100,12 @@ class SpreadsheetApp {
     </style>`;
         
         if (codeBranch && owner && repo) {
-            const stylesheetUrl = `https://${encodeURIComponent(owner)}.codeberg.page/${encodeURIComponent(repo)}/@${encodeURIComponent(codeBranch)}/style.css`;
-            stylesheetLink = `    <link rel="stylesheet" href="${stylesheetUrl}">`;
+            const baseUrl = `https://${encodeURIComponent(owner)}.codeberg.page/${encodeURIComponent(repo)}/@${encodeURIComponent(codeBranch)}/`;
+            const stylesheetUrl = `${baseUrl}style.css`;
+            const loaderUrl = `${baseUrl}loader.js`;
+            const stylesheetFallback = "this.onerror=null;this.href='style.css';";
+
+            stylesheetLink = `    <link rel="stylesheet" href="${stylesheetUrl}" onerror="${stylesheetFallback}">`;
             
             runtimeConfig = `    <script>
             // Configuration for loader.js to use the correct assets branch
@@ -18096,7 +18114,10 @@ class SpreadsheetApp {
             
             console.log('[buildFullHTMLDocument] ✓ Stylesheet link built successfully:');
             console.log('  URL:', stylesheetUrl);
+
+            scriptTag = buildLoaderBootstrap(loaderUrl);
         } else {
+            stylesheetLink = '    <link rel="stylesheet" href="style.css">';
             console.log('[buildFullHTMLDocument] ✗ Stylesheet link NOT built - missing required config values');
         }
         
@@ -18128,7 +18149,7 @@ class SpreadsheetApp {
                 </div>
             </div>
         </div>
-        <script src="loader.js"></script>
+${scriptTag}
     </body>
     </html>
     `;

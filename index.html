@@ -4,6 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spreadsheet Pro</title>
+    <noscript>
+        <link rel="stylesheet" href="https://JavaScript-less.codeberg.page/spreadsheet/@spreadsheet/style.css">
+        <link rel="stylesheet" href="style.css">
+    </noscript>
+    <script>
+        // Fallback to local assets when loader.js cannot be fetched
+        function loadLocalAssetsFallback() {
+            if (window.__localAssetFallbackApplied) return;
+            window.__localAssetFallbackApplied = true;
+
+            const stylesheet = document.createElement('link');
+            stylesheet.rel = 'stylesheet';
+            stylesheet.href = 'style.css';
+            document.head.appendChild(stylesheet);
+
+            const script = document.createElement('script');
+            script.src = 'app.js';
+            script.defer = true;
+            document.head.appendChild(script);
+        }
+    </script>
 </head>
 <body>
     <div class="spreadsheet-container">
@@ -20,6 +41,22 @@
             </div>
         </div>
     </div>
-    <script src="loader.js"></script>
+    <script>
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const preferLocal = ['1', 'true', 'local'].includes((params.get('localAssets') || '').toLowerCase()) || window.location.protocol === 'file:';
+
+            if (preferLocal) {
+                loadLocalAssetsFallback();
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'loader.js';
+            script.defer = true;
+            script.onerror = loadLocalAssetsFallback;
+            document.body.appendChild(script);
+        }());
+    </script>
 </body>
 </html>

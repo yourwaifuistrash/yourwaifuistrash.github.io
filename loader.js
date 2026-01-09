@@ -9,6 +9,7 @@
     const branchOverride = params.get('assets') || params.get('assetBranch') || params.get('branch') || params.get('code_branch');
     const forceLocal = ['1', 'true', 'local'].includes((params.get('localAssets') || '').toLowerCase());
     const localPath = params.get('localPath') || params.get('path');
+    const preferLocal = forceLocal || isLocalHost();
     const repoFromHost = detectRepoFromLocation();
     const repoConfig = (await loadRepoConfig()) || {};
 
@@ -31,15 +32,8 @@
       return repoFromHost;
     })();
 
-    if (!repo) {
-      renderErrorMessage({ owner: 'unknown', repo: 'unknown' }, assetsBranch || 'unknown');
-      console.log('[loader] Config loaded:', { repo, assetsBranch, remoteBase, preferLocal });
-      return;
-    }
-
-    const preferLocal = forceLocal || isLocalHost();
     // Use Codeberg Pages URL format for correct MIME types and CORS
-    const remoteBase = assetsBranch
+    const remoteBase = (!preferLocal && assetsBranch && repo)
       ? `https://${encodeURIComponent(repo.owner)}.codeberg.page/${encodeURIComponent(repo.repo)}/@${encodeURIComponent(assetsBranch)}/`
       : null;
 
@@ -48,10 +42,16 @@
       ? `../${assetsBranch}/` 
       : null;
 
+    if (!repo && !preferLocal) {
+      renderErrorMessage({ owner: 'unknown', repo: 'unknown' }, assetsBranch || 'unknown');
+      console.log('[loader] Config loaded:', { repo, assetsBranch, remoteBase, preferLocal });
+      return;
+    }
+
     try {
       await initLoader({ preferLocal, remoteBase, localPath: localPath || localBranchPath, repo, assetsBranch });
     } catch {
-      renderErrorMessage(repo, assetsBranch || 'unknown');
+      renderErrorMessage(repo || { owner: 'unknown', repo: 'unknown' }, assetsBranch || 'unknown');
     }
   })();
 
