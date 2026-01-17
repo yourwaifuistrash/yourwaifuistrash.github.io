@@ -2633,6 +2633,27 @@ body { margin: 0; padding: 0; }
     color: var(--color-text);
 }
 
+.save-modal__diff-tabs {
+    display: inline-flex;
+    gap: var(--space-8);
+    margin: var(--space-8) 0;
+}
+
+.save-modal__diff-tab {
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: var(--font-size-xs);
+}
+
+.save-modal__diff-tab.is-active {
+    background: var(--color-bg-1);
+    border-color: var(--color-primary);
+}
+
 .save-modal__diff-header {
     display: flex;
     align-items: center;
@@ -2665,6 +2686,12 @@ body { margin: 0; padding: 0; }
     justify-content: space-between;
     align-items: center;
     gap: var(--space-8);
+}
+
+.save-modal__diff-sheet {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    font-weight: var(--font-weight-medium);
 }
 
 .save-modal__diff-address {
