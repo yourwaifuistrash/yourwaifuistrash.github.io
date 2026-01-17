@@ -181,6 +181,39 @@ body { margin: 0; padding: 0; }
   overflow: hidden;
 }
 
+.sheet-tabs-embed {
+  flex-shrink: 0;
+  padding: 8px 12px 12px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+}
+
+.sheet-tabs-iframe {
+  width: 100%;
+  height: 64px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: transparent;
+}
+
+.sheet-tabs-iframe:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.sheet-tabs-fallback {
+  margin-top: 6px;
+  display: inline-flex;
+  gap: var(--space-12);
+  font-size: var(--font-size-sm);
+}
+
+.sheet-tabs-fallback a {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
 .toolbar {
   display: flex;
   align-items: center;

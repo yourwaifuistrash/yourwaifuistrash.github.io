@@ -3,54 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spreadsheet Pro</title>
-    <noscript>
-        <link rel="stylesheet" href="https://JavaScript-less.codeberg.page/spreadsheet/@spreadsheet/style.css">
-        <link rel="stylesheet" href="style.css">
-    </noscript>
+    <title>Spreadsheet Tabs</title>
+    <base target="_parent">
     <script>
         // Fallback to local assets when loader.js cannot be fetched
         function loadLocalAssetsFallback() {
-            if (window.__localAssetFallbackApplied) return;
-            window.__localAssetFallbackApplied = true;
-
-            const stylesheet = document.createElement('link');
-            stylesheet.rel = 'stylesheet';
-            stylesheet.href = 'style.css';
-            document.head.appendChild(stylesheet);
-
-            const script = document.createElement('script');
+            if (window.__tabsLocalAssetFallbackApplied) return;
+            window.__tabsLocalAssetFallbackApplied = true;
+            var script = document.createElement('script');
             script.src = 'app.js';
             script.defer = true;
             document.head.appendChild(script);
         }
+        (function() {
+            if (window.self !== window.top) return;
+            const target = '1.html' + (window.location.search || '') + (window.location.hash || '');
+            try { window.location.replace(target); } catch (e) { window.location.href = target; }
+        })();
     </script>
+    <style>
+        :root { color-scheme: light; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 6px 8px;
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: transparent;
+            color: #111;
+        }
+        .sheet-tabs {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            padding: 4px 0;
+            border-bottom: 1px solid #ccc;
+        }
+        .sheet-tab {
+            text-decoration: underline;
+            color: inherit;
+            padding: 2px 0;
+        }
+        .sheet-tab--active {
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .sheet-tabs--fallback {
+            margin-top: 8px;
+        }
+    </style>
+    <noscript>
+        <meta http-equiv="refresh" content="0;url=1.html">
+    </noscript>
 </head>
-<body>
-    <div class="spreadsheet-container">
-        <div class="grid-container">
-            <div class="corner-cell"></div>
-            <div class="column-headers">
-                <div class="header-content" id="columnHeaderContent"></div>
-            </div>
-            <div class="row-headers">
-                <div class="header-content" id="rowHeaderContent"></div>
-            </div>
-            <div class="main-grid" id="mainGrid">
-                <div class="grid-content" id="gridContent"></div>
-            </div>
+<body class="tabs-only">
+    <nav id="sheetTabs" class="sheet-tabs" aria-label="Spreadsheets">
+        <a class="sheet-tab sheet-tab--active" href="1.html" aria-current="page">Sheet 1</a>
+        <a class="sheet-tab" href="2.html">Sheet 2</a>
+    </nav>
+    <noscript>
+        <div class="sheet-tabs sheet-tabs--fallback" aria-hidden="true">
+            <a class="sheet-tab" href="1.html">Sheet 1</a>
+            <a class="sheet-tab" href="2.html">Sheet 2</a>
         </div>
-    </div>
+    </noscript>
     <script>
         (function() {
-            const params = new URLSearchParams(window.location.search);
+            const params = new URLSearchParams(window.location.search || '');
             const preferLocal = ['1', 'true', 'local'].includes((params.get('localAssets') || '').toLowerCase()) || window.location.protocol === 'file:';
-
             if (preferLocal) {
                 loadLocalAssetsFallback();
                 return;
             }
-
             const script = document.createElement('script');
             script.src = 'loader.js';
             script.defer = true;

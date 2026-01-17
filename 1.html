@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="sheet-id" content="1">
+    <title>Spreadsheet Pro</title>
+    <noscript>
+        <link rel="stylesheet" href="https://JavaScript-less.codeberg.page/spreadsheet/@spreadsheet/style.css">
+        <link rel="stylesheet" href="style.css">
+    </noscript>
+    <script>
+        // Fallback to local assets when loader.js cannot be fetched
+        function loadLocalAssetsFallback() {
+            if (window.__localAssetFallbackApplied) return;
+            window.__localAssetFallbackApplied = true;
+
+            const stylesheet = document.createElement('link');
+            stylesheet.rel = 'stylesheet';
+            stylesheet.href = 'style.css';
+            document.head.appendChild(stylesheet);
+
+            const script = document.createElement('script');
+            script.src = 'app.js';
+            script.defer = true;
+            document.head.appendChild(script);
+        }
+    </script>
+</head>
+<body>
+    <div class="spreadsheet-container" data-sheet-id="1" data-sheet-list="1,2" data-current-sheet="1">
+        <div class="grid-container">
+            <div class="corner-cell"></div>
+            <div class="column-headers">
+                <div class="header-content" id="columnHeaderContent"></div>
+            </div>
+            <div class="row-headers">
+                <div class="header-content" id="rowHeaderContent"></div>
+            </div>
+            <div class="main-grid" id="mainGrid">
+                <div class="grid-content" id="gridContent"></div>
+            </div>
+        </div>
+        <div class="sheet-tabs-embed">
+            <iframe class="sheet-tabs-iframe" src="index.html" title="Sheet tabs" loading="lazy" scrolling="no"></iframe>
+            <noscript>
+                <div class="sheet-tabs-fallback">
+                    <a href="1.html" aria-current="page">Sheet 1</a>
+                    <a href="2.html">Sheet 2</a>
+                </div>
+            </noscript>
+        </div>
+    </div>
+    <script>
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const preferLocal = ['1', 'true', 'local'].includes((params.get('localAssets') || '').toLowerCase()) || window.location.protocol === 'file:';
+
+            if (preferLocal) {
+                loadLocalAssetsFallback();
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'loader.js';
+            script.defer = true;
+            script.onerror = loadLocalAssetsFallback;
+            document.body.appendChild(script);
+        }());
+    </script>
+</body>
+</html>

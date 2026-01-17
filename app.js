@@ -313,7 +313,7 @@ const SAVE_OPTIONS_MODAL_HTML = `
                 <button class="save-modal__close" type="button" data-modal-dismiss aria-label="Close">×</button>
             </div>
             <div class="save-modal__body">
-                <p>Select how you would like to deliver the updated <code>index.html</code>:</p>
+                <p>Select how you would like to deliver the updated <code id="saveModalTargetFile">page</code>:</p>
                 <div class="save-modal__field">
                     <label for="tableTitleInput">Table title</label>
                     <input type="text" id="tableTitleInput" class="form-control" maxlength="120" placeholder="Untitled table" autocomplete="off">
@@ -560,11 +560,14 @@ class SpreadsheetApp {
     constructor() {
         this.persistedRange = { maxRow: 19, maxCol: 9 };
         this.tableTitle = this.getDefaultTableTitle();
+        this.pageFileName = this.getCurrentPageFilename();
+        this.sheetId = this.getSheetIdFromFilename(this.pageFileName) || 'index';
         this.container = document.querySelector('.spreadsheet-container');
         if (!this.container) {
             throw new Error('Spreadsheet container not found');
         }
         this.buildUI();
+        this.sheetListAttr = this.getSheetListAttributeFromDOM();
 
         // Configuration from application data
         this.config = {
@@ -831,7 +834,7 @@ class SpreadsheetApp {
         this.maybeHandleOAuthRedirect();
         this.saveButton = document.getElementById('saveBtn');
         this.saveButtonBadge = document.getElementById('saveBtnBadge');
-        this.localDraftKey = 'verbosecell-draft-v1';
+        this.localDraftKey = this.buildLocalDraftKey();
         this.dirtyUpdateScheduled = false;
         this.draftSaveTimer = null;
         this.latestDiffEntries = [];
@@ -3968,6 +3971,7 @@ class SpreadsheetApp {
         this.saveModalStatus = document.getElementById('saveModalStatus');
         this.saveModalOAuth = document.getElementById('saveModalOAuthInfo');
         this.tableTitleInput = document.getElementById('tableTitleInput');
+        this.saveModalTargetFile = document.getElementById('saveModalTargetFile');
 
         if (this.tableTitleInput && !this.tableTitleInput.dataset.bound) {
             this.tableTitleInput.addEventListener('input', (event) => {
@@ -3976,6 +3980,7 @@ class SpreadsheetApp {
             this.tableTitleInput.dataset.bound = 'true';
         }
         this.syncTableTitleInput();
+        this.syncTargetFileLabel();
 
         this.saveModal?.addEventListener('click', (event) => {
             const target = event.target;
@@ -4036,6 +4041,7 @@ class SpreadsheetApp {
             this.updateSaveModalStatus('');
             this.setSaveModalBusy(false);
             this.syncTableTitleInput();
+            this.syncTargetFileLabel();
             this.saveModal?.classList.remove('hidden');
             this.refreshOAuthInfo();
         });
@@ -4369,7 +4375,8 @@ class SpreadsheetApp {
         (this.revisionHistoryEntries || []).forEach(entry => items.push(entry));
 
         if (!items.length) {
-            this.revisionHistoryList.innerHTML = '<div class="revision-drawer__empty">No revisions found for index.html.</div>';
+            const targetFile = escapeHTML(this.getTargetFileLabel());
+            this.revisionHistoryList.innerHTML = `<div class="revision-drawer__empty">No revisions found for ${targetFile}.</div>`;
             return;
         }
 
@@ -4457,7 +4464,7 @@ class SpreadsheetApp {
             });
             this.updateRevisionLagBadge();
             if (!entries.length) {
-                this.setRevisionStatus('No revisions found for index.html on this branch.');
+                this.setRevisionStatus(`No revisions found for ${this.getTargetFileLabel()} on this branch.`);
             } else {
                 this.setRevisionStatus('');
             }
@@ -4480,8 +4487,9 @@ class SpreadsheetApp {
         };
 
         const baseParams = { sha: branch, limit: `${limit}` };
+        const targetFile = this.getCurrentPageFilename();
         try {
-            return await attempt({ ...baseParams, path: 'index.html' });
+            return await attempt({ ...baseParams, path: targetFile });
         } catch (error) {
             console.warn('Path-filtered commit fetch failed, retrying without path', error);
             return attempt(baseParams);
@@ -4724,10 +4732,11 @@ class SpreadsheetApp {
         if (!repo) {
             throw new Error('Repository could not be detected.');
         }
-        const path = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/contents/index.html?ref=${encodeURIComponent(ref)}`;
+        const targetFile = this.getCurrentPageFilename();
+        const path = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/contents/${encodeURIComponent(targetFile)}?ref=${encodeURIComponent(ref)}`;
         const data = await this.callCodebergApi(path, null);
         if (!data?.content) {
-            throw new Error('Revision does not contain index.html content.');
+            throw new Error(`Revision does not contain ${targetFile} content.`);
         }
         const encoding = (data.encoding || '').toLowerCase();
         if (encoding && encoding !== 'base64') {
@@ -4828,7 +4837,7 @@ class SpreadsheetApp {
                 this.downloadHTML(artifacts.fullHTML);
                 this.markChangesPersisted();
                 this.renderSaveModalDiff();
-                this.updateSaveModalStatus('Downloaded index.html.');
+                this.updateSaveModalStatus(`Downloaded ${this.getTargetFileLabel()}.`);
             } catch (error) {
                 console.error('Download failed', error);
                 this.updateSaveModalStatus('Download failed. See console for details.', true);
@@ -5213,8 +5222,9 @@ class SpreadsheetApp {
     }
 
     buildPullRequestBody(diffText, diffTruncated) {
+        const targetFile = this.getTargetFileLabel();
         const parts = [
-            'This pull request updates `index.html` generated from Spreadsheet Pro.',
+            `This pull request updates \`${targetFile}\` generated from Spreadsheet Pro.`,
             '',
             '### Summary of changes'
         ];
@@ -5231,7 +5241,7 @@ class SpreadsheetApp {
 
         parts.push(
             '',
-            'The updated HTML file is attached to this PR by the submitter. Please replace the existing `index.html` with the provided content.'
+            `The updated HTML file is attached to this PR by the submitter. Please replace the existing \`${targetFile}\` with the provided content.`
         );
 
         return parts.join('\n');
@@ -5291,7 +5301,9 @@ class SpreadsheetApp {
             }
         }
 
-        const branchName = `update-index-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}`;
+        const targetFile = this.getCurrentPageFilename();
+        const targetStem = this.getSheetIdFromFilename(targetFile) || 'index';
+        const branchName = `update-${targetStem}-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}`;
 
         try {
             await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/branches`, token, {
@@ -5310,24 +5322,24 @@ class SpreadsheetApp {
 
         let fileInfo;
         try {
-            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(branchName)}`, token);
+            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/${encodeURIComponent(targetFile)}?ref=${encodeURIComponent(branchName)}`, token);
         } catch (error) {
-            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html?ref=${encodeURIComponent(baseBranch)}`, token);
+            fileInfo = await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/${encodeURIComponent(targetFile)}?ref=${encodeURIComponent(baseBranch)}`, token);
         }
         const encodedContent = this.encodeContentToBase64(artifacts.fullHTML);
 
-        await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/index.html`, token, {
+        await this.callCodebergApi(`/repos/${targetOwner}/${targetRepo}/contents/${encodeURIComponent(targetFile)}`, token, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 content: encodedContent,
-                message: `Update index.html (${new Date().toISOString()})`,
+                message: `Update ${targetFile} (${new Date().toISOString()})`,
                 branch: branchName,
                 sha: fileInfo.sha
             })
         });
 
-        const prTitle = `Update index.html (${new Date().toISOString().split('T')[0]})`;
+        const prTitle = `Update ${targetFile} (${new Date().toISOString().split('T')[0]})`;
         const prBody = this.buildPullRequestBody(artifacts.diffText, artifacts.diffTruncated);
 
         const pr = await this.callCodebergApi(`/repos/${repo.owner}/${repo.repo}/pulls`, token, {
@@ -6136,6 +6148,11 @@ class SpreadsheetApp {
         if (!this.tableTitleInput) return;
         if (document.activeElement === this.tableTitleInput) return;
         this.tableTitleInput.value = this.tableTitle || '';
+    }
+
+    syncTargetFileLabel() {
+        if (!this.saveModalTargetFile) return;
+        this.saveModalTargetFile.textContent = this.getTargetFileLabel();
     }
 
     updateDocumentTitleFromTable() {
@@ -17386,12 +17403,12 @@ class SpreadsheetApp {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = 'index.html';
+        link.download = this.getCurrentPageFilename();
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        this.log('Downloaded index.html locally');
+        this.log(`Downloaded ${this.getCurrentPageFilename()} locally`);
     }
 
     async resolveCodebergRepo() {
@@ -18183,10 +18200,11 @@ class SpreadsheetApp {
 
     buildCodebergIssueUrl(repo, diffText, diffTruncated) {
         const MAX_BODY = 6000;
-        const title = `Update index.html (${new Date().toISOString()})`;
+        const targetFile = this.getTargetFileLabel();
+        const title = `Update ${targetFile} (${new Date().toISOString()})`;
 
         const introLines = [
-            'A user requested updating `index.html` with the latest spreadsheet changes.',
+            `A user requested updating \`${targetFile}\` with the latest spreadsheet changes.`,
             'The updated HTML file was downloaded locally alongside this request.'
         ];
 
@@ -18239,6 +18257,9 @@ class SpreadsheetApp {
         const repo = config.repo;
         const tableTitle = this.normalizeTableTitle(this.tableTitle);
         const pageTitle = tableTitle ? `${tableTitle} · Spreadsheet Pro` : 'Spreadsheet Pro';
+        const currentFile = this.getCurrentPageFilename();
+        const sheetId = this.getSheetIdFromFilename(currentFile) || 'index';
+        const sheetListAttr = this.sheetListAttr || this.getSheetListAttributeFromDOM();
         
         // Log configuration values
         console.log('[buildFullHTMLDocument] Configuration values:');
@@ -18297,15 +18318,31 @@ class SpreadsheetApp {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="sheet-id" content="${escapeAttribute(sheetId)}">
         <title>${escapeHTML(pageTitle)}</title>
     `;
 
         const gridAttrs = ` data-table-title="${escapeAttribute(tableTitle)}"`;
         const titleBadgeMarkup = this.renderTableTitleBadgeMarkup(tableTitle);
+        const containerAttrsList = [
+            sheetId ? `data-sheet-id="${escapeAttribute(sheetId)}"` : '',
+            sheetListAttr ? `data-sheet-list="${escapeAttribute(sheetListAttr)}"` : '',
+            sheetId ? `data-current-sheet="${escapeAttribute(sheetId)}"` : ''
+        ].filter(Boolean);
+        const containerAttrs = containerAttrsList.length ? ` ${containerAttrsList.join(' ')}` : '';
+        const sheetFallbackLinks = this.parseSheetList(sheetListAttr || sheetId).map(id => {
+            const href = `${escapeAttribute(id)}.html`;
+            const current = id === sheetId ? ' aria-current="page"' : '';
+            const safeId = escapeHTML(id);
+            return `                    <a href="${href}"${current}>Sheet ${safeId}</a>`;
+        }).join('\n');
+        const fallbackMarkup = sheetFallbackLinks
+            ? `\n            <noscript>\n                <div class="sheet-tabs-fallback">\n${sheetFallbackLinks}\n                </div>\n            </noscript>`
+            : '';
 
         const htmlMiddle = `</head>
     <body>
-        <div class="spreadsheet-container">
+        <div class="spreadsheet-container"${containerAttrs}>
             <div class="grid-container"${gridAttrs}>
                 <div class="corner-cell"></div>
                 <div class="column-headers">
@@ -18322,6 +18359,9 @@ class SpreadsheetApp {
                     </div>
                 </div>
                 ${titleBadgeMarkup}
+            </div>
+            <div class="sheet-tabs-embed">
+                <iframe class="sheet-tabs-iframe" src="index.html" title="Sheet tabs" loading="lazy" scrolling="no"></iframe>${fallbackMarkup}
             </div>
         </div>
 ${scriptTag}
@@ -19075,6 +19115,77 @@ ${scriptTag}
         return `rgba(${r}, ${g}, ${b}, ${alpha})`;
     }
 
+    getCurrentPageFilename() {
+        if (this.pageFileName) return this.pageFileName;
+        if (typeof window === 'undefined') return 'index.html';
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            const sheetParam = this.sanitizeSheetId(params.get('sheet'));
+            if (sheetParam) {
+                return this.sanitizeFileName(`${sheetParam}.html`);
+            }
+
+            const path = window.location.pathname || '';
+            const last = path.split('/').filter(Boolean).pop();
+            if (last) {
+                const safe = this.sanitizeFileName(last);
+                if (safe) return safe;
+            }
+        } catch (error) {
+            // Fall back to default
+        }
+        return 'index.html';
+    }
+
+    sanitizeFileName(name) {
+        if (!name) return '';
+        const base = `${name}`.split('/').pop().trim();
+        if (!base) return '';
+        const normalized = base.replace(/[^A-Za-z0-9._-]/g, '');
+        if (!normalized) return '';
+        return /\.html?$/i.test(normalized) ? normalized : `${normalized}.html`;
+    }
+
+    sanitizeSheetId(id) {
+        if (!id) return '';
+        const normalized = `${id}`.trim().replace(/[^A-Za-z0-9_-]/g, '');
+        return normalized;
+    }
+
+    buildLocalDraftKey() {
+        const base = 'verbosecell-draft-v1';
+        const suffix = this.sheetId || this.getSheetIdFromFilename(this.getCurrentPageFilename()) || 'index';
+        return `${base}-${suffix}`;
+    }
+
+    getSheetIdFromFilename(filename) {
+        if (!filename) return '';
+        const match = `${filename}`.match(/^(.+)\.html?$/i);
+        const stem = match ? match[1] : filename;
+        return this.sanitizeSheetId(stem);
+    }
+
+    parseSheetList(raw) {
+        if (!raw) return [];
+        return `${raw}`
+            .split(/[,\s]+/)
+            .map(part => this.sanitizeSheetId(part))
+            .filter(Boolean);
+    }
+
+    getSheetListAttributeFromDOM() {
+        if (!this.container) return '';
+        const attr = this.container.getAttribute('data-sheet-list') || '';
+        const ids = this.parseSheetList(attr);
+        if (ids.length) return ids.join(',');
+        const fallback = this.sheetId || this.getSheetIdFromFilename(this.getCurrentPageFilename());
+        return fallback ? `${fallback}` : '';
+    }
+
+    getTargetFileLabel() {
+        return this.getCurrentPageFilename() || 'index.html';
+    }
+
     getStoredTheme() {
         if (typeof document === 'undefined') return null;
         const cookie = document.cookie || '';
@@ -19122,5 +19233,185 @@ ${scriptTag}
     }
 }
 
+class TabShell {
+    constructor() {
+        this.tabsEl = document.getElementById('sheetTabs');
+        this.isTopWindow = window.self === window.top;
+        this.init();
+    }
+
+    async init() {
+        const sheets = await this.loadSheetList();
+        const currentId = this.detectCurrentSheet(sheets);
+        this.renderTabs(sheets, currentId);
+        this.maybeRedirect(sheets, currentId);
+    }
+
+    async loadSheetList() {
+        const domSeeds = this.extractFromDom();
+        const parentSeeds = this.getSheetsFromParent();
+
+        try {
+            const response = await fetch('tabs.json', { cache: 'no-store' });
+            if (response.ok) {
+                const data = await response.json();
+                const normalized = this.normalizeSheetList(data);
+                if (normalized.length) return normalized;
+            }
+        } catch (error) {
+            // ignore and fall back
+        }
+
+        if (parentSeeds.length) return parentSeeds;
+        if (domSeeds.length) return domSeeds;
+        return [{ id: '1', title: 'Sheet 1', href: '1.html' }];
+    }
+
+    normalizeSheetList(payload) {
+        if (!payload || !Array.isArray(payload.sheets)) return [];
+        return payload.sheets
+            .map((sheet, index) => this.normalizeEntry(sheet, index))
+            .filter(Boolean);
+    }
+
+    normalizeEntry(entry, index) {
+        if (!entry) return null;
+        const id = this.sanitizeId(entry.id ?? `${index + 1}`);
+        if (!id) return null;
+        const title = entry.title ? String(entry.title).trim() : `Sheet ${id}`;
+        const href = entry.href ? this.sanitizeFile(entry.href) : `${id}.html`;
+        return { id, title, href };
+    }
+
+    sanitizeId(value) {
+        if (!value) return '';
+        const normalized = `${value}`.trim().replace(/[^A-Za-z0-9_-]/g, '');
+        return normalized;
+    }
+
+    sanitizeFile(value) {
+        if (!value) return '';
+        const name = `${value}`.split('/').pop().trim();
+        if (!name) return '';
+        const safe = name.replace(/[^A-Za-z0-9._-]/g, '');
+        return /\.html?$/i.test(safe) ? safe : `${safe}.html`;
+    }
+
+    extractFromDom() {
+        if (!this.tabsEl) return [];
+        const anchors = Array.from(this.tabsEl.querySelectorAll('a[href$=".html"]'));
+        const seen = new Set();
+        const sheets = [];
+        anchors.forEach((a, idx) => {
+            const href = this.sanitizeFile(a.getAttribute('href') || '');
+            if (!href || seen.has(href)) return;
+            seen.add(href);
+            const idMatch = href.match(/^(.*)\.html?$/i);
+            const id = this.sanitizeId(idMatch ? idMatch[1] : `${idx + 1}`);
+            sheets.push({ id: id || `${idx + 1}`, title: a.textContent?.trim() || `Sheet ${id || idx + 1}`, href });
+        });
+        return sheets;
+    }
+
+    getSheetsFromParent() {
+        try {
+            if (!window.parent || window.parent === window) return [];
+            const container = window.parent.document.querySelector('.spreadsheet-container');
+            if (!container) return [];
+            const listAttr = container.getAttribute('data-sheet-list') || '';
+            const ids = listAttr.split(/[,\s]+/).map(id => this.sanitizeId(id)).filter(Boolean);
+            const unique = Array.from(new Set(ids));
+            return unique.map(id => ({ id, title: `Sheet ${id}`, href: `${id}.html` }));
+        } catch (error) {
+            return [];
+        }
+    }
+
+    detectCurrentSheet(sheets) {
+        const ids = new Set((sheets || []).map(s => s.id));
+        const parentId = this.getSheetIdFromParent();
+        if (parentId && ids.has(parentId)) return parentId;
+
+        const params = new URLSearchParams(window.location.search);
+        const fromQuery = this.sanitizeId(params.get('sheet'));
+        if (fromQuery && ids.has(fromQuery)) return fromQuery;
+
+        const pathId = this.getSheetIdFromPath((window.top || window).location?.pathname);
+        if (pathId && ids.has(pathId)) return pathId;
+
+        const currentPath = (window.top || window).location?.pathname || '';
+        const matchHref = (sheets || []).find(sheet => currentPath.endsWith(sheet.href));
+        if (matchHref) return matchHref.id;
+
+        return sheets[0]?.id || null;
+    }
+
+    getSheetIdFromParent() {
+        try {
+            if (!window.parent || window.parent === window) return null;
+            const container = window.parent.document.querySelector('.spreadsheet-container');
+            if (!container) return null;
+            const attr = container.getAttribute('data-sheet-id') || container.getAttribute('data-current-sheet') || '';
+            return this.sanitizeId(attr);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    getSheetIdFromPath(pathname) {
+        if (!pathname) return '';
+        const parts = pathname.split('/').filter(Boolean);
+        const last = parts[parts.length - 1] || '';
+        const match = last.match(/^(.*?)(\.html?)$/i);
+        const stem = match ? match[1] : last;
+        return this.sanitizeId(stem);
+    }
+
+    renderTabs(sheets, currentId) {
+        if (!this.tabsEl) return;
+        this.tabsEl.innerHTML = '';
+        sheets.forEach(sheet => {
+            const link = document.createElement('a');
+            link.className = 'sheet-tab';
+            link.href = sheet.href;
+            link.textContent = sheet.title || `Sheet ${sheet.id}`;
+            if (sheet.id === currentId || sheet.href === currentId) {
+                link.classList.add('sheet-tab--active');
+                link.setAttribute('aria-current', 'page');
+            }
+            this.tabsEl.appendChild(link);
+        });
+    }
+
+    maybeRedirect(sheets, currentId) {
+        if (!this.isTopWindow) return;
+        const filename = this.getFilename((window.location || {}).pathname || '');
+        if (filename && filename !== 'index.html') return;
+        const params = new URLSearchParams(window.location.search || '');
+        if (params.has('code') || params.has('state')) return;
+        const first = sheets.find(sheet => sheet.id === currentId) || sheets[0];
+        if (!first) return;
+        const search = window.location.search || '';
+        const hash = window.location.hash || '';
+        const target = `${first.href}${search}${hash}`;
+        if (target === `${filename}${search}${hash}`) return;
+        try {
+            window.location.replace(target);
+        } catch (error) {
+            window.location.href = target;
+        }
+    }
+
+    getFilename(pathname) {
+        if (!pathname) return '';
+        const parts = pathname.split('/').filter(Boolean);
+        return parts[parts.length - 1] || '';
+    }
+}
+
 // Initialize the application
-const app = new SpreadsheetApp();
+if (document.body && document.body.classList.contains('tabs-only')) {
+    new TabShell();
+} else if (document.querySelector('.spreadsheet-container')) {
+    const app = new SpreadsheetApp();
+}
