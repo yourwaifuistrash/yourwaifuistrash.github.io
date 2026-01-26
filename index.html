@@ -27,19 +27,93 @@
     </noscript>
 </head>
 <body class="tabs-only">
+    <!-- Only these links exist in HTML - visible only to no-JS browsers -->
+    <noscript>
+        <!-- This would redirect automatically in elinks <meta http-equiv="refresh" content="0;url=1.html"> -->
+        <nav class="sheet-tabs sheet-tabs--fallback" aria-label="Spreadsheets" data-current-sheet="1">
+            <a class="sheet-tab sheet-tab--add" href="#add-sheet" title="Add sheet" aria-label="Add sheet">+</a>
+            <div class="sheet-tabs__list">
+                <a class="sheet-tab sheet-tab--active" href="1.html" aria-current="page">Sheet 1</a>
+                <a class="sheet-tab" href="2.html">Sheet 2</a>
+            </div>
+        </nav>
+    </noscript>
+    
+    <!-- Empty nav - tabs will be added by JavaScript -->
     <nav id="sheetTabs" class="sheet-tabs" aria-label="Spreadsheets" data-current-sheet="1">
-        <a class="sheet-tab sheet-tab--add" href="#add-sheet" data-sheet-add="true" title="Add sheet" aria-label="Add sheet">+</a>
         <div class="sheet-tabs__list">
-            <a class="sheet-tab sheet-tab--active" href="1.html" data-sheet-id="1" aria-current="page">1</a>
-            <a class="sheet-tab" href="2.html" data-sheet-id="2">2</a>
+            <!-- JavaScript will populate this -->
         </div>
     </nav>
-    <noscript>
-        <div class="sheet-tabs sheet-tabs--fallback" aria-hidden="true">
-            <a class="sheet-tab" href="1.html">Sheet 1</a>
-            <a class="sheet-tab" href="2.html">Sheet 2</a>
-        </div>
-    </noscript>
+    
+    <script>
+        // Dynamically create tabs for JS-enabled browsers
+        (function() {
+            const tabsContainer = document.getElementById('sheetTabs');
+            if (!tabsContainer) return;
+            
+            const tabsList = tabsContainer.querySelector('.sheet-tabs__list');
+            if (!tabsList) return;
+            
+            // Get current sheet from data attribute
+            const currentSheet = tabsContainer.dataset.currentSheet || '1';
+            
+            // Find the noscript fallback to extract sheet info
+            const noscriptFallback = document.querySelector('.sheet-tabs--fallback');
+            const sheets = [];
+            
+            if (noscriptFallback) {
+                const fallbackLinks = noscriptFallback.querySelectorAll('a');
+                fallbackLinks.forEach(link => {
+                    // Extract sheet number from href (e.g., "1.html" -> "1")
+                    const match = link.href.match(/(\d+)\.html/);
+                    if (match) {
+                        sheets.push({
+                            id: match[1],
+                            href: link.href,
+                            label: link.textContent.trim()
+                        });
+                    }
+                });
+            }
+            
+            // Fallback if no sheets found
+            if (sheets.length === 0) {
+                sheets.push(
+                    { id: '1', href: '1.html', label: 'Sheet 1' },
+                    { id: '2', href: '2.html', label: 'Sheet 2' }
+                );
+            }
+            
+            // Create and add the "Add" button
+            const addButton = document.createElement('a');
+            addButton.className = 'sheet-tab sheet-tab--add';
+            addButton.href = '#add-sheet';
+            addButton.dataset.sheetAdd = 'true';
+            addButton.title = 'Add sheet';
+            addButton.setAttribute('aria-label', 'Add sheet');
+            addButton.textContent = '+';
+            
+            tabsContainer.insertBefore(addButton, tabsList);
+            
+            // Create sheet tabs
+            sheets.forEach(sheet => {
+                const tab = document.createElement('a');
+                tab.className = 'sheet-tab';
+                tab.href = sheet.href;
+                tab.dataset.sheetId = sheet.id;
+                tab.textContent = sheet.label;
+                
+                if (sheet.id === currentSheet) {
+                    tab.classList.add('sheet-tab--active');
+                    tab.setAttribute('aria-current', 'page');
+                }
+                
+                tabsList.appendChild(tab);
+            });
+        })();
+    </script>
+    
     <script>
         (function() {
             const params = new URLSearchParams(window.location.search || '');
