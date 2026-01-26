@@ -5,12 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spreadsheet Tabs</title>
     <base target="_top">
-    <link rel="stylesheet" href="style.css">
+    <noscript>
+        <link rel="stylesheet" href="https://JavaScript-less.codeberg.page/spreadsheet/@spreadsheet/style.css">
+        <link rel="stylesheet" href="style.css">
+    </noscript>
     <script>
         // Fallback to local assets when loader.js cannot be fetched
         function loadLocalAssetsFallback() {
             if (window.__tabsLocalAssetFallbackApplied) return;
             window.__tabsLocalAssetFallbackApplied = true;
+
+            const stylesheet = document.createElement('link');
+            stylesheet.rel = 'stylesheet';
+            stylesheet.href = 'style.css';
+            document.head.appendChild(stylesheet);
+
             var script = document.createElement('script');
             script.src = 'app.js';
             script.defer = true;
