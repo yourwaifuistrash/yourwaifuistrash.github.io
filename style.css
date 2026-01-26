@@ -187,6 +187,13 @@ body.tabs-only {
   overflow: hidden;
 }
 
+.heart-fallback::before {
+    content: '❤';
+}
+.heart-fallback span {
+    display: none !important;
+}
+
 .sheet-tabs {
   display: flex;
   align-items: center;

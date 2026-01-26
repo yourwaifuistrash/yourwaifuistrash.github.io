@@ -31,19 +31,10 @@
     <noscript>
         <!-- This would redirect automatically in elinks <meta http-equiv="refresh" content="0;url=1.html"> -->
         <nav class="sheet-tabs sheet-tabs--fallback" aria-label="Spreadsheets" data-current-sheet="1">
-            <span class="sheet-tab sheet-tab--add heart-fallback" title="JavaScript required" aria-label="JavaScript required">❥</span>
+            <span class="sheet-tab sheet-tab--add heart-fallback" title="JavaScript required" aria-label="JavaScript required"><span>❥</span></span>
             <a class="sheet-tab sheet-tab--active" href="1.html" aria-current="page">Sheet 1</a>
             <a class="sheet-tab" href="2.html">Sheet 2</a>
         </nav>
-        <style>
-            .heart-fallback {
-                font-size: 0;
-            }
-            .heart-fallback::before {
-                content: '❤';
-                font-size: 1rem;
-            }
-        </style>
     </noscript>
     
     <!-- Empty nav - tabs will be added by JavaScript -->
