@@ -63,10 +63,10 @@ body.tabs-only .sheet-tabs {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
-body.tabs-only .sheet-tabs[data-current-sheet="1"] .sheet-tab[data-sheet-id="1"] {
+body.tabs-only .sheet-tabs[data-current-sheet="1"] .sheet-tab[data-sheet-id="1"],
+body.tabs-only .sheet-tabs[data-current-sheet="2"] .sheet-tab[data-sheet-id="2"] {
   background: var(--color-bg-1) !important;
   border-color: var(--color-primary) !important;
   color: var(--color-primary) !important;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08) !important;
 }
-
