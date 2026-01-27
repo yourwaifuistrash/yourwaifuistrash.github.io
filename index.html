@@ -55,12 +55,36 @@
     <script>
         // Dynamically create tabs for JS-enabled browsers
         (function() {
+            function createAddButton(tabsContainer) {
+                // Remove existing add button if present
+                const existing = tabsContainer.querySelector('.sheet-tab--add');
+                if (existing) existing.remove();
+                
+                // Create the add button
+                const addButton = document.createElement('a');
+                addButton.className = 'sheet-tab sheet-tab--add';
+                addButton.href = '#add-sheet';
+                addButton.dataset.sheetAdd = 'true';
+                addButton.title = 'Add sheet';
+                addButton.setAttribute('aria-label', 'Add sheet');
+                addButton.textContent = '+';
+                
+                // Insert at the beginning of the nav
+                tabsContainer.insertBefore(addButton, tabsContainer.firstChild);
+            }
+            
             function createTabs() {
                 const tabsContainer = document.getElementById('sheetTabs');
                 if (!tabsContainer) return;
                 
-                const tabsList = tabsContainer.querySelector('.sheet-tabs__list');
-                if (!tabsList) return;
+                let tabsList = tabsContainer.querySelector('.sheet-tabs__list');
+                
+                // Create tabsList if it doesn't exist
+                if (!tabsList) {
+                    tabsList = document.createElement('div');
+                    tabsList.className = 'sheet-tabs__list';
+                    tabsContainer.appendChild(tabsList);
+                }
                 
                 // Get current sheet from data attribute
                 const currentSheet = tabsContainer.dataset.currentSheet || '1';
@@ -92,21 +116,10 @@
                     );
                 }
                 
-                // Create and add the "Add" button (only if it doesn't exist)
-                let addButton = tabsContainer.querySelector('.sheet-tab--add');
-                if (!addButton) {
-                    addButton = document.createElement('a');
-                    addButton.className = 'sheet-tab sheet-tab--add';
-                    addButton.href = '#add-sheet';
-                    addButton.dataset.sheetAdd = 'true';
-                    addButton.title = 'Add sheet';
-                    addButton.setAttribute('aria-label', 'Add sheet');
-                    addButton.textContent = '+';
-                    
-                    tabsContainer.insertBefore(addButton, tabsList);
-                }
+                // Create and add the "Add" button
+                createAddButton(tabsContainer);
                 
-                // Clear existing tabs
+                // Clear existing sheet tabs in the list
                 tabsList.innerHTML = '';
                 
                 // Create sheet tabs
@@ -142,7 +155,7 @@
                     // If the + button was removed, recreate it
                     const tabsContainer = document.getElementById('sheetTabs');
                     if (tabsContainer && !tabsContainer.querySelector('.sheet-tab--add')) {
-                        createTabs();
+                        createAddButton(tabsContainer);
                     }
                 });
             });
