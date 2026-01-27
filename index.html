@@ -55,6 +55,26 @@
     <script>
         // Dynamically create tabs for JS-enabled browsers
         (function() {
+            // Sync current sheet from parent for CSS-only highlighting
+            function syncCurrentSheetFromParent() {
+                const tabsContainer = document.getElementById('sheetTabs');
+                if (!tabsContainer) return;
+                
+                try {
+                    if (window.parent && window.parent !== window) {
+                        const parentContainer = window.parent.document.querySelector('.spreadsheet-container');
+                        if (parentContainer) {
+                            const currentSheet = parentContainer.getAttribute('data-current-sheet') || 
+                                               parentContainer.getAttribute('data-sheet-id') || '1';
+                            tabsContainer.setAttribute('data-current-sheet', currentSheet);
+                        }
+                    }
+                } catch (e) {
+                    // Cross-origin, use default
+                    console.log('Cannot access parent, using default');
+                }
+            }
+            
             function createAddButton(tabsContainer) {
                 // Remove existing add button if present
                 const existing = tabsContainer.querySelector('.sheet-tab--add');
@@ -76,6 +96,9 @@
             function createTabs() {
                 const tabsContainer = document.getElementById('sheetTabs');
                 if (!tabsContainer) return;
+                
+                // Sync current sheet for CSS-only highlighting
+                syncCurrentSheetFromParent();
                 
                 let tabsList = tabsContainer.querySelector('.sheet-tabs__list');
                 
@@ -130,8 +153,8 @@
                     tab.dataset.sheetId = sheet.id;
                     tab.textContent = sheet.label;
                     
+                    // Removed active class logic - using CSS-only solution instead
                     if (sheet.id === currentSheet) {
-                        tab.classList.add('sheet-tab--active');
                         tab.setAttribute('aria-current', 'page');
                     }
                     
