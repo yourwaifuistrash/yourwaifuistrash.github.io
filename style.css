@@ -122,6 +122,10 @@ body.tabs-only {
   min-height: 55px; /* Ensure minimum height for tab bar */
   display: flex;
   flex-direction: column;
+  /* Use dynamic viewport height which adjusts when keyboard appears
+     Combined with interactive-widget=resizes-content, this ensures
+     the tab bar remains visible even when keyboard is shown */
+  height: 100dvh;
 }
 
 /* Buttons */
@@ -183,7 +187,7 @@ body.tabs-only {
 .spreadsheet-container {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh; /* Use dynamic viewport height for mobile compatibility with keyboard */
   overflow: hidden;
 }
 
@@ -2661,7 +2665,7 @@ body.tabs-only .sheet-tabs {
     box-shadow: var(--shadow-lg);
     padding: var(--space-24);
     width: min(520px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -3234,7 +3238,7 @@ body.tabs-only .sheet-tabs {
     box-shadow: var(--shadow-lg);
     padding: var(--space-16) var(--space-16) var(--space-24) var(--space-16);
     width: min(600px, calc(100vw - 32px));
-    max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
     overflow-y: auto;
 }
 
