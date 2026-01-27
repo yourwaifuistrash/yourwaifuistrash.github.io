@@ -1,6 +1,3 @@
-const CODEBERG_API_BASE = 'https://codeberg.org/api/v1';
-const CODEBERG_OAUTH_AUTHORIZE = 'https://codeberg.org/login/oauth/authorize';
-const CODEBERG_OAUTH_TOKEN = 'https://codeberg.org/login/oauth/access_token';
 const SHEET_STATE_STORAGE_PREFIX = 'verbosecell-sheet-state-v1-';
 
 const escapeHTML = (str = '') => str
