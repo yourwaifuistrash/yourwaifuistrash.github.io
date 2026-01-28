@@ -70,27 +70,8 @@ body.tabs-only .sheet-tabs {
 
 
 /* CSS-only tab highlighting using :target - NO JAVASCRIPT */
-/* Highlight the tab that is targeted in the URL */
-#sheet1:target,
-#sheet2:target,
-#sheet3:target,
-#sheet4:target,
-#sheet5:target,
-#sheet6:target,
-#sheet7:target,
-#sheet8:target,
-#sheet9:target,
-#sheet10:target,
-#sheet11:target,
-#sheet12:target,
-#sheet13:target,
-#sheet14:target,
-#sheet15:target,
-#sheet16:target,
-#sheet17:target,
-#sheet18:target,
-#sheet19:target,
-#sheet20:target {
+/* Highlight any tab that is targeted - works for unlimited sheets! */
+.sheet-tab:target {
   background: var(--color-bg-1, #ffffff) !important;
   border-color: var(--color-primary, #007bff) !important;
   color: var(--color-primary, #007bff) !important;
