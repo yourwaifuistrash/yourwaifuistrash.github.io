@@ -25,11 +25,6 @@ body.tabs-only .sheet-tabs {
   border-top: 1px solid var(--color-border);
 }
 
-/* Also add border when tabs are directly in sheet pages */
-.sheet-tabs-embed .sheet-tabs {
-  border-top: 1px solid var(--color-border, #e0e0e0);
-}
-
 .sheet-tabs__list {
   display: flex;
   align-items: center;
@@ -86,46 +81,8 @@ body.tabs-only[data-parent-sheet="7"] .sheet-tab[data-sheet-id="7"],
 body.tabs-only[data-parent-sheet="8"] .sheet-tab[data-sheet-id="8"],
 body.tabs-only[data-parent-sheet="9"] .sheet-tab[data-sheet-id="9"],
 body.tabs-only[data-parent-sheet="10"] .sheet-tab[data-sheet-id="10"] {
-  background: var(--color-bg-1, #ffffff) !important;
-  border-color: var(--color-primary, #007bff) !important;
-  color: var(--color-primary, #007bff) !important;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08) !important;
-}
-
-/* CSS-only tab highlighting using :target - NO JAVASCRIPT */
-/* Hide the sheet markers */
-.sheet-marker {
-  display: none;
-}
-
-/* Default: NO tab is highlighted unless targeted */
-.sheet-tab {
-  /* Uses default styles from above */
-}
-
-/* Highlight the tab whose ID matches the targeted marker - supports up to 20 sheets */
-#sheet1:target ~ .sheet-tabs .sheet-tab[data-sheet-id="1"],
-#sheet2:target ~ .sheet-tabs .sheet-tab[data-sheet-id="2"],
-#sheet3:target ~ .sheet-tabs .sheet-tab[data-sheet-id="3"],
-#sheet4:target ~ .sheet-tabs .sheet-tab[data-sheet-id="4"],
-#sheet5:target ~ .sheet-tabs .sheet-tab[data-sheet-id="5"],
-#sheet6:target ~ .sheet-tabs .sheet-tab[data-sheet-id="6"],
-#sheet7:target ~ .sheet-tabs .sheet-tab[data-sheet-id="7"],
-#sheet8:target ~ .sheet-tabs .sheet-tab[data-sheet-id="8"],
-#sheet9:target ~ .sheet-tabs .sheet-tab[data-sheet-id="9"],
-#sheet10:target ~ .sheet-tabs .sheet-tab[data-sheet-id="10"],
-#sheet11:target ~ .sheet-tabs .sheet-tab[data-sheet-id="11"],
-#sheet12:target ~ .sheet-tabs .sheet-tab[data-sheet-id="12"],
-#sheet13:target ~ .sheet-tabs .sheet-tab[data-sheet-id="13"],
-#sheet14:target ~ .sheet-tabs .sheet-tab[data-sheet-id="14"],
-#sheet15:target ~ .sheet-tabs .sheet-tab[data-sheet-id="15"],
-#sheet16:target ~ .sheet-tabs .sheet-tab[data-sheet-id="16"],
-#sheet17:target ~ .sheet-tabs .sheet-tab[data-sheet-id="17"],
-#sheet18:target ~ .sheet-tabs .sheet-tab[data-sheet-id="18"],
-#sheet19:target ~ .sheet-tabs .sheet-tab[data-sheet-id="19"],
-#sheet20:target ~ .sheet-tabs .sheet-tab[data-sheet-id="20"] {
-  background: var(--color-bg-1, #ffffff) !important;
-  border-color: var(--color-primary, #007bff) !important;
-  color: var(--color-primary, #007bff) !important;
+  background: var(--color-bg-1) !important;
+  border-color: var(--color-primary) !important;
+  color: var(--color-primary) !important;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08) !important;
 }
