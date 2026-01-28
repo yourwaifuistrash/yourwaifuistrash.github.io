@@ -2,19 +2,76 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spreadsheet Tabs</title>
     <base target="_top">
-    <link rel="stylesheet" href="style.css">
+    <noscript>
+        <link rel="stylesheet" href="https://JavaScript-less.codeberg.page/spreadsheet/@spreadsheet/style.css">
+        <link rel="stylesheet" href="style.css">
+    </noscript>
+    <script>
+        // Fallback to local assets when loader.js cannot be fetched
+        function loadLocalAssetsFallback() {
+            if (window.__tabsLocalAssetFallbackApplied) return;
+            window.__tabsLocalAssetFallbackApplied = true;
+
+            const stylesheet = document.createElement('link');
+            stylesheet.rel = 'stylesheet';
+            stylesheet.href = 'style.css';
+            document.head.appendChild(stylesheet);
+
+            var script = document.createElement('script');
+            script.src = 'app.js';
+            script.defer = true;
+            document.head.appendChild(script);
+        }
+        (function() {
+            // Don't redirect if there's a hash - means we're being used as tabs in an iframe
+            if (window.self !== window.top || window.location.hash) return;
+            const target = '1.html' + (window.location.search || '');
+            try { window.location.replace(target); } catch (e) { window.location.href = target; }
+        })();
+    </script>
+    </noscript>
 </head>
 <body class="tabs-only">
-    <!-- Single navigation bar - each link serves as both marker and tab -->
-    <nav class="sheet-tabs" aria-label="Spreadsheets">
+    <!-- Only these links exist in HTML - visible only to no-JS browsers -->
+    <noscript>
+        <!-- This would redirect automatically in elinks <meta http-equiv="refresh" content="0;url=1.html"> -->
+        <nav class="sheet-tabs sheet-tabs--fallback" aria-label="Spreadsheets" data-current-sheet="1">
+            <span class="sheet-tab sheet-tab--add heart-fallback" title="JavaScript required" aria-label="JavaScript required"><span>❥</span></span>
+            <a id="sheet1" class="sheet-tab sheet-tab--active" href="1.html" aria-current="page">Sheet 1</a>
+            <a id="sheet2" class="sheet-tab" href="2.html">Sheet 2</a>
+        </nav>
+    </noscript>
+    
+    <!-- Empty nav - tabs will be added by JavaScript -->
+    <nav id="sheetTabs" class="sheet-tabs sheet-tabs--js-only" aria-label="Spreadsheets" data-current-sheet="1" style="display: none;">
         <a class="sheet-tab sheet-tab--add" href="#add-sheet" title="Add sheet" aria-label="Add sheet">+</a>
         <a id="sheet1" class="sheet-tab" href="1.html">Sheet 1</a>
         <a id="sheet2" class="sheet-tab" href="2.html">Sheet 2</a>
-        <a id="sheet3" class="sheet-tab" href="3.html">Sheet 3</a>
-        <!-- To add Sheet 4: <a id="sheet4" class="sheet-tab" href="4.html">Sheet 4</a> -->
+        <!-- To add Sheet 3: <a id="sheet3" class="sheet-tab" href="3.html">Sheet 3</a> -->
     </nav>
+    
+    <script>
+        // Show the JS nav when JavaScript is enabled
+        document.getElementById('sheetTabs').style.display = '';
+    </script>
+    
+    <script>
+        (function() {
+            const params = new URLSearchParams(window.location.search || '');
+            const preferLocal = ['1', 'true', 'local'].includes((params.get('localAssets') || '').toLowerCase()) || window.location.protocol === 'file:';
+            if (preferLocal) {
+                loadLocalAssetsFallback();
+                return;
+            }
+            const script = document.createElement('script');
+            script.src = 'loader.js';
+            script.defer = true;
+            script.onerror = loadLocalAssetsFallback;
+            document.body.appendChild(script);
+        }());
+    </script>
 </body>
 </html>
