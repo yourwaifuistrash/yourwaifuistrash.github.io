@@ -8,19 +8,13 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="tabs-only">
-    <!-- To add a new sheet: just add ONE line like the ones below -->
-    <a id="sheet1" class="sheet-marker" href="1.html"></a>
-    <a id="sheet2" class="sheet-marker" href="2.html"></a>
-    <a id="sheet3" class="sheet-marker" href="3.html"></a>
-    <!-- <a id="sheet4" class="sheet-marker" href="4.html"></a> -->
-    <!-- <a id="sheet5" class="sheet-marker" href="5.html"></a> -->
-    
+    <!-- Single navigation bar - each link serves as both marker and tab -->
     <nav class="sheet-tabs" aria-label="Spreadsheets">
         <a class="sheet-tab sheet-tab--add" href="#add-sheet" title="Add sheet" aria-label="Add sheet">+</a>
-        <a class="sheet-tab" href="1.html" data-sheet-id="1">Sheet 1</a>
-        <a class="sheet-tab" href="2.html" data-sheet-id="2">Sheet 2</a>
-        <a class="sheet-tab" href="3.html" data-sheet-id="3">Sheet 3</a>
-        <!-- Add corresponding tab links here when you add new sheets -->
+        <a id="sheet1" class="sheet-tab" href="1.html" data-sheet-id="1">Sheet 1</a>
+        <a id="sheet2" class="sheet-tab" href="2.html" data-sheet-id="2">Sheet 2</a>
+        <a id="sheet3" class="sheet-tab" href="3.html" data-sheet-id="3">Sheet 3</a>
+        <!-- To add Sheet 4: <a id="sheet4" class="sheet-tab" href="4.html" data-sheet-id="4">Sheet 4</a> -->
     </nav>
 </body>
 </html>

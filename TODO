@@ -1,0 +1,3 @@
+Maybe tableiframe but reversed.
+The sheets should be loaded via iframe while index.html loads the whole UI.
+When sheets are opened directly, redirect to index.html with #tabname
