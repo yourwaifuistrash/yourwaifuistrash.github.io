@@ -70,6 +70,14 @@ body.tabs-only .sheet-tabs {
 
 
 /* CSS-only tab highlighting using :target - NO JAVASCRIPT */
+/* Default: Highlight sheet1 when no hash in URL */
+.sheet-tabs:not(:has(.sheet-tab:target)) #sheet1 {
+  background: var(--color-bg-1, #ffffff);
+  border-color: var(--color-primary, #007bff);
+  color: var(--color-primary, #007bff);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
 /* Highlight any tab that is targeted - works for unlimited sheets! */
 .sheet-tab:target {
   background: var(--color-bg-1, #ffffff) !important;
